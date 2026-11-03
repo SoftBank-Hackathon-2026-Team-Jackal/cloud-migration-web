@@ -1,51 +1,34 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
 import type { Target } from '../lib/stages'
+import type { PlanStepData } from '../lib/migration/events'
+import { PLAN_FIRST_REVEAL_MS, PLAN_REVEAL_GAP_MS, PLAN_REVEAL_MS } from '../lib/migration/script'
 import { useT, type MsgKey, type Translate } from '../lib/i18n'
 import { ViewTabs } from './DiagramParts'
-import { useMigration } from '../lib/migration/MigrationProvider'
+import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
 
-type PlanStep = { id: string; group: 'infrastructure' | 'code' }
-
-const PLAN_STEPS: PlanStep[] = [
-  { id: 'network', group: 'infrastructure' },
-  { id: 'compute', group: 'infrastructure' },
-  { id: 'database', group: 'infrastructure' },
-  { id: 'storage', group: 'infrastructure' },
-  { id: 'db-code', group: 'code' },
-  { id: 's3-code', group: 'code' },
-]
+type PlanStep = PlanStepData
 
 // GCP 대상일 때만 문구가 다른 항목(사전에 gcpAfter / gcpChange 키가 있는 것)
 const GCP_AFTER = new Set(['network', 'compute'])
 const GCP_CHANGE = new Set(['network'])
 
-type Grade = 'direct' | 'convert' | 'none'
-
-// 매핑 등급(11/2 회의): 대상에 그대로 쓸 수 있으면 직접 대응, 대응물이 없으면 MVP에서 제외. 가운데 등급은 화면용 제안.
-function gradeOf(step: PlanStep, target: Target): Grade {
-  switch (step.id) {
-    case 'network': case 'db-code': return 'convert'
-    case 'storage': case 's3-code': return target === 'gcp' ? 'direct' : 'none'
-    default: return 'direct'
-  }
-}
-
-function stepsFor(_target: Target): PlanStep[] {
-  return PLAN_STEPS
-}
-
+/** 문구는 이벤트 값이 있으면 그대로 쓰고, 비어 있으면 id로 사전에서 찾는다(대상이 GCP일 때만 다른 문구 포함). */
 function stepText(t: Translate, step: PlanStep, target: Target, field: 'before' | 'after' | 'evidence' | 'change') {
+  if (step[field]) return step[field]
   const gcp = target === 'gcp'
   if (field === 'after' && gcp && GCP_AFTER.has(step.id)) return t(('plan.step.' + step.id + '.gcpAfter') as MsgKey)
   if (field === 'change' && gcp && GCP_CHANGE.has(step.id)) return t(('plan.step.' + step.id + '.gcpChange') as MsgKey)
   return t(('plan.step.' + step.id + '.' + field) as MsgKey)
 }
 
-const FIRST_REVEAL = 2550
-const REVEAL_GAP = 720
-const FLOW_END = FIRST_REVEAL + PLAN_STEPS.length * REVEAL_GAP + 850
+// 항목을 하나씩 드러내는 연출 시간. 데이터는 이벤트로 먼저 와 있어도 화면은 이 간격으로 천천히 보여 준다.
+const FIRST_REVEAL = PLAN_FIRST_REVEAL_MS
+const REVEAL_GAP = PLAN_REVEAL_GAP_MS
+const FLOW_END = PLAN_REVEAL_MS
+// 서버가 항목을 몇 개 보내든 연출 타이머는 이 개수까지만 건다.
+const MAX_REVEAL = 12
 
 // 입자는 "어느 기준점에서 얼마나 떨어져 있는가"만 기억하고, 기준점(원·구체·문서)의 실제 위치는 매 프레임 읽는다.
 // 구체가 커지거나 원이 둥둥 떠다니거나 창 크기가 바뀌어도 입자가 항상 제자리로 들어간다.
@@ -148,28 +131,34 @@ function PlanParticleFlow({ stage }: { stage: RefObject<HTMLElement | null> }) {
 }
 
 export default function AIPlanningStage({ target, onNext }: { target: Target; onNext: () => void }) {
-  const analysis = useMigration().state.analysis.findings
+  const { state } = useMigration()
+  const analysis = state.analysis.findings
+  // 계획 항목은 데이터 계층에서 받는다. 화면이 열리면 바로 시작한다.
+  useStageFeed('planning', true, target)
+  const steps = state.plan.steps
   const t = useT()
   const stageRef = useRef<HTMLElement>(null)
-  const [visibleCount, setVisibleCount] = useState(0)
+  const [revealed, setRevealed] = useState(0)
   const [swapped, setSwapped] = useState(false)
   const [coreReady, setCoreReady] = useState(false)
   const [view, setView] = useState<'list' | 'mapping'>('list')
   // 분석 결과 없이 바로 이 화면을 연 경우(시연용 단계 이동)에는 분석이 끝난 것으로 보여 준다.
   const hasInfra = analysis.length === 0 || analysis.some(update => update.stream === 'infrastructure')
   const hasCode = analysis.length === 0 || analysis.some(update => update.stream === 'code')
-  const steps = useMemo(() => stepsFor(target), [target])
 
   useEffect(() => {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       setCoreReady(true)
-      setVisibleCount(steps.length)
+      setRevealed(MAX_REVEAL)
       return
     }
-    const timers = [window.setTimeout(() => setCoreReady(true), 1400), ...steps.map((_, index) =>
-      window.setTimeout(() => setVisibleCount(index + 1), FIRST_REVEAL + index * REVEAL_GAP))]
+    const timers = [window.setTimeout(() => setCoreReady(true), 1400), ...Array.from({ length: MAX_REVEAL }, (_, index) =>
+      window.setTimeout(() => setRevealed(index + 1), FIRST_REVEAL + index * REVEAL_GAP))]
     return () => timers.forEach(timer => window.clearTimeout(timer))
-  }, [steps])
+  }, [])
+  // 받은 항목 중 연출이 드러낸 만큼만 보인다. 완료는 서버가 "계획 끝"을 알리고 모두 드러난 뒤다.
+  const visibleCount = Math.min(revealed, steps.length)
+  const complete = state.plan.ready && visibleCount === steps.length
 
   return <section ref={stageRef} className="plan-stage" aria-label={t('plan.aria')}>
     <div className="plan-visual" aria-hidden="true">
@@ -207,7 +196,7 @@ export default function AIPlanningStage({ target, onNext }: { target: Target; on
           <div className="map-head"><span>{t('map.from')}</span><span /><span>{t('map.to', { target: t(('target.' + target) as MsgKey) })}</span></div>
           {steps.map((step, index) => <div key={step.id} role="listitem" className={'map-row' + (visibleCount > index ? ' is-visible' : '')}>
             <div className="map-card">{stepText(t, step, target, 'before')}</div>
-            <div className={'map-link is-' + gradeOf(step, target)}><span className={'plan-grade is-' + gradeOf(step, target)}>{t(('plan.grade.' + gradeOf(step, target)) as MsgKey)}</span></div>
+            <div className={'map-link is-' + step.grade}><span className={'plan-grade is-' + step.grade}>{t(('plan.grade.' + step.grade) as MsgKey)}</span></div>
             <div className="map-card is-after">{stepText(t, step, target, 'after')}</div>
           </div>)}
         </div>}
@@ -220,18 +209,18 @@ export default function AIPlanningStage({ target, onNext }: { target: Target; on
               <strong><span>{stepText(t, step, target, 'before')}</span><b aria-hidden="true">→</b><span>{stepText(t, step, target, 'after')}</span></strong>
               <p className="plan-evidence">{t('plan.evidence', { text: stepText(t, step, target, 'evidence') })}</p>
               <p>{stepText(t, step, target, 'change')}</p>
-              <p className="plan-grade-row"><small>{t('plan.grade.title')}</small><span className={'plan-grade is-' + gradeOf(step, target)}>{t(('plan.grade.' + gradeOf(step, target)) as MsgKey)}</span></p>
+              <p className="plan-grade-row"><small>{t('plan.grade.title')}</small><span className={'plan-grade is-' + step.grade}>{t(('plan.grade.' + step.grade) as MsgKey)}</span></p>
             </div>
           </article>)}
         </section>)}
       </div>
       <div className="plan-status" aria-live="polite">
-        <span className={visibleCount === steps.length ? 'is-complete' : ''} />
-        {visibleCount === steps.length ? t('plan.done') : t('plan.working')}
+        <span className={complete ? 'is-complete' : ''} />
+        {complete ? t('plan.done') : t('plan.working')}
         <small>{visibleCount} / {steps.length}</small>
       </div>
       <div className="plan-next">
-        <button type="button" className="flow-primary" disabled={visibleCount !== steps.length} onClick={onNext}>{t('plan.next')} <span aria-hidden="true">→</span></button>
+        <button type="button" className="flow-primary" disabled={!complete} onClick={onNext}>{t('plan.next')} <span aria-hidden="true">→</span></button>
       </div>
     </div>
     <PlanParticleFlow stage={stageRef} />

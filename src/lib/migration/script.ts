@@ -102,8 +102,11 @@ export function gradeOf(id: string, target: Target): Grade {
   }
 }
 
-/** 계획 화면이 항목을 하나씩 드러내는 연출 시간(화면 쪽 상수와 같은 값). 서버는 이 시간이 지난 뒤 승인을 요청한다. */
-export const PLAN_REVEAL_MS = 2550 + PLAN_STEPS.length * 720 + 850
+/** 계획 화면이 항목을 하나씩 드러내는 연출(화면이 쓴다): 첫 항목까지의 시간, 항목 간격, 전체 길이. 서버는 연출이 끝난 뒤 승인을 요청한다. */
+export const PLAN_FIRST_REVEAL_MS = 2550
+export const PLAN_REVEAL_GAP_MS = 720
+export const PLAN_STEP_COUNT = PLAN_STEPS.length
+export const PLAN_REVEAL_MS = PLAN_FIRST_REVEAL_MS + PLAN_STEP_COUNT * PLAN_REVEAL_GAP_MS + 850
 
 function planTimeline(target: Target): TimedDraft[] {
   // 문구(전·후·근거·변경)는 비워 두고 화면이 id로 자기 문구를 쓴다(GCP 대상일 때만 다른 문구 포함).
