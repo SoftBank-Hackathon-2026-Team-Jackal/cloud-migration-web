@@ -5,10 +5,12 @@
  */
 import type { TrafficNote, TrafficPhase, TrafficSnapshotData } from './events'
 
-const STEPS = [10, 50, 100] as const
-const OBSERVE_SECONDS = 4
+export const TRAFFIC_STEPS = [10, 50, 100] as const
+/** 관찰 창 길이(초)와 게이트 기준 */
+export const OBSERVE_SECONDS = 4
 const MAX_FAILED = 0
 const MAX_P99_RATIO = 1.5
+const STEPS = TRAFFIC_STEPS
 
 export class TrafficSim {
   private emitSnapshot: (data: TrafficSnapshotData) => void
