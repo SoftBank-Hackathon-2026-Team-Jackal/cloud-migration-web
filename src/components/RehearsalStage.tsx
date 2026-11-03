@@ -1,67 +1,25 @@
 'use client'
 
-import { useMemo } from 'react'
 import StageShell from './StageShell'
 import { useT, type MsgKey } from '../lib/i18n'
 import type { Target } from '../lib/stages'
 import ArchitectureDiagram, { type NodeState } from './ArchitectureDiagram'
-import AiTip, { type TipFix, type TipLine } from './AiTip'
+import AiTip, { type TipFix } from './AiTip'
 import ZoomableDiagram from './ZoomableDiagram'
-import { useScript, type TimedItem } from '../lib/useScript'
-import { aiFixCount } from '../lib/demoConfig'
+import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
+import type { BuildCheckData, BuildFixData, CheckState } from '../lib/migration/events'
 
 // running: 검증 중 · failed: 실패 · fixing: AI(픽서)가 수정 중 · recheck: AI(리베리파이어)가 재검증 중 · done: 통과
-type CheckState = 'running' | 'failed' | 'fixing' | 'recheck' | 'done'
 // fixed: fixing/recheck 때 지금까지 고친 개수(한 검증 항목 안에서 수정이 여러 개일 수 있다)
-type CheckEvent = { id: string; state: CheckState; fixed?: number }
 
 const CHECKS = [{ id: 'build' }, { id: 'health' }, { id: 'db' }, { id: 'render' }, { id: 'secret' }, { id: 'scope' }]
 
 /** 11/2 회의의 에이전트 5종. 스캐너·매퍼는 앞 단계에서 끝났고, 샌드박스에서는 테스터·픽서·리베리파이어가 일한다. */
 const AGENTS = ['scanner', 'mapper', 'tester', 'fixer', 'verifier'] as const
 
-// AI가 고치는 항목(데모 각본). 수정은 검증 항목 하나에 여러 개 붙을 수 있다(예: 기능 테스트·상태 확인에서 서너 건).
-// 변경 내용의 줄(fix)·칩·팝업이 같은 id로 이어진다.
+// AI가 고친 항목은 build.fix 이벤트로 온다. 변경 내용의 줄(fix)·칩·팝업이 같은 id로 이어진다.
 type FixId = 'db' | 'host' | 'port' | 'probe'
-type Fix = { id: FixId; check: string }
-const FIX_POOL: Fix[] = [
-  { id: 'db', check: 'db' },
-  { id: 'host', check: 'health' },
-  { id: 'port', check: 'health' },
-  { id: 'probe', check: 'health' },
-]
-const FIX_LINES: Record<FixId, TipLine[]> = {
-  db: [{ kind: 'del', text: '- DB_HOST=postgres' }, { kind: 'add', text: '+ DB_HOST=postgresql.demo.svc.cluster.local' }],
-  host: [{ kind: 'del', text: '- HOST=127.0.0.1' }, { kind: 'add', text: '+ HOST=0.0.0.0' }],
-  port: [{ kind: 'add', text: '+ containerPort: 8080' }],
-  probe: [{ kind: 'add', text: '+ readinessProbe: { httpGet: { path: /health, port: 8080 } }' }],
-}
-
-const FIX_GAP_MS = 1400 // 수정 하나를 고치는 데 걸리는 시간(데모)
-
-// 검증 항목은 차례로 돌고, 수정이 붙은 항목은 "실패 → 수정(여러 개면 하나씩) → 재검증 → 통과"를 거친다.
-function buildScript(fixes: Fix[]): Array<TimedItem<CheckEvent>> {
-  const items: Array<TimedItem<CheckEvent>> = []
-  let at = 500
-  for (const check of CHECKS) {
-    const count = fixes.filter(fix => fix.check === check.id).length
-    items.push({ after: at, item: { id: check.id, state: 'running' } })
-    if (count > 0) {
-      items.push({ after: at + 900, item: { id: check.id, state: 'failed' } })
-      for (let index = 0; index < count; index++) {
-        items.push({ after: at + 1600 + index * FIX_GAP_MS, item: { id: check.id, state: 'fixing', fixed: index } })
-      }
-      const recheckAt = at + 1600 + count * FIX_GAP_MS + 200
-      items.push({ after: recheckAt, item: { id: check.id, state: 'recheck', fixed: count } })
-      items.push({ after: recheckAt + 1000, item: { id: check.id, state: 'done', fixed: count } })
-      at = recheckAt + 1400
-    } else {
-      items.push({ after: at + 900, item: { id: check.id, state: 'done' } })
-      at += 1400
-    }
-  }
-  return items
-}
+type Fix = BuildFixData
 
 type DiffLine = { kind: 'file' | 'del' | 'add' | 'note'; text: string; key?: MsgKey; fix?: FixId }
 const DIFF: ReadonlyArray<DiffLine> = [
@@ -80,11 +38,9 @@ const DIFF: ReadonlyArray<DiffLine> = [
 
 export default function RehearsalStage({ target, onNext }: { target: Target; onNext: () => void }) {
   const t = useT()
-  const fixes = useMemo(() => FIX_POOL.slice(0, aiFixCount()), [])
-  const script = useMemo(() => buildScript(fixes), [fixes])
   return <StageShell kicker="SANDBOX · REHEARSAL" title={t('rehearsal.title')}
     subtitle={t('rehearsal.subtitle')}>
-    {ready => <RehearsalBody ready={ready} script={script} fixes={fixes} target={target} onNext={onNext} />}
+    {ready => <RehearsalBody ready={ready} target={target} onNext={onNext} />}
   </StageShell>
 }
 
@@ -95,15 +51,16 @@ const CHECK_NODES: Record<string, string[]> = {
 
 const MARK: Record<CheckState, string> = { running: '', failed: '!', fixing: '✎', recheck: '', done: '✓' }
 
-function RehearsalBody({ ready, script, fixes, target, onNext }: { ready: boolean; script: Array<TimedItem<CheckEvent>>; fixes: Fix[]; target: Target; onNext: () => void }) {
+function RehearsalBody({ ready, target, onNext }: { ready: boolean; target: Target; onNext: () => void }) {
   const t = useT()
-  const events = useScript(script, ready)
-  const states = new Map<string, CheckEvent>()
-  for (const event of events) states.set(event.id, event)
+  const { state: migration } = useMigration()
+  useStageFeed('build', ready, target)
+  const fixes = migration.build.fixes
+  const states = new Map<string, BuildCheckData>(Object.entries(migration.build.checks))
   const stateOf = (id: string) => states.get(id)?.state
   const done = CHECKS.filter(check => stateOf(check.id) === 'done').length
   const finished = done === CHECKS.length
-  const last = events[events.length - 1]
+  const last = migration.build.lastCheck
   const fixesOf = (checkId: string) => fixes.filter(fix => fix.check === checkId)
   // 수정이 적용된 것: 재검증에 들어갔거나 통과한 항목의 수정 전부 + 수정 중인 항목에서는 지금까지 고친 개수만큼
   const isApplied = (fix: Fix) => {
@@ -113,7 +70,7 @@ function RehearsalBody({ ready, script, fixes, target, onNext }: { ready: boolea
     return event.state === 'fixing' && fixesOf(fix.check).indexOf(fix) < (event.fixed ?? 0)
   }
   const applied = fixes.filter(isApplied)
-  const tipFixes = (list: Fix[]): TipFix[] => list.map(fix => ({ id: fix.id, lines: FIX_LINES[fix.id] }))
+  const tipFixes = (list: Fix[]): TipFix[] => list.map(fix => ({ id: fix.id, lines: fix.lines }))
   const agentStatus = (agent: (typeof AGENTS)[number]): 'done' | 'active' | 'idle' => {
     if (agent === 'scanner' || agent === 'mapper') return 'done'
     if (agent === 'tester') return finished ? 'done' : last && (last.state === 'fixing' || last.state === 'recheck') ? 'idle' : 'active'
