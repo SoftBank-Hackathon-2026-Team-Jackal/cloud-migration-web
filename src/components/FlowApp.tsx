@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import ParticleField from './ParticleField'
 import ParticlePrompt from './ParticlePrompt'
 import MigrationSetup from './MigrationSetup'
-import AnalysisStage, { type AnalysisUpdate } from './AnalysisStage'
+import AnalysisStage from './AnalysisStage'
 import AIPlanningStage from './AIPlanningStage'
 import RehearsalStage from './RehearsalStage'
 import ApprovalStage from './ApprovalStage'
@@ -18,6 +18,7 @@ import LangSwitch from './LangSwitch'
 import BackButton from './BackButton'
 import { ArriveMorph, DISSOLVE_MS, TransitionLayer } from './ScreenFx'
 import { useI18n } from '../lib/i18n'
+import { useMigration } from '../lib/migration/MigrationProvider'
 import { captureScreen, fx, recentHandoff, registerTransition } from '../lib/particleHandoff'
 import { isStage, STAGE_ORDER, type Stage, type Target } from '../lib/stages'
 
@@ -26,13 +27,13 @@ const BACK: Partial<Record<Stage, Stage>> = { setup: 'intro', analysis: 'setup',
 
 export default function FlowApp() {
   const { t, lang } = useI18n()
+  const { provider } = useMigration()
   const [stage, setStage] = useState<Stage>('intro')
   const [started, setStarted] = useState(false)
   const [sphereFormed, setSphereFormed] = useState(false)
   const [showPrompt, setShowPrompt] = useState(false)
   const [textReady, setTextReady] = useState(false)
   const [target, setTarget] = useState<Target>('onprem')
-  const [analysisResults, setAnalysisResults] = useState<AnalysisUpdate[]>([])
   const [demoPanel, setDemoPanel] = useState(false)
   // 단계 화면을 처음부터 다시 그리기 위한 값(다시 보기·단계 이동에 쓴다)
   const [round, setRound] = useState(0)
@@ -161,14 +162,11 @@ export default function FlowApp() {
           onClick={() => go('setup')}>{t('prompt.yes')}</button>}
       </div>
     </section>}
-    {stage === 'setup' && <MigrationSetup target={target} onTarget={setTarget} onNext={() => { setAnalysisResults([]); go('analysis') }} />}
+    {stage === 'setup' && <MigrationSetup target={target} onTarget={setTarget} onNext={() => { provider.start({ target }); go('analysis') }} />}
     {stage === 'setup' && <ArriveMorph key={'setup' + round} />}
-    {stage === 'analysis' && <AnalysisStage key={round} updates={analysisResults.length ? analysisResults : undefined} onAdvance={results => {
-      setAnalysisResults(results)
-      go('rehearsal')
-    }} />}
+    {stage === 'analysis' && <AnalysisStage key={round} target={target} onAdvance={() => go('rehearsal')} />}
     {stage === 'rehearsal' && <RehearsalStage key={round} target={target} onNext={next('planning')} />}
-    {stage === 'planning' && <AIPlanningStage key={round} analysis={analysisResults} target={target} onNext={next('approval')} />}
+    {stage === 'planning' && <AIPlanningStage key={round} target={target} onNext={next('approval')} />}
     {stage === 'planning' && <ArriveMorph key={'planning' + round} />}
     {stage === 'approval' && <ApprovalStage key={round} target={target} onApprove={next('provisioning')} onCancel={() => jump('intro')} />}
     {stage === 'approval' && <ArriveMorph key={'approval' + round} />}

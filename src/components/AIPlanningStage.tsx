@@ -1,10 +1,10 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import type { AnalysisUpdate } from './AnalysisStage'
 import type { Target } from '../lib/stages'
 import { useT, type MsgKey, type Translate } from '../lib/i18n'
 import { ViewTabs } from './DiagramParts'
+import { useMigration } from '../lib/migration/MigrationProvider'
 
 type PlanStep = { id: string; group: 'infrastructure' | 'code' }
 
@@ -147,7 +147,8 @@ function PlanParticleFlow({ stage }: { stage: RefObject<HTMLElement | null> }) {
   return <canvas ref={canvasRef} className="plan-particle-flow" aria-hidden="true" />
 }
 
-export default function AIPlanningStage({ analysis, target, onNext }: { analysis: AnalysisUpdate[]; target: Target; onNext: () => void }) {
+export default function AIPlanningStage({ target, onNext }: { target: Target; onNext: () => void }) {
+  const analysis = useMigration().state.analysis.findings
   const t = useT()
   const stageRef = useRef<HTMLElement>(null)
   const [visibleCount, setVisibleCount] = useState(0)

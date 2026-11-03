@@ -3,39 +3,14 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import ParticleReveal from './ParticleReveal'
 import { useT, type MsgKey } from '../lib/i18n'
+import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
+import type { AnalysisFindingData, ScanMethod, Target } from '../lib/migration/events'
 
 /** 11/2 회의에서 정한 스캔 근거 4가지: 코드 호출 확인 · IAM 역할 추적 · CloudTrail 실제 호출 기록 · 리소스 설정 확인 */
-export type ScanMethod = 'code' | 'iam' | 'trail' | 'config'
 const SCAN_METHODS: ScanMethod[] = ['config', 'code', 'iam', 'trail']
 
-export type AnalysisUpdate = {
-  id: string
-  stream: 'infrastructure' | 'code'
-  progress: number
-  key: string
-  /** 이 발견의 근거가 된 스캔 방식(여러 방식이 겹칠수록 확실하다) */
-  via?: ScanMethod[]
-  /** 비어 있으면 화면에서 key로 사전을 찾아 현재 언어로 보여 준다(데모 데이터). 백엔드 값은 그대로 쓴다. */
-  message: string
-  detail: string
-}
-
-const DEMO_UPDATES: Array<AnalysisUpdate & { after: number }> = [
-  { after: 3200, id: 'infra-vpc', stream: 'infrastructure', progress: 14, key: 'vpc', via: ['config'], message: '', detail: '' },
-  { after: 3700, id: 'code-compose', stream: 'code', progress: 15, key: 'compose', via: ['code'], message: '', detail: '' },
-  { after: 4300, id: 'infra-alb', stream: 'infrastructure', progress: 28, key: 'alb', via: ['config'], message: '', detail: '' },
-  { after: 5000, id: 'code-app', stream: 'code', progress: 31, key: 'app', via: ['code'], message: '', detail: '' },
-  { after: 5800, id: 'infra-ec2', stream: 'infrastructure', progress: 43, key: 'ec2', via: ['config'], message: '', detail: '' },
-  { after: 6400, id: 'code-db', stream: 'code', progress: 47, key: 'database', via: ['code'], message: '', detail: '' },
-  { after: 7200, id: 'infra-postgres', stream: 'infrastructure', progress: 61, key: 'postgres', via: ['config'], message: '', detail: '' },
-  { after: 7900, id: 'code-s3', stream: 'code', progress: 63, key: 'sdk', via: ['code', 'trail'], message: '', detail: '' },
-  { after: 8600, id: 'infra-s3', stream: 'infrastructure', progress: 74, key: 's3', via: ['config', 'trail'], message: '', detail: '' },
-  { after: 9400, id: 'code-env', stream: 'code', progress: 78, key: 'env', via: ['code'], message: '', detail: '' },
-  { after: 10200, id: 'infra-network', stream: 'infrastructure', progress: 88, key: 'network', via: ['config'], message: '', detail: '' },
-  { after: 10900, id: 'code-auth', stream: 'code', progress: 92, key: 'auth', via: ['iam', 'code'], message: '', detail: '' },
-  { after: 11700, id: 'infra-iam', stream: 'infrastructure', progress: 100, key: 'iam', via: ['iam', 'config'], message: '', detail: '' },
-  { after: 12400, id: 'code-done', stream: 'code', progress: 100, key: 'code-done', via: ['code'], message: '', detail: '' },
-]
+/** 발견 항목. message·detail이 비어 있으면 화면에서 key로 사전을 찾아 현재 언어로 보여 준다. 백엔드 값은 그대로 쓴다. */
+export type AnalysisUpdate = AnalysisFindingData
 
 const INFRA_NODES = [
   { key: 'vpc' },
@@ -127,9 +102,9 @@ type Handoff = {
   sources: Array<{ x: number; y: number; dx: number; dy: number }>
 }
 
-export default function AnalysisStage({ updates, onAdvance, orbHandoff = false }: {
-  updates?: AnalysisUpdate[]
-  onAdvance: (results: AnalysisUpdate[]) => void
+export default function AnalysisStage({ target, onAdvance, orbHandoff = false }: {
+  target: Target
+  onAdvance: () => void
   /** 분석 직후에 계획 화면이 올 때만 쓰는 오브 이동 연출. 단계 순서가 바뀌어(분석 → 샌드박스) 지금은 끄고, 화면 전환 입자 층이 대신한다. */
   orbHandoff?: boolean
 }) {
@@ -137,7 +112,9 @@ export default function AnalysisStage({ updates, onAdvance, orbHandoff = false }
   const stageRef = useRef<HTMLElement>(null)
   const advanceRef = useRef(onAdvance)
   const advancedRef = useRef(false)
-  const [demoUpdates, setDemoUpdates] = useState<AnalysisUpdate[]>([])
+  const { state, mode } = useMigration()
+  // 이미 끝난 분석을 다시 보러 온 경우(뒤로가기)에는 결과를 그대로 보여 주고 목업 표시(DEMO)도 달지 않는다.
+  const replayed = useRef(state.analysis.done).current
   const [ready, setReady] = useState(false)
   const [handoff, setHandoff] = useState<Handoff | null>(null)
   const [leaving, setLeaving] = useState(false)
@@ -145,14 +122,9 @@ export default function AnalysisStage({ updates, onAdvance, orbHandoff = false }
 
   useEffect(() => { advanceRef.current = onAdvance }, [onAdvance])
 
-  useEffect(() => {
-    if (updates) return
-    const timers = DEMO_UPDATES.map(({ after, ...update }) =>
-      window.setTimeout(() => setDemoUpdates(current => [...current, update]), after))
-    return () => timers.forEach(timer => window.clearTimeout(timer))
-  }, [updates])
-
-  const activeUpdates = updates ?? demoUpdates
+  // 발견 항목은 데이터 계층에서 받는다(목업은 타이머 대본, SSE는 서버 이벤트). 화면이 열리면 바로 시작한다.
+  useStageFeed('analysis', true, target)
+  const activeUpdates = state.analysis.findings
   const infrastructure = progressFor(activeUpdates, 'infrastructure')
   const code = progressFor(activeUpdates, 'code')
   const discovered = new Set(activeUpdates.map(update => update.key))
@@ -165,7 +137,7 @@ export default function AnalysisStage({ updates, onAdvance, orbHandoff = false }
     const timer = window.setTimeout(() => {
       if (!orbHandoff || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
         advancedRef.current = true
-        advanceRef.current(activeUpdates)
+        advanceRef.current()
         return
       }
       const host = stageRef.current
@@ -201,7 +173,7 @@ export default function AnalysisStage({ updates, onAdvance, orbHandoff = false }
     const timer = window.setTimeout(() => {
       if (advancedRef.current) return
       advancedRef.current = true
-      advanceRef.current(activeUpdates)
+      advanceRef.current()
     }, 2050)
     return () => window.clearTimeout(timer)
   }, [leaving, activeUpdates])
@@ -217,7 +189,7 @@ export default function AnalysisStage({ updates, onAdvance, orbHandoff = false }
         <div className="analysis-discovery-title">
           <span className="analysis-live-dot" data-particle-target="circle" />
           <strong data-particle-target="text">{t('analysis.live')}</strong>
-          {!updates && <small data-particle-target="text">DEMO</small>}
+          {mode === 'mock' && !replayed && <small data-particle-target="text">DEMO</small>}
         </div>
         <div className="scan-methods" role="group" aria-label={t('scan.title')}>
           {SCAN_METHODS.map(method => <span key={method} data-particle-target="text" className={usedMethods.has(method) ? 'is-used' : ''}>{t(('scan.' + method) as MsgKey)}</span>)}
