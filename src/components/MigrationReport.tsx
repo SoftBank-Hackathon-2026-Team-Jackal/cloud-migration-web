@@ -2,23 +2,12 @@
 
 import { useI18n, type MsgKey, type Translate } from '../lib/i18n'
 import type { Target } from '../lib/stages'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import ProposalTag from './ProposalTag'
-import { aiFixCount } from '../lib/demoConfig'
+import { useMigration } from '../lib/migration/MigrationProvider'
+import type { ReportData } from '../lib/migration/events'
 import StabilityMonitor from './StabilityMonitor'
 import { ViewTabs } from './DiagramParts'
-
-/** 단계별 소요 시간(데모 값). 실제 연결 시 백엔드 이벤트의 시작·종료 시각으로 바꾼다. */
-const STAGES: Array<{ id: string; seconds: number }> = [
-  { id: 'analysis', seconds: 42 },
-  { id: 'rehearsal', seconds: 18 },
-  { id: 'planning', seconds: 9 },
-  { id: 'approval', seconds: 30 },
-  { id: 'provisioning', seconds: 130 },
-  { id: 'data', seconds: 275 },
-  { id: 'traffic', seconds: 80 },
-  { id: 'cutover', seconds: 12 },
-]
 
 const RESULTS = ['pause', 'fail', 'delay', 'loss', 'gate', 'ai'] as const
 
@@ -39,12 +28,12 @@ type Report = {
   demoNote: string
 }
 
-function buildReport(t: Translate, target: Target, language: string): Report {
+function buildReport(t: Translate, target: Target, language: string, data: ReportData): Report {
   const targetName = t(('target.' + target) as MsgKey)
-  const stages = STAGES.map(stage => ({
+  const stages = data.stages.map(stage => ({
     id: stage.id,
     label: t(('rail.' + stage.id) as MsgKey),
-    note: t(('report.stage.' + stage.id) as MsgKey, { target: targetName, n: aiFixCount() }),
+    note: t(('report.stage.' + stage.id) as MsgKey, { target: targetName, n: data.ai_fixes }),
     duration: clock(stage.seconds),
   }))
   return {
@@ -54,8 +43,8 @@ function buildReport(t: Translate, target: Target, language: string): Report {
     title: t('report.title'),
     summary: t('cutover.done.lead', { target: targetName }),
     stages,
-    total: clock(STAGES.reduce((sum, stage) => sum + stage.seconds, 0)),
-    results: RESULTS.map(id => ({ label: t(('report.res.' + id) as MsgKey), value: t(('report.res.' + id + 'Val') as MsgKey, { n: aiFixCount() }) })),
+    total: clock(data.stages.reduce((sum, stage) => sum + stage.seconds, 0)),
+    results: RESULTS.map(id => ({ label: t(('report.res.' + id) as MsgKey), value: t(('report.res.' + id + 'Val') as MsgKey, { n: data.ai_fixes }) })),
     notes: [
       { label: t('cutover.done.traffic'), value: t(target === 'onprem' ? 'cutover.done.trafficOnprem' : 'cutover.done.trafficGcp') },
       { label: t('cutover.done.rollback'), value: t('cutover.done.rollbackVal') + ' (' + t('tag.proposal') + ')' },
@@ -108,7 +97,10 @@ function download(name: string, text: string, type: string) {
 /** 전환이 끝난 뒤 한눈에 보는 이전 리포트. 타임라인·측정 결과·남은 것을 보여 주고 JSON·Markdown으로 내보낼 수 있다. */
 export default function MigrationReport({ target, onRestart }: { target: Target; onRestart: () => void }) {
   const { t, lang } = useI18n()
-  const report = buildReport(t, target, lang)
+  // 단계별 소요 시간과 AI 수정 개수는 리포트 데이터(GET /migrations/{id}/report)에서 온다.
+  const { state, provider } = useMigration()
+  useEffect(() => { provider.loadReport() }, [provider])
+  const report = buildReport(t, target, lang, state.report ?? { stages: [], ai_fixes: 0 })
   const [tab, setTab] = useState<'report' | 'monitor'>('report')
   const stamp = 'migration-report-' + target
   return <div className="flow-center">
