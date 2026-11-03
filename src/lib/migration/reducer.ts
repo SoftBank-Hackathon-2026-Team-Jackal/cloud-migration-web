@@ -60,6 +60,8 @@ export type Action =
   | { type: 'connection'; value: MigrationState['connection'] }
   | { type: 'report'; report: ReportData }
   | { type: 'cancelled' }
+  /** 공급자가 직접 알리는 실패(요청 실패, 이전을 찾을 수 없음 등) */
+  | { type: 'fail'; error: ErrorData }
 
 function upsert<T extends { id: string }>(list: T[], item: T): T[] {
   const index = list.findIndex(entry => entry.id === item.id)
@@ -161,17 +163,19 @@ function clearPhase(state: MigrationState, phase: BackendPhase): MigrationState 
 export function reducer(state: MigrationState, action: Action): MigrationState {
   switch (action.type) {
     case 'reset':
-      return { ...initialState, connection: state.connection }
+      return { ...initialState, connection: state.connection, report: state.report }
     case 'resetPhase':
       return clearPhase(state, action.phase)
     case 'started':
-      return { ...initialState, migrationId: action.migrationId, status: 'running', connection: state.connection }
+      return { ...initialState, migrationId: action.migrationId, status: 'running', connection: state.connection, report: state.report }
     case 'connection':
       return state.connection === action.value ? state : { ...state, connection: action.value }
     case 'report':
       return { ...state, report: action.report }
     case 'cancelled':
       return { ...state, status: 'cancelled' }
+    case 'fail':
+      return { ...fail(state, action.error.phase ?? 'analysis', { code: action.error.code, message: action.error.message, retryable: action.error.retryable }), error: action.error }
     case 'event': {
       const event = action.event
       if (event.type === 'snapshot') {

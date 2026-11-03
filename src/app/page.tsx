@@ -1,5 +1,6 @@
 import FlowApp from '../components/FlowApp'
+import { MigrationProvider } from '../lib/migration/MigrationProvider'
 
 export default function Page() {
-  return <FlowApp />
+  return <MigrationProvider><FlowApp /></MigrationProvider>
 }
