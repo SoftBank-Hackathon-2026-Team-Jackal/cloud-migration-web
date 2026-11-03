@@ -1,0 +1,192 @@
+/**
+ * 이벤트를 화면이 읽는 상태로 바꾸는 reducer. 순수 함수만 두고 React에 의존하지 않는다(런타임 import 없음).
+ * 같은 id의 이벤트는 덮어쓰므로(upsert) 재접속·단계 재전송으로 같은 이벤트가 다시 와도 결과가 같다.
+ */
+import type {
+  AnalysisFindingData, ApprovalRequiredData, BackendPhase, BuildCheckData, BuildFixData, CutoverResultData,
+  DataProgressData, ErrorData, MigrationEvent, MigrationStatus, PlanStepData, ProvisionResourceData,
+  ReportData, TrafficNote, TrafficSnapshotData,
+} from './events'
+
+export const LAG_HISTORY_POINTS = 48
+const TRAFFIC_LOG_LIMIT = 30
+
+export type TrafficLogEntry = { id: number; at: string; key: Exclude<TrafficNote['key'], 'restart'>; params: Record<string, string | number> }
+export type Failure = { code: string; message: string; retryable: boolean }
+
+export type MigrationState = {
+  migrationId: string | null
+  status: MigrationStatus
+  /** 연결이 끊겨 다시 연결하는 중이면 reconnecting */
+  connection: 'connected' | 'reconnecting'
+  lastSeq: number
+  analysis: { findings: AnalysisFindingData[]; done: boolean }
+  build: { checks: Record<string, BuildCheckData>; lastCheck: BuildCheckData | null; fixes: BuildFixData[] }
+  plan: { steps: PlanStepData[]; ready: boolean }
+  approval: { required: boolean; excluded: string[]; rollbackPolicy: string; cutoverRequired: boolean }
+  provision: { resources: ProvisionResourceData[] }
+  data: { current: DataProgressData | null; lagHistory: number[] }
+  traffic: { snapshot: TrafficSnapshotData | null; logs: TrafficLogEntry[]; logCounter: number }
+  cutover: { doneSteps: number; verifying: boolean; results: CutoverResultData[] }
+  report: ReportData | null
+  failures: Partial<Record<BackendPhase, Failure>>
+  error: ErrorData | null
+}
+
+export const initialState: MigrationState = {
+  migrationId: null,
+  status: 'idle',
+  connection: 'connected',
+  lastSeq: 0,
+  analysis: { findings: [], done: false },
+  build: { checks: {}, lastCheck: null, fixes: [] },
+  plan: { steps: [], ready: false },
+  approval: { required: false, excluded: [], rollbackPolicy: '', cutoverRequired: false },
+  provision: { resources: [] },
+  data: { current: null, lagHistory: [] },
+  traffic: { snapshot: null, logs: [], logCounter: 0 },
+  cutover: { doneSteps: 0, verifying: false, results: [] },
+  report: null,
+  failures: {},
+  error: null,
+}
+
+export type Action =
+  | { type: 'event'; event: MigrationEvent }
+  | { type: 'reset' }
+  /** 목업 전용: 단계 화면을 떠날 때 그 단계의 값을 비운다(다시 들어오면 처음부터 시작한다). */
+  | { type: 'resetPhase'; phase: BackendPhase }
+  | { type: 'started'; migrationId: string }
+  | { type: 'connection'; value: MigrationState['connection'] }
+  | { type: 'report'; report: ReportData }
+  | { type: 'cancelled' }
+
+function upsert<T extends { id: string }>(list: T[], item: T): T[] {
+  const index = list.findIndex(entry => entry.id === item.id)
+  if (index < 0) return [...list, item]
+  const next = list.slice()
+  next[index] = item
+  return next
+}
+
+function addTrafficLogs(state: MigrationState, data: TrafficSnapshotData, at: string) {
+  let logs = state.traffic.logs
+  let counter = state.traffic.logCounter
+  for (const note of data.notes ?? []) {
+    if (note.key === 'restart') { logs = []; continue }
+    counter += 1
+    logs = [{ id: counter, at, key: note.key, params: note.params ?? {} }, ...logs].slice(0, TRAFFIC_LOG_LIMIT)
+  }
+  return { logs, logCounter: counter }
+}
+
+function fail(state: MigrationState, phase: BackendPhase, failure: Failure): MigrationState {
+  return { ...state, status: 'failed', failures: { ...state.failures, [phase]: failure } }
+}
+
+/** seq 검사 없이 이벤트 하나를 상태에 반영한다. */
+function applyEvent(state: MigrationState, event: MigrationEvent): MigrationState {
+  let next: MigrationState = state
+  // 일시 정지(승인 대기) 중이던 이전은 다음 이벤트가 오면 다시 진행 중이다.
+  if (state.status === 'idle' || state.status === 'waiting') next = { ...next, status: 'running' }
+  if (event.status === 'failed' && event.type !== 'error') {
+    next = fail(next, event.phase, { code: event.type, message: event.message ?? '', retryable: false })
+  }
+  switch (event.type) {
+    case 'snapshot':
+      return next
+    case 'analysis.finding':
+      return { ...next, analysis: { ...next.analysis, findings: upsert(next.analysis.findings, event.data) } }
+    case 'analysis.done':
+      return { ...next, analysis: { ...next.analysis, done: true } }
+    case 'build.check':
+      return { ...next, build: { ...next.build, checks: { ...next.build.checks, [event.data.id]: event.data }, lastCheck: event.data } }
+    case 'build.fix':
+      return { ...next, build: { ...next.build, fixes: upsert(next.build.fixes, event.data) } }
+    case 'plan.step':
+      return { ...next, plan: { ...next.plan, steps: upsert(next.plan.steps, event.data) } }
+    case 'plan.ready':
+      return { ...next, plan: { ...next.plan, ready: true } }
+    case 'approval.required': {
+      const data: ApprovalRequiredData = event.data
+      const approval = data.gate === 'cutover'
+        ? { ...next.approval, cutoverRequired: true }
+        : { ...next.approval, required: true, excluded: data.excluded, rollbackPolicy: data.rollback_policy }
+      return { ...next, status: 'waiting', approval }
+    }
+    case 'provision.resource':
+      return { ...next, provision: { resources: upsert(next.provision.resources, event.data) } }
+    case 'data.progress': {
+      const lag = event.data.lag_ms
+      const lagHistory = lag === null ? next.data.lagHistory : [...next.data.lagHistory.slice(-(LAG_HISTORY_POINTS - 1)), lag]
+      return { ...next, data: { current: event.data, lagHistory } }
+    }
+    case 'traffic.snapshot':
+      return { ...next, traffic: { snapshot: event.data, ...addTrafficLogs(next, event.data, event.at) } }
+    case 'cutover.step': {
+      const { n, state: stepState } = event.data
+      const doneSteps = stepState === 'running' ? Math.max(next.cutover.doneSteps, n - 1) : Math.max(next.cutover.doneSteps, n)
+      return { ...next, cutover: { ...next.cutover, doneSteps, verifying: next.cutover.verifying || stepState === 'verify' } }
+    }
+    case 'cutover.result': {
+      const results = upsert(next.cutover.results, event.data)
+      // 결과가 3개(실패·지연·유실) 모두 모이면 이전 완료
+      return { ...next, cutover: { ...next.cutover, results }, status: results.length >= 3 ? 'done' : next.status }
+    }
+    case 'error': {
+      const phase = event.data.phase ?? event.phase
+      if (event.data.code === 'cancelled') return { ...next, status: 'cancelled', error: event.data }
+      return { ...fail(next, phase, { code: event.data.code, message: event.data.message, retryable: event.data.retryable }), error: event.data }
+    }
+  }
+}
+
+/** 단계 하나의 값을 초기 상태로 되돌린다. */
+function clearPhase(state: MigrationState, phase: BackendPhase): MigrationState {
+  const failures = { ...state.failures }
+  delete failures[phase]
+  const base = { ...state, failures }
+  switch (phase) {
+    case 'analysis': return { ...base, analysis: initialState.analysis }
+    case 'build': return { ...base, build: initialState.build }
+    case 'planning': return { ...base, plan: initialState.plan }
+    case 'awaiting_approval': return { ...base, approval: initialState.approval }
+    case 'provisioning': return { ...base, provision: initialState.provision }
+    case 'data_copy': return { ...base, data: initialState.data }
+    case 'traffic': return { ...base, traffic: initialState.traffic }
+    case 'verification': return { ...base, cutover: initialState.cutover, approval: { ...base.approval, cutoverRequired: false } }
+  }
+}
+
+export function reducer(state: MigrationState, action: Action): MigrationState {
+  switch (action.type) {
+    case 'reset':
+      return { ...initialState, connection: state.connection }
+    case 'resetPhase':
+      return clearPhase(state, action.phase)
+    case 'started':
+      return { ...initialState, migrationId: action.migrationId, status: 'running', connection: state.connection }
+    case 'connection':
+      return state.connection === action.value ? state : { ...state, connection: action.value }
+    case 'report':
+      return { ...state, report: action.report }
+    case 'cancelled':
+      return { ...state, status: 'cancelled' }
+    case 'event': {
+      const event = action.event
+      if (event.type === 'snapshot') {
+        const data = event.data
+        let next: MigrationState = data.reset
+          ? { ...initialState, connection: state.connection, report: state.report, migrationId: data.migration_id }
+          : { ...state, migrationId: data.migration_id }
+        for (const item of data.events) {
+          if (item.seq > next.lastSeq || data.reset) next = { ...applyEvent(next, item), lastSeq: Math.max(next.lastSeq, item.seq) }
+        }
+        return { ...next, status: data.status, lastSeq: Math.max(next.lastSeq, event.seq) }
+      }
+      // 이미 반영한 이벤트(재접속으로 겹쳐 온 것)는 건너뛴다.
+      if (event.seq <= state.lastSeq) return state
+      return { ...applyEvent(state, event), lastSeq: event.seq }
+    }
+  }
+}

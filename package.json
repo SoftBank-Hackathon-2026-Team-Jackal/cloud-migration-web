@@ -6,7 +6,9 @@
     "dev": "next dev -H 127.0.0.1 -p 3000",
     "build": "next build",
     "start": "next start -H 127.0.0.1 -p 3000",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"tests/unit/*.test.ts\"",
+    "mock:server": "node scripts/mock-sse-server.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.3.1",
