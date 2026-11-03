@@ -16,6 +16,7 @@ import StageRail from './StageRail'
 import DemoControls from './DemoControls'
 import LangSwitch from './LangSwitch'
 import BackButton from './BackButton'
+import { ConnectionToast, StatusPanel } from './MigrationStatus'
 import { ArriveMorph, DISSOLVE_MS, TransitionLayer } from './ScreenFx'
 import { useI18n } from '../lib/i18n'
 import { useMigration } from '../lib/migration/MigrationProvider'
@@ -174,9 +175,11 @@ export default function FlowApp() {
     {stage === 'data' && <DataMigrationStage key={round} target={target} onNext={next('traffic')} />}
     {stage === 'traffic' && <TrafficShiftStage key={round + target} target={target} onNext={next('cutover')} />}
     {stage === 'cutover' && <CutoverStage key={round + target} target={target} onRestart={() => jump('intro')} />}
+    <StatusPanel stage={stage} onHome={() => jump('intro')} />
     <TransitionLayer />
     {backTo && !dissolving && <BackButton onBack={goBack} />}
     <div className={'flow-toast' + (notice ? ' is-on' : '')} role="status" aria-hidden={!notice}>{t('nav.noBack')}</div>
+    <ConnectionToast />
     <LangSwitch />
     {exited && <StageRail stage={stage} />}
     {demoPanel && <DemoControls stage={stage} target={target} onJump={jump} onTarget={setTarget} />}

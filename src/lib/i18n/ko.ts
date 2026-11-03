@@ -643,6 +643,17 @@ export const ko = {
   "rehearsal.aiTip.host.evidence": "근거: 코드 호출 확인 · 리소스 설정 확인",
   "diagram.zoom": "크게 보기",
   "diagram.close": "닫기",
+  "conn.reconnecting": "연결이 끊겨 다시 연결하는 중이에요…",
+  "fail.step": "단계 실패",
+  "fail.title": "이 단계에서 문제가 생겼어요",
+  "fail.lead": "이전 작업이 이 단계에서 실패해 멈췄습니다.",
+  "fail.noRetry": "이 단계는 다시 시도할 수 없어요. 처음으로 돌아가 새로 시작해 주세요.",
+  "fail.code": "오류 코드 {code}",
+  "fail.home": "처음으로",
+  "cancel.step": "이전 취소됨",
+  "cancel.title": "이전이 취소되었어요",
+  "cancel.lead": "이 이전 작업은 취소되어 더 진행되지 않습니다. 처음으로 돌아가 새로 시작할 수 있어요.",
+  "cancel.home": "처음으로",
 } as const
 
 export type MsgKey = keyof typeof ko
