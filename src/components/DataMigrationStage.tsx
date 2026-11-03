@@ -1,58 +1,43 @@
 'use client'
 
-import { useEffect, useState } from 'react'
 import StageShell from './StageShell'
 import ReplicationDiagram from './ReplicationDiagram'
 import { useI18n, type MsgKey } from '../lib/i18n'
+import type { Target } from '../lib/stages'
+import type { DataStep } from '../lib/migration/events'
+import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
+import { DATA_TOTAL_ROWS } from '../lib/migration/script'
 
-type Phase = 'connect' | 'dump' | 'cdc' | 'ready'
+type Phase = DataStep
 
 const STEPS: Array<{ id: Phase }> = [{ id: 'connect' }, { id: 'dump' }, { id: 'cdc' }, { id: 'ready' }]
 
-const TOTAL_ROWS = 128400
 const POINTS = 48
 
-function lagAt(seconds: number): number | null {
-  if (seconds < 5) return null
-  const base = 2200 * Math.exp(-(seconds - 5) * 0.62)
-  const wobble = Math.sin(seconds * 3.1) * 24 + Math.cos(seconds * 1.7) * 14
-  return Math.max(0, Math.round(base + wobble * Math.min(1, base / 200)))
-}
-
-export default function DataMigrationStage({ onNext }: { onNext: () => void }) {
+export default function DataMigrationStage({ target, onNext }: { target: Target; onNext: () => void }) {
   const { t } = useI18n()
   return <StageShell kicker="DATA REPLICATION" title={t('data.title')}
     subtitle={t('data.subtitle')}>
-    {ready => <DataBody ready={ready} onNext={onNext} />}
+    {ready => <DataBody ready={ready} target={target} onNext={onNext} />}
   </StageShell>
 }
 
-function DataBody({ ready, onNext }: { ready: boolean; onNext: () => void }) {
+function DataBody({ ready, target, onNext }: { ready: boolean; target: Target; onNext: () => void }) {
   const { t, lang } = useI18n()
   const locale = lang === 'ko' ? 'ko-KR' : lang === 'ja' ? 'ja-JP' : 'en-US'
-  const [seconds, setSeconds] = useState(0)
-  const [history, setHistory] = useState<number[]>([])
-
-  useEffect(() => {
-    if (!ready) return
-    const began = performance.now()
-    const timer = window.setInterval(() => {
-      const elapsed = (performance.now() - began) / 1000
-      setSeconds(elapsed)
-      const lag = lagAt(elapsed)
-      if (lag !== null) setHistory(current => [...current.slice(-(POINTS - 1)), lag])
-    }, 250)
-    return () => window.clearInterval(timer)
-  }, [ready])
-
-  const dump = Math.max(0, Math.min(1, (seconds - 1.6) / 3.2))
-  const changes = seconds < 5 ? 0 : Math.round((seconds - 5) * 340)
-  const rows = Math.round(dump * TOTAL_ROWS) + changes
-  const lag = lagAt(seconds)
-  const phase: Phase = seconds < 1.6 ? 'connect' : seconds < 5 ? 'dump' : lag !== null && lag > 40 ? 'cdc' : 'ready'
-  const ready2 = phase === 'ready' && seconds > 9.5
+  // 복제 진행 값은 data.progress 이벤트로 받는다(시작 전에는 연결 단계의 0 값).
+  const { state } = useMigration()
+  useStageFeed('data_copy', ready, target)
+  const progress = state.data.current
+  const history = state.data.lagHistory
+  const phase: Phase = progress?.step ?? 'connect'
+  const ready2 = phase === 'ready'
   const phaseIndex = STEPS.findIndex(step => step.id === phase)
-  const writesPerSec = 118 + Math.round(Math.sin(seconds * 1.3) * 14)
+  const totalRows = progress?.total_rows ?? DATA_TOTAL_ROWS
+  const rows = progress?.rows ?? 0
+  const lag = progress?.lag_ms ?? null
+  const dump = (progress?.dump_percent ?? 0) / 100
+  const writesPerSec = progress?.writes_per_sec ?? 118
 
   const max = Math.max(2400, ...history)
   const path = history.map((value, index) => {
@@ -80,7 +65,7 @@ function DataBody({ ready, onNext }: { ready: boolean; onNext: () => void }) {
     <aside className="flow-panel" aria-label={t('data.statusAria')}>
       <ReplicationDiagram phase={phase} done={ready2} />
       <div className="flow-metrics">
-        <div><small>{t('data.rows')}</small><strong>{rows.toLocaleString(locale)}</strong><em>/ {TOTAL_ROWS.toLocaleString(locale)}+</em></div>
+        <div><small>{t('data.rows')}</small><strong>{rows.toLocaleString(locale)}</strong><em>/ {totalRows.toLocaleString(locale)}+</em></div>
         <div><small>{t('data.lag')}</small><strong>{lag === null ? '—' : lag.toLocaleString(locale) + ' ms'}</strong><em>{lag === null ? t('data.lagWait') : lag <= 40 ? t('data.lagZero') : t('data.lagDown')}</em></div>
         <div><small>{t('data.writes')}</small><strong>{writesPerSec}/s</strong><em>{t('data.writesOk')}</em></div>
       </div>

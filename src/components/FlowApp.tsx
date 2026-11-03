@@ -171,7 +171,7 @@ export default function FlowApp() {
     {stage === 'approval' && <ApprovalStage key={round} target={target} onApprove={next('provisioning')} onCancel={() => jump('intro')} />}
     {stage === 'approval' && <ArriveMorph key={'approval' + round} />}
     {stage === 'provisioning' && <ProvisioningStage key={round + target} target={target} onNext={next('data')} />}
-    {stage === 'data' && <DataMigrationStage key={round} onNext={next('traffic')} />}
+    {stage === 'data' && <DataMigrationStage key={round} target={target} onNext={next('traffic')} />}
     {stage === 'traffic' && <TrafficShiftStage key={round + target} target={target} onNext={next('cutover')} />}
     {stage === 'cutover' && <CutoverStage key={round + target} target={target} onRestart={() => jump('intro')} />}
     <TransitionLayer />

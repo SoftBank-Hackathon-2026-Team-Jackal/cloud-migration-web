@@ -7,11 +7,15 @@ import ArchitectureDiagram, { type DiagramView } from './ArchitectureDiagram'
 import CostCompare from './CostCompare'
 import GovernanceMatrix from './GovernanceMatrix'
 import { ViewTabs } from './DiagramParts'
+import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
 
 type Props = { target: Target; onApprove: () => void; onCancel: () => void }
 
 export default function ApprovalStage({ target, onApprove, onCancel }: Props) {
   const t = useT()
+  const { state, provider } = useMigration()
+  // 승인 요청(approval.required)을 받는 화면. 승인·취소는 데이터 계층을 거쳐 서버로 간다.
+  useStageFeed('awaiting_approval', true, target)
   const [checked, setChecked] = useState(false)
   const [cancelled, setCancelled] = useState(false)
   const [view, setView] = useState<DiagramView>('after')
@@ -28,7 +32,8 @@ export default function ApprovalStage({ target, onApprove, onCancel }: Props) {
     [t('approval.row.rollback'), t('approval.val.rollback')],
     [t('approval.row.pause'), t('approval.val.pause')],
   ]
-  const excluded = [t('approval.ex1'), t('approval.ex2')]
+  // 서버가 제외 항목을 보내 주면 그대로, 비어 있으면 화면의 기본 문구를 쓴다.
+  const excluded = state.approval.excluded.length > 0 ? state.approval.excluded : [t('approval.ex1'), t('approval.ex2')]
 
   if (cancelled) {
     return <section className="flow-stage approval-stage is-ready" aria-label={t('approval.cancelled.step')}>
@@ -61,8 +66,8 @@ export default function ApprovalStage({ target, onApprove, onCancel }: Props) {
           <span>{t('approval.check')}</span>
         </label>
         <div className="approval-actions">
-          <button type="button" className="flow-secondary" onClick={() => setCancelled(true)}>{t('approval.cancel')}</button>
-          <button type="button" className="flow-primary" disabled={!checked} onClick={onApprove}>{t('approval.go')} <span aria-hidden="true">→</span></button>
+          <button type="button" className="flow-secondary" onClick={() => { provider.cancel(); setCancelled(true) }}>{t('approval.cancel')}</button>
+          <button type="button" className="flow-primary" disabled={!checked} onClick={() => { provider.approve(); onApprove() }}>{t('approval.go')} <span aria-hidden="true">→</span></button>
         </div>
       </div>
       <aside className="approval-diagram" aria-label={t('approval.diagram.title')}>

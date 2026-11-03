@@ -1,18 +1,14 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import StageShell from './StageShell'
-import { useScript, type TimedItem } from '../lib/useScript'
+import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
+import { PROVISION_NODES as NODES } from '../lib/migration/script'
 import type { Target } from '../lib/stages'
 import { useT, type MsgKey } from '../lib/i18n'
 import ArchitectureDiagram, { type NodeState } from './ArchitectureDiagram'
 import ZoomableDiagram from './ZoomableDiagram'
 import { ViewTabs } from './DiagramParts'
-
-const NODES: Record<Target, string[]> = {
-  gcp: ['network', 'cluster', 'db', 'app', 'lb', 'cert'],
-  onprem: ['agent', 'cluster', 'db', 'app', 'relay', 'cert'],
-}
 
 // 만들어지는 리소스가 구성도의 어느 요소에 해당하는지
 const NODE_MAP: Record<Target, Record<string, string[]>> = {
@@ -20,27 +16,19 @@ const NODE_MAP: Record<Target, Record<string, string[]>> = {
   onprem: { agent: ['group'], cluster: ['group'], db: ['db'], app: ['app'], relay: ['entry'], cert: ['dns', 'user'] },
 }
 
-type LogEvent = { id: string; key: string; progress: number }
-
-function buildScript(target: Target): Array<TimedItem<LogEvent>> {
-  return NODES[target].map((key, index) => ({
-    after: 600 + index * 1250,
-    item: { id: target + '-' + key, key, progress: Math.round(((index + 1) / NODES[target].length) * 100) },
-  }))
-}
-
 export default function ProvisioningStage({ target, onNext }: { target: Target; onNext: () => void }) {
   const t = useT()
-  const script = useMemo(() => buildScript(target), [target])
   return <StageShell kicker="PROVISIONING" title={t('prov.title')}
     subtitle={t('prov.subtitle', { target: t(('target.' + target) as MsgKey) })}>
-    {ready => <ProvisioningBody ready={ready} target={target} script={script} onNext={onNext} />}
+    {ready => <ProvisioningBody ready={ready} target={target} onNext={onNext} />}
   </StageShell>
 }
 
-function ProvisioningBody({ ready, target, script, onNext }: { ready: boolean; target: Target; script: Array<TimedItem<LogEvent>>; onNext: () => void }) {
+function ProvisioningBody({ ready, target, onNext }: { ready: boolean; target: Target; onNext: () => void }) {
   const t = useT()
-  const events = useScript(script, ready)
+  // 만들어진 리소스는 provision.resource 이벤트로 받는다.
+  const events = useMigration().state.provision.resources
+  useStageFeed('provisioning', ready, target)
   const nodes = NODES[target]
   const text = (key: string, field: 'name' | 'detail' | 'log' | 'info') => t(('prov.' + target + '.' + key + '.' + field) as MsgKey)
   const targetName = t(('target.' + target) as MsgKey)
