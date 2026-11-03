@@ -1,0 +1,90 @@
+#!/usr/bin/env node
+/**
+ * 핵심 흐름 브라우저 테스트(헤드리스): 소개 → 설정 → 분석 → 샌드박스 → 계획 → 승인 → 구축 → 데이터 → 트래픽 → DB 전환 → 리포트.
+ * 목업 모드와 SSE 모드에서 같은 흐름이 끝까지 돈다.
+ *
+ *   BASE_URL=http://127.0.0.1:3000 node tests/e2e/flow.mjs          # 이미 떠 있는 앱(npm run dev / start)
+ *   NEXT_PUBLIC_API_MODE=sse 로 만든 앱 + npm run mock:server 를 띄우고 같은 명령을 실행하면 SSE 모드를 시험한다.
+ *
+ * playwright가 필요하다(저장소 의존성에는 넣지 않았다): 전역 설치(NODE_PATH) 또는 `npm i --no-save playwright`.
+ */
+import { createRequire } from 'node:module'
+
+const require = createRequire(import.meta.url)
+let chromium
+try { ({ chromium } = require('playwright')) } catch {
+  console.error('playwright를 찾지 못했습니다. `npm i --no-save playwright` 후 다시 실행하세요.')
+  process.exit(2)
+}
+
+const BASE_URL = process.env.BASE_URL || 'http://127.0.0.1:3000'
+const LANG = process.env.LANG_ID || 'ko'
+const TIMEOUT = 60000
+const problems = []
+const note = message => console.log('  ' + message)
+const check = (ok, message) => { if (!ok) problems.push(message); console.log((ok ? '  ✓ ' : '  ✗ ') + message) }
+
+const browser = await chromium.launch()
+const page = await browser.newPage({ viewport: { width: 1536, height: 800 } })
+page.setDefaultTimeout(TIMEOUT)
+page.on('pageerror', error => problems.push('pageerror: ' + error))
+page.on('console', message => { if (message.type() === 'error') problems.push('console.error: ' + message.text().slice(0, 200)) })
+
+// 버튼이 켜질 때까지 기다렸다가 누르고, 화면이 바뀔 시간(입자 전환 ~0.8초)을 준다.
+const press = async selector => { await page.locator(selector).click(); await page.waitForTimeout(1800) }
+const text = () => page.evaluate(() => document.querySelector('main')?.innerText ?? '')
+
+try {
+  console.log(`흐름 시험: ${BASE_URL} (lang=${LANG})`)
+  await page.goto(`${BASE_URL}/?lang=${LANG}&target=gcp`)
+
+  // 소개 화면은 클릭하면 입자가 구로 모이고, 문장이 다 쓰이면 "예" 버튼이 나온다.
+  await page.mouse.click(768, 400)
+  await press('.prompt-yes')
+  note('소개 → 설정')
+  await press('.migration-next')
+
+  await press('.analysis-next-area button')
+  note('분석 완료')
+  check(true, '분석 → 샌드박스')
+
+  await press('.flow-footer .flow-primary')
+  note('샌드박스 통과')
+
+  await press('.plan-next button')
+  note('계획 완료')
+
+  await page.locator('.approval-check input').check()
+  await press('.approval-actions .flow-primary')
+  note('승인')
+
+  await press('.flow-footer .flow-primary')
+  check((await text()).length > 0, '구축 완료 → 데이터 복제')
+
+  await press('.flow-footer .flow-primary')
+  note('데이터 복제 준비')
+
+  await press('.flow-footer .flow-primary')
+  note('트래픽 100% 이전, 잔여 요청 0')
+
+  await page.locator('.approval-check input').check()
+  await press('.approval-actions .flow-primary')
+  note('두 번째 승인(DB 전환)')
+  await page.waitForFunction(() => document.querySelectorAll('.cutover-tile').length === 3)
+  await press('.flow-footer .flow-primary')
+
+  await page.waitForSelector('.report-panel')
+  await page.waitForTimeout(3000)
+  const report = await text()
+  check(report.split('\n').filter(line => /^\d+:\d{2}$/.test(line.trim())).length >= 8, '리포트에 단계별 소요 시간 8개')
+} catch (error) {
+  problems.push('흐름 중단: ' + (error instanceof Error ? error.message.split('\n')[0] : String(error)))
+  await page.screenshot({ path: process.env.SHOT || 'e2e-failure.png' }).catch(() => {})
+}
+
+await browser.close()
+if (problems.length) {
+  console.log('\n실패:\n- ' + problems.join('\n- '))
+  process.exit(1)
+}
+console.log('\n통과')
