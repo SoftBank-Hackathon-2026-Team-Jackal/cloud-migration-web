@@ -41,11 +41,11 @@ function DataBody({ ready, target, onNext }: { ready: boolean; target: Target; o
   const writesPerSec = progress?.writes_per_sec ?? 118
 
   const max = Math.max(2400, ...history)
-  const path = history.map((value, index) => {
-    const x = (index / (POINTS - 1)) * 100
-    const y = 100 - (value / max) * 92 - 4
-    return (index === 0 ? 'M' : 'L') + x.toFixed(2) + ' ' + y.toFixed(2)
-  }).join(' ')
+  // 가로축은 지금까지 쌓인 표본 수에 맞춘다(최소 12칸): 처음 몇 점이 왼쪽 끝에만 몰려 빈 그래프처럼 보이지 않게.
+  const span = Math.min(POINTS - 1, Math.max(history.length - 1, 12))
+  const points = history.map((value, index) => ({ x: (index / span) * 100, y: 100 - (value / max) * 92 - 4 }))
+  const path = points.map((point, index) => (index === 0 ? 'M' : 'L') + point.x.toFixed(2) + ' ' + point.y.toFixed(2)).join(' ')
+  const last = points[points.length - 1]
 
   return <div className="flow-split flow-split-wide">
     <section className="flow-list" aria-label={t('data.stepsAria')}>
@@ -88,15 +88,19 @@ function DataBody({ ready, target, onNext }: { ready: boolean; target: Target; o
       <div className="flow-chart" role="img" aria-label={t('data.chartAria')}>
         <span className="flow-chart-label">{t('data.chartLabel')}</span>
         <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+          {[27, 50, 73].map(y => <line key={y} x1="0" y1={y} x2="100" y2={y} className="flow-chart-grid" />)}
           <line x1="0" y1="96" x2="100" y2="96" className="flow-chart-axis" />
           {path && <path d={path} className="flow-chart-line" vectorEffect="non-scaling-stroke" />}
         </svg>
+        {history.length > 0 && <span className="flow-chart-scale" aria-hidden="true">{max.toLocaleString(locale)} ms</span>}
+        {history.length > 0 && <span className="flow-chart-scale is-zero" aria-hidden="true">0</span>}
+        {last && <span className="flow-chart-dot" aria-hidden="true" style={{ left: `calc(10px + (100% - 20px) * ${(last.x / 100).toFixed(4)})`, top: `calc(10px + (100% - 20px) * ${(last.y / 100).toFixed(4)})` }} />}
         <span className="flow-chart-empty">{history.length === 0 ? t('data.chartEmpty') : ''}</span>
       </div>
       <div className="flow-progress-row">
         <span>{t('data.dump')}</span>
         <div className="analysis-progress"><span style={{ width: Math.round(dump * 100) + '%' }} /></div>
-        <b>{Math.round(dump * 100)}%</b>
+        <b role="status">{Math.round(dump * 100)}%</b>
       </div>
     </aside>
 
