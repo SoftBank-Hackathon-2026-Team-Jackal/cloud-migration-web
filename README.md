@@ -51,6 +51,16 @@ BASE_URL=http://127.0.0.1:3000 npm run test:e2e:review   # ?review=1, ?digest=mi
 BASE_URL=http://127.0.0.1:3000 npm run test:e2e       # 핵심 흐름 브라우저 테스트(목업 모드의 앱, playwright 필요)
 ```
 
+```bash
+npm run contract:check      # 이벤트 계약(contract/*.schema.json) 검증: 목업 대본·목업 서버 이벤트가 스키마를 지키는지
+```
+
+계약 스키마는 `contract/events.schema.json`(이벤트), `contract/rest.schema.json`(요청·응답)입니다. 이벤트를 바꿀 때는 `src/lib/migration/events.ts`와 스키마를 같이 고칩니다(type 목록이 어긋나면 테스트가 실패합니다).
+
+## CI
+
+`.github/workflows/ci.yml`: push와 pull request마다 Node 22에서 `npm ci` → `npm run typecheck` → `npm test`(단위 + 계약) → `npm run build`를 돌립니다. 브라우저 테스트(`test:e2e`)는 느려서 기본으로는 돌지 않고, Actions 탭에서 **Run workflow**로 수동 실행할 때만 `e2e` job이 돕니다.
+
 SSE 모드의 핵심 흐름과 연결 끊김·실패·취소 상태는 `NEXT_PUBLIC_API_MODE=sse` 앱과 `npm run mock:server`를 띄운 뒤 `npm run test:e2e`, `npm run test:e2e:sse`로 확인합니다.
 
 ## 주소 옵션
