@@ -36,7 +36,7 @@ export const ja: Record<MsgKey, string> = {
   "prompt.question": "クラウド移行を開始しますか？",
   "prompt.yes": "はい",
   "prompt.aria": "クラウド移行の確認",
-  "field.sphere": "クリックすると波紋が広がるパーティクル球",
+  "field.sphere": "音声に反応するパーティクル球",
   "field.start": "画面をクリックしてパーティクル球を開始",
   "setup.aria": "クラウド移行の準備入力",
   "setup.title": "クラウド移行の準備",

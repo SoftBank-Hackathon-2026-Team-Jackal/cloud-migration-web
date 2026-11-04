@@ -23,9 +23,24 @@ import { useMigration } from '../lib/migration/MigrationProvider'
 import { captureScreen, fx, recentHandoff, registerTransition } from '../lib/particleHandoff'
 import { isStage, STAGE_ORDER, type Stage } from '../lib/stages'
 import { pathOf, type Target as SetupTarget } from '../lib/migration/events'
+import { useVoiceGuide } from '../lib/useVoiceGuide'
+import voiceClips from '../lib/voiceClips.json'
 
 // 실제 환경을 바꾸기 전(입력~승인)까지만 이전 단계로 돌아갈 수 있다. 승인 이후는 되돌림이 아니라 롤백 정책을 따른다.
 const BACK: Partial<Record<Stage, Stage>> = { setup: 'intro', analysis: 'setup', rehearsal: 'analysis', planning: 'rehearsal', approval: 'planning' }
+
+// 이 복제본의 보고 문구는 화면의 데모 단계 전환에만 바인딩한다. 실제 백엔드 결과로 해석하지 않는다.
+const REPORT: Partial<Record<Stage, string>> = {
+  setup: voiceClips.setup,
+  analysis: voiceClips.analysis_start,
+  rehearsal: voiceClips.sandbox_start,
+  planning: voiceClips.planning_start,
+  approval: voiceClips.approval_required,
+  provisioning: voiceClips.provisioning_start,
+  data: voiceClips.data_start,
+  traffic: voiceClips.traffic_start,
+  cutover: voiceClips.cutover_start,
+}
 
 export default function FlowApp() {
   const { t, lang } = useI18n()
@@ -47,6 +62,8 @@ export default function FlowApp() {
   // 되돌아갈 수 없는 단계에서 브라우저 뒤로가기를 눌렀을 때 잠깐 보여 주는 안내
   const [notice, setNotice] = useState(false)
   const noticeTimer = useRef(0)
+  const voiceStarting = useRef(false)
+  const previousStage = useRef<Stage>('intro')
 
   useEffect(() => {
     if (!sphereFormed) return
@@ -88,6 +105,7 @@ export default function FlowApp() {
       setShowPrompt(true)
       setTextReady(true)
     } else {
+      voiceStarting.current = false
       setStarted(false)
       setSphereFormed(false)
       setShowPrompt(false)
@@ -101,6 +119,43 @@ export default function FlowApp() {
     if (!animate) { applyJump(next); return }
     transition(() => applyJump(next), next === 'intro')
   }, [applyJump, transition])
+
+  const voice = useVoiceGuide({
+    started,
+    active: stage === 'intro',
+    onWake: () => wake(),
+    onStart: () => beginVoiceMigration(),
+  })
+
+  function wake() {
+    if (stage !== 'intro' || started) return
+    voice.armAudio()
+    setStarted(true)
+    voice.speak(voiceClips.wake) // 호출 응답 중에는 파동을 만들지 않는다.
+  }
+
+  function beginVoiceMigration() {
+    if (stage !== 'intro' || voiceStarting.current) return
+    voiceStarting.current = true
+    setShowPrompt(false)
+    setTarget('gcp') // 복제본의 로컬 데모 프로필: AWS EKS → GCP GKE
+    voice.speak(voiceClips.start, {
+      ripple: true,
+      onEnd: () => jump('analysis'),
+    })
+  }
+
+  useEffect(() => {
+    const previous = previousStage.current
+    previousStage.current = stage
+    if (stage === 'intro' || previous === stage) return
+    const message = REPORT[stage]
+    if (message) voice.speak(message)
+  }, [stage, voice.speak])
+
+  const reportAnalysisComplete = useCallback(() => voice.speak(voiceClips.analysis_done), [voice.speak])
+  const reportSandboxComplete = useCallback(() => voice.speak(voiceClips.sandbox_done), [voice.speak])
+  const reportProvisioningComplete = useCallback(() => voice.speak(voiceClips.provisioning_ready), [voice.speak])
 
   // 주소로 단계를 바로 열 수 있다: ?stage=traffic&target=gcp&demo=1
   useEffect(() => {
@@ -157,8 +212,8 @@ export default function FlowApp() {
   }, [stage])
 
   return <main className={'experience' + (dissolving ? ' is-dissolving' : '')} aria-label={t('flow.aria')}>
-    <ParticleField morphToSphere={started} analysisMode={exited}
-      onStart={() => { setStarted(true) }} onSphereFormed={() => setSphereFormed(true)} />
+    <ParticleField morphToSphere={started} analysisMode={exited} voiceLevel={voice.voiceLevel} voiceActive={voice.voiceActive}
+      onStart={wake} onSphereFormed={() => setSphereFormed(true)} />
     {stage === 'intro' && showPrompt && <section className="prompt-overlay" aria-label={t('prompt.aria')}>
       <ParticlePrompt key={lang} onComplete={() => setTextReady(true)} />
       <div className="prompt-action">
@@ -168,16 +223,18 @@ export default function FlowApp() {
     </section>}
     {stage === 'setup' && <MigrationSetup target={choice} onTarget={setTarget} onNext={request => { provider.start(request); go('analysis') }} />}
     {stage === 'setup' && <ArriveMorph key={'setup' + round} />}
-    {stage === 'analysis' && <AnalysisStage key={round} target={target} onAdvance={() => go('rehearsal')} />}
-    {stage === 'rehearsal' && <RehearsalStage key={round} target={target} onNext={next('planning')} />}
+    {stage === 'analysis' && <AnalysisStage key={round} target={target} onComplete={reportAnalysisComplete} onAdvance={() => go('rehearsal')} />}
+    {stage === 'rehearsal' && <RehearsalStage key={round} target={target} onComplete={reportSandboxComplete} onNext={next('planning')} />}
     {stage === 'planning' && <AIPlanningStage key={round} target={target} onNext={next('approval')} />}
     {stage === 'planning' && <ArriveMorph key={'planning' + round} />}
     {stage === 'approval' && <ApprovalStage key={round} target={target} onApprove={next('provisioning')} onCancel={() => jump('intro')} onRevise={() => go('planning')} />}
     {stage === 'approval' && <ArriveMorph key={'approval' + round} />}
-    {stage === 'provisioning' && <ProvisioningStage key={round + target} target={target} onNext={next('data')} />}
+    {stage === 'provisioning' && <ProvisioningStage key={round + target} target={target} onComplete={reportProvisioningComplete} onNext={next('data')} />}
     {stage === 'data' && <DataMigrationStage key={round} target={target} onNext={next('traffic')} />}
     {stage === 'traffic' && <TrafficShiftStage key={round + target} target={target} onNext={next('cutover')} />}
-    {stage === 'cutover' && <CutoverStage key={round + target} target={target} onRestart={() => jump('intro')} />}
+    {stage === 'cutover' && <CutoverStage key={round + target} target={target}
+      onComplete={() => voice.speak(voiceClips.migration_done)}
+      onRestart={() => jump('intro')} />}
     <StatusPanel stage={stage} onHome={() => jump('intro')} />
     <TransitionLayer />
     {backTo && !dissolving && <BackButton onBack={goBack} />}
@@ -186,5 +243,19 @@ export default function FlowApp() {
     <LangSwitch />
     {exited && <StageRail stage={stage} />}
     {demoPanel && <DemoControls stage={stage} target={target} onJump={jump} onTarget={setTarget} />}
+    <aside className={'voice-console' + (stage === 'intro' ? ' is-intro' : '')} aria-label="자칼 음성 안내">
+      <div className="voice-console-head"><strong>JACKAL VOICE</strong><span>LOCAL DEMO</span></div>
+      {stage === 'intro' && <p className="voice-profile">등록된 시연 정보 · AWS EKS → GCP GKE</p>}
+      <p className="voice-caption" aria-live="polite">{voice.message || (started ? '“마이그레이션 시작하자”라고 말해 주세요.' : '“헤이 자칼”이라고 말해 주세요.')}</p>
+      {voice.heard && stage === 'intro' && <small className="voice-heard">인식: {voice.heard}</small>}
+      {voice.error && <small className="voice-error">{voice.error}</small>}
+      <div className="voice-actions">
+        {stage === 'intro' && <button type="button" onClick={voice.toggleMic} disabled={!voice.recognitionSupported}
+          aria-pressed={voice.micEnabled}>{voice.micEnabled ? '● 듣는 중 · 끄기' : '마이크 켜기'}</button>}
+        <button type="button" onClick={voice.toggleSound} aria-pressed={voice.soundEnabled}>{voice.soundEnabled ? '음성 켜짐' : '음성 꺼짐'}</button>
+        {stage === 'intro' && <button type="button" onClick={wake}>헤이 자칼</button>}
+        {stage === 'intro' && started && <button type="button" onClick={() => beginVoiceMigration()}>마이그레이션 시작하자</button>}
+      </div>
+    </aside>
   </main>
 }

@@ -1,0 +1,39 @@
+.voice-console {
+  position: fixed;
+  z-index: 55;
+  left: 16px;
+  bottom: 16px;
+  width: min(360px, calc(100vw - 32px));
+  padding: 13px 15px;
+  border: 1px solid rgba(255, 255, 255, .9);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, .84);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 12px 38px rgba(0, 0, 0, .12);
+  color: #202020;
+  font-family: -apple-system, BlinkMacSystemFont, "Noto Sans KR", sans-serif;
+}
+.voice-console-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.voice-console-head strong { font-size: 10px; letter-spacing: .12em; }
+.voice-console-head span { padding: 3px 6px; border-radius: 99px; background: #eee; color: #666; font-size: 9px; font-weight: 650; letter-spacing: .06em; }
+.voice-profile { margin: 7px 0 0; color: #777; font-size: 11px; }
+.voice-caption { min-height: 34px; margin: 8px 0; font-size: 12px; font-weight: 550; line-height: 1.4; }
+.voice-heard, .voice-error { display: block; margin: 0 0 7px; color: #777; font-size: 10px; }
+.voice-error { color: #9b3d3d; }
+.voice-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.voice-actions button { min-height: 28px; padding: 4px 9px; border: 1px solid #d7d7d7; border-radius: 999px; background: #fff; color: #333; font-family: inherit; font-size: 10px; font-weight: 600; line-height: 1.2; cursor: pointer; }
+.voice-actions button:hover { border-color: #777; }
+.voice-actions button:focus-visible { outline: 2px solid #444; outline-offset: 2px; }
+.voice-actions button:disabled { opacity: .45; cursor: not-allowed; }
+.voice-actions button[aria-pressed="true"] { border-color: #292929; background: #292929; color: #fff; }
+.voice-console:not(.is-intro) { width: min(330px, calc(100vw - 32px)); padding: 9px 12px; }
+.voice-console:not(.is-intro) .voice-caption { min-height: 0; margin: 5px 0; font-size: 11px; }
+@media (max-width: 620px) {
+  .voice-console { left: 8px; right: 8px; bottom: 8px; width: auto; padding: 9px 11px; }
+  .voice-console:not(.is-intro) { width: auto; }
+  .voice-console.is-intro .voice-caption { min-height: 0; }
+  .prompt-action { bottom: 166px; }
+}
+.voice-console { pointer-events: none; }
+.voice-console button, .voice-console input { pointer-events: auto; }

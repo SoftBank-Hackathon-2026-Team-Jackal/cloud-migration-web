@@ -18,15 +18,15 @@ const NODE_MAP: Record<Target, Record<string, string[]>> = {
   onprem: { agent: ['group'], cluster: ['group'], db: ['db'], app: ['app'], relay: ['entry'], cert: ['dns', 'user'] },
 }
 
-export default function ProvisioningStage({ target, onNext }: { target: Target; onNext: () => void }) {
+export default function ProvisioningStage({ target, onNext, onComplete }: { target: Target; onNext: () => void; onComplete?: () => void }) {
   const t = useT()
   return <StageShell kicker="PROVISIONING" title={t('prov.title')}
     subtitle={t('prov.subtitle', { target: t(('target.' + target) as MsgKey) })}>
-    {ready => <ProvisioningBody ready={ready} target={target} onNext={onNext} />}
+    {ready => <ProvisioningBody ready={ready} target={target} onNext={onNext} onComplete={onComplete} />}
   </StageShell>
 }
 
-function ProvisioningBody({ ready, target, onNext }: { ready: boolean; target: Target; onNext: () => void }) {
+function ProvisioningBody({ ready, target, onNext, onComplete }: { ready: boolean; target: Target; onNext: () => void; onComplete?: () => void }) {
   const t = useT()
   // 만들어진 리소스는 provision.resource 이벤트로 받는다.
   const { state: migration } = useMigration()
@@ -46,6 +46,7 @@ function ProvisioningBody({ ready, target, onNext }: { ready: boolean; target: T
   const findings = new Map(events.map(event => [event.key, text(event.key, 'info')]))
   const progress = events.length ? events[events.length - 1].progress : 0
   const finished = progress === 100
+  useEffect(() => { if (finished) onComplete?.() }, [finished, onComplete])
   const nodeStates: Record<string, NodeState> = {}
   events.forEach((event, index) => {
     const latest = index === events.length - 1 && !finished

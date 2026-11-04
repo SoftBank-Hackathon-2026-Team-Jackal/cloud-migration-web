@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect } from 'react'
 import StageShell from './StageShell'
 import { useT, type MsgKey } from '../lib/i18n'
 import type { Target } from '../lib/stages'
@@ -36,7 +37,7 @@ const DIFF: ReadonlyArray<DiffLine> = [
   { kind: 'note', text: '', key: 'rehearsal.diffNote' },
 ]
 
-export default function RehearsalStage({ target, onNext }: { target: Target; onNext: () => void }) {
+export default function RehearsalStage({ target, onNext, onComplete }: { target: Target; onNext: () => void; onComplete?: () => void }) {
   const t = useT()
   const { state } = useMigration()
   // 샌드박스 루프의 시도 횟수(시도 n/3)를 머리글 위 작은 글자에 붙인다.
@@ -44,7 +45,7 @@ export default function RehearsalStage({ target, onNext }: { target: Target; onN
   const kicker = 'SANDBOX · REHEARSAL' + (attempt ? ' · ' + t('rehearsal.attempt', { n: attempt, max: state.build.result?.max_attempts ?? 3 }) : '')
   return <StageShell kicker={kicker} title={t('rehearsal.title')}
     subtitle={t('rehearsal.subtitle')}>
-    {ready => <RehearsalBody ready={ready} target={target} onNext={onNext} />}
+    {ready => <RehearsalBody ready={ready} target={target} onNext={onNext} onComplete={onComplete} />}
   </StageShell>
 }
 
@@ -72,7 +73,7 @@ function BuildResultNote({ result }: { result: BuildResultData }) {
 
 const MARK: Record<CheckState, string> = { running: '', failed: '!', fixing: '✎', recheck: '', done: '✓' }
 
-function RehearsalBody({ ready, target, onNext }: { ready: boolean; target: Target; onNext: () => void }) {
+function RehearsalBody({ ready, target, onNext, onComplete }: { ready: boolean; target: Target; onNext: () => void; onComplete?: () => void }) {
   const t = useT()
   const { state: migration } = useMigration()
   useStageFeed('build', ready, target)
@@ -81,6 +82,7 @@ function RehearsalBody({ ready, target, onNext }: { ready: boolean; target: Targ
   const stateOf = (id: string) => states.get(id)?.state
   const done = CHECKS.filter(check => stateOf(check.id) === 'done').length
   const finished = done === CHECKS.length
+  useEffect(() => { if (finished) onComplete?.() }, [finished, onComplete])
   const last = migration.build.lastCheck
   const fixesOf = (checkId: string) => fixes.filter(fix => fix.check === checkId)
   // 수정이 적용된 것: 재검증에 들어갔거나 통과한 항목의 수정 전부 + 수정 중인 항목에서는 지금까지 고친 개수만큼

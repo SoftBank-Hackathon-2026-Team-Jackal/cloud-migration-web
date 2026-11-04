@@ -18,17 +18,17 @@ const STEPS = [1, 2, 3, 4, 5, 6]
 // 측정 결과(실패·지연·유실)는 3개가 모두 와야 측정이 끝난 것이다.
 const RESULT_COUNT = 3
 
-export default function CutoverStage({ target, onRestart }: { target: Target; onRestart: () => void }) {
+export default function CutoverStage({ target, onRestart, onComplete }: { target: Target; onRestart: () => void; onComplete: () => void }) {
   const t = useT()
   const [phase, setPhase] = useState<Phase>('approve')
   return <StageShell kicker="DB CUTOVER · VERIFY" title={t('cutover.title')} subtitle={t(('cutover.sub.' + phase) as MsgKey)} hideHeader={phase === 'approve' || phase === 'done'}>
-    {ready => <CutoverBody ready={ready} target={target} phase={phase} setPhase={setPhase} onRestart={onRestart} />}
+    {ready => <CutoverBody ready={ready} target={target} phase={phase} setPhase={setPhase} onRestart={onRestart} onComplete={onComplete} />}
   </StageShell>
 }
 
-type BodyProps = { ready: boolean; target: Target; phase: Phase; setPhase: (phase: Phase) => void; onRestart: () => void }
+type BodyProps = { ready: boolean; target: Target; phase: Phase; setPhase: (phase: Phase) => void; onRestart: () => void; onComplete: () => void }
 
-function CutoverBody({ ready, target, phase, setPhase, onRestart }: BodyProps) {
+function CutoverBody({ ready, target, phase, setPhase, onRestart, onComplete }: BodyProps) {
   const t = useT()
   const { state, provider, mode } = useMigration()
   // 두 번째 승인(approveCutover) 뒤에 오는 전환 단계·측정 결과 이벤트를 읽는다.
@@ -115,7 +115,7 @@ function CutoverBody({ ready, target, phase, setPhase, onRestart }: BodyProps) {
 
     <div className="flow-footer">
       <span>{measured ? t('cutover.foot.done') : phase === 'verify' ? t('cutover.foot.verify') : t('cutover.foot.running')}</span>
-      <button type="button" className="flow-primary" disabled={!measured} onClick={() => runTransition(() => setPhase('done'))}>{t('cutover.next')} <span aria-hidden="true">→</span></button>
+      <button type="button" className="flow-primary" disabled={!measured} onClick={() => runTransition(() => { setPhase('done'); onComplete() })}>{t('cutover.next')} <span aria-hidden="true">→</span></button>
     </div>
   </div><ArriveMorph key="cut-run" /></>
 }

@@ -4,11 +4,11 @@ import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import { useT } from '../lib/i18n'
 
-type Props = { morphToSphere: boolean; analysisMode: boolean; onStart: () => void; onSphereFormed: () => void }
+type Props = { morphToSphere: boolean; analysisMode: boolean; voiceLevel: { current: number }; voiceActive: { current: boolean }; onStart: () => void; onSphereFormed: () => void }
 
 const RINGS = 220
 const EQUATOR_DOTS = 470
-const RADIUS = 3.25
+const RADIUS = 2.8
 const FOV = 43
 const CAMERA_Z = 11
 
@@ -57,7 +57,7 @@ function makeGeometry(aspect: number) {
   return { geometry, initial, count }
 }
 
-export default function ParticleField({ morphToSphere, analysisMode, onStart, onSphereFormed }: Props) {
+export default function ParticleField({ morphToSphere, analysisMode, voiceLevel, voiceActive, onStart, onSphereFormed }: Props) {
   const t = useT()
   const host = useRef<HTMLDivElement>(null)
   const sphere = useRef(morphToSphere)
@@ -88,8 +88,10 @@ export default function ParticleField({ morphToSphere, analysisMode, onStart, on
       uMorph: { value: 0 },
       uPointer: { value: new THREE.Vector2(100, 100) },
       uPointerVelocity: { value: new THREE.Vector2() },
-      uRippleOrigin: { value: new THREE.Vector3(0, 0, 1) },
-      uRippleStart: { value: -100 },
+      uVoiceLevel: { value: 0 },
+      uOuterLevel: { value: 0 },
+      uVoiceActive: { value: 0 },
+      uGlowLayer: { value: 0 },
       uPixelRatio: { value: renderer.getPixelRatio() },
       uExit: { value: 0 },
     }
@@ -106,8 +108,10 @@ export default function ParticleField({ morphToSphere, analysisMode, onStart, on
         uniform float uMorph;
         uniform vec2 uPointer;
         uniform vec2 uPointerVelocity;
-        uniform vec3 uRippleOrigin;
-        uniform float uRippleStart;
+        uniform float uVoiceLevel;
+        uniform float uOuterLevel;
+        uniform float uVoiceActive;
+        uniform float uGlowLayer;
         uniform float uPixelRatio;
         uniform float uExit;
         varying float vAlpha;
@@ -115,7 +119,7 @@ export default function ParticleField({ morphToSphere, analysisMode, onStart, on
         varying float vSeed;
         varying float vMorph;
         varying vec3 vDirection;
-        varying float vWave;
+        varying float vVoiceGlow;
 
         void main() {
           float t = uMorph * uMorph * (3.0 - 2.0 * uMorph);
@@ -127,18 +131,30 @@ export default function ParticleField({ morphToSphere, analysisMode, onStart, on
           vec3 scattered = position + drift;
 
           vec3 dir = normalize(aDirection);
-          float organic =
-            sin(dir.x * 4.5 + dir.y * 5.0 + uTime * .47) * .20 +
-            sin(dir.y * 11.0 - dir.z * 7.0 - uTime * .71) * .11 +
-            cos(dir.z * 13.0 + dir.x * 9.0 + uTime * .59) * .07;
+          float radial = length(dir.xy);
+          float angle = atan(dir.y, dir.x);
+          float innerStrength = uVoiceActive * (.15 + .85 * smoothstep(.03, .38, uVoiceLevel));
+          float outerStrength = uVoiceActive * (.25 + .75 * smoothstep(.03, .38, uOuterLevel));
+          float innerMask = 1.0 - smoothstep(.58, .85, radial);
+          float outerMask = smoothstep(.60, .86, radial);
 
-          float age = uTime - uRippleStart;
-          float angularDistance = acos(clamp(dot(dir, uRippleOrigin), -1.0, 1.0));
-          float ring = exp(-pow((angularDistance - age * 1.75) * 4.2, 2.0));
-          float ripple = cos(angularDistance * 18.0 - age * 16.0) * ring * exp(-age * .55) * .82;
-          ripple *= step(0.0, age) * (1.0 - step(4.0, age));
-          float radius = ${RADIUS.toFixed(2)} + organic + ripple;
-          vec3 shaped = dir * radius;
+          // 중심부: 위치마다 위상이 달라 균일한 고리가 되지 않는 빠른 파문.
+          float spatialWarp =
+            sin(dir.x * 4.1 + uTime * .65) * .55 +
+            sin(dir.y * 5.3 - uTime * .52) * .42 +
+            sin((dir.x - dir.y) * 7.2 + uTime * .38) * .22;
+          float angularWarp = sin(angle * 3.0 + uTime * .48) * .60 + sin(angle * 7.0 - uTime * .32) * .30;
+          float handoff = smoothstep(.40, .80, radial);
+          float innerWave = sin(radial * 17.0 + (1.0 - dir.z) * 1.1 - uTime * 6.1 + spatialWarp * (1.10 + .85 * handoff));
+
+          // 바깥 둘레: 위치마다 위상이 다른 느린 움직임. 구 전체가 동시에 늘어나지 않는다.
+          float outerWave =
+            sin(radial * 11.0 - uTime * 1.9 + angularWarp + spatialWarp * .45) * .45 +
+            sin(angle * 5.0 + radial * 6.0 - uTime * 1.2 + dir.z * 1.4) * .35 +
+            sin(angle * 9.0 - uTime * .85 + dir.z * 3.0) * .20;
+          vec3 shaped = dir * (${RADIUS.toFixed(2)} + outerMask * outerWave * outerStrength * .22);
+          shaped.xy += normalize(dir.xy + vec2(.001)) * innerWave * innerMask * innerStrength * .085;
+          shaped.z += innerWave * innerMask * innerStrength * .13;
           vec3 p = mix(scattered, shaped, t);
           p += dir * (uExit * 3.2) + drift * uExit * .7;
 
@@ -150,7 +166,10 @@ export default function ParticleField({ morphToSphere, analysisMode, onStart, on
 
           vec4 view = modelViewMatrix * vec4(p, 1.0);
           gl_Position = projectionMatrix * view;
-          gl_PointSize = min(7.0, aSize * uPixelRatio * (25.0 / -view.z));
+          float innerGlow = pow(max(0.0, innerWave), 2.0) * innerMask * .90;
+          float outerGlow = pow(max(0.0, outerWave), 2.0) * outerMask * .55;
+          float voiceGlow = innerGlow * innerStrength + outerGlow * outerStrength;
+          gl_PointSize = min(18.0, aSize * uPixelRatio * (25.0 / -view.z) * (1.0 + voiceGlow * .28) * (1.0 + uGlowLayer * .7));
           float front = smoothstep(-.35, .32, dir.z);
           vAlpha = mix(.53 + aSeed * .29, mix(.08, .85, front), t);
           vAlpha *= 1.0 - smoothstep(.08, .92, uExit);
@@ -158,7 +177,7 @@ export default function ParticleField({ morphToSphere, analysisMode, onStart, on
           vSeed = aSeed;
           vMorph = t;
           vDirection = dir;
-          vWave = organic + ripple;
+          vVoiceGlow = voiceGlow * front;
         }
       `,
       fragmentShader: `
@@ -167,7 +186,7 @@ export default function ParticleField({ morphToSphere, analysisMode, onStart, on
         varying float vSeed;
         varying float vMorph;
         varying vec3 vDirection;
-        varying float vWave;
+        varying float vVoiceGlow;
 
         void main() {
           float d = length(gl_PointCoord - vec2(.5));
@@ -176,13 +195,39 @@ export default function ParticleField({ morphToSphere, analysisMode, onStart, on
           vec3 surface = mix(vec3(.14), vec3(.84), pow(vLight, .8));
           surface = mix(surface, vec3(.94), .13 * smoothstep(-.5, .8, vDirection.x));
           surface = mix(surface, vec3(.26), .10 * (1.0 - smoothstep(-.8, .2, vDirection.y)));
-          surface += max(0.0, vWave) * .06;
           vec3 color = mix(silver, surface, vMorph);
-          gl_FragColor = vec4(color, disc * vAlpha);
+          // 은색 표면 위의 파문 마루에만 절제된 어두운 황금빛을 얹는다.
+          color = mix(color, vec3(.69, .48, .13), vVoiceGlow * .86);
+          color += vec3(.10, .07, .02) * vVoiceGlow;
+          float halo = (1.0 - smoothstep(.08, .50, d)) * vVoiceGlow * .16;
+          gl_FragColor = vec4(min(color, vec3(1.0)), min(1.0, disc * vAlpha + halo));
         }
       `,
     })
-    scene.add(new THREE.Points(geometry, material))
+    const mainPoints = new THREE.Points(geometry, material)
+    mainPoints.renderOrder = 2
+    scene.add(mainPoints)
+    const glowMaterial = new THREE.ShaderMaterial({
+      uniforms: { ...uniforms, uGlowLayer: { value: 1 } },
+      vertexShader: material.vertexShader,
+      fragmentShader: `
+        varying float vVoiceGlow;
+        varying float vAlpha;
+        void main() {
+          if (vVoiceGlow < .002) discard;
+          float d = length(gl_PointCoord - vec2(.5));
+          float glow = exp(-d * d * 16.0) * vVoiceGlow * vAlpha * .42;
+          gl_FragColor = vec4(.72, .50, .13, glow);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      depthTest: false,
+      blending: THREE.NormalBlending,
+    })
+    const glowPoints = new THREE.Points(geometry, glowMaterial)
+    glowPoints.renderOrder = 1
+    scene.add(glowPoints)
     const resize = () => {
       const width = element.clientWidth
       const height = element.clientHeight
@@ -214,26 +259,11 @@ export default function ParticleField({ morphToSphere, analysisMode, onStart, on
       previous.copy(pointer)
     }
     const onLeave = () => pointer.set(100, 100)
-    const trigger = (x: number, y: number) => {
-      if (!sphere.current) { start.current(); return }
-      const bounds = element.getBoundingClientRect()
-      let dx = ((x - bounds.left) / bounds.width - .5) * worldHeight * camera.aspect / RADIUS
-      let dy = (.5 - (y - bounds.top) / bounds.height) * worldHeight / RADIUS
-      const squared = dx * dx + dy * dy
-      if (squared > .94) {
-        const factor = Math.sqrt(.94 / squared)
-        dx *= factor
-        dy *= factor
-      }
-      uniforms.uRippleOrigin.value.set(dx, dy, Math.sqrt(1 - dx * dx - dy * dy)).normalize()
-      uniforms.uRippleStart.value = uniforms.uTime.value
-    }
-    const onPointerDown = (event: PointerEvent) => trigger(event.clientX, event.clientY)
+    const onPointerDown = () => { if (!sphere.current) start.current() }
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Enter' && event.key !== ' ') return
       event.preventDefault()
-      const bounds = element.getBoundingClientRect()
-      trigger(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2)
+      if (!sphere.current) start.current()
     }
     element.addEventListener('pointermove', onMove)
     element.addEventListener('pointerleave', onLeave)
@@ -245,6 +275,10 @@ export default function ParticleField({ morphToSphere, analysisMode, onStart, on
     renderer.setAnimationLoop(() => {
       const dt = Math.min(clock.getDelta(), .05)
       uniforms.uTime.value += dt
+      const levelSpeed = voiceLevel.current > uniforms.uVoiceLevel.value ? 8 : 3.5
+      uniforms.uVoiceLevel.value += (voiceLevel.current - uniforms.uVoiceLevel.value) * Math.min(1, dt * levelSpeed)
+      uniforms.uOuterLevel.value += (voiceLevel.current - uniforms.uOuterLevel.value) * Math.min(1, dt * 1.6)
+      uniforms.uVoiceActive.value += ((voiceActive.current ? 1 : 0) - uniforms.uVoiceActive.value) * Math.min(1, dt * 4)
       uniforms.uMorph.value += ((sphere.current ? 1 : 0) - uniforms.uMorph.value) * Math.min(1, dt * 1.8)
       uniforms.uExit.value += ((analysis.current ? 1 : 0) - uniforms.uExit.value) * Math.min(1, dt * 2.2)
       if (!sphere.current) formedNotified = false
@@ -266,11 +300,12 @@ export default function ParticleField({ morphToSphere, analysisMode, onStart, on
       element.removeEventListener('keydown', onKeyDown)
       geometry.dispose()
       material.dispose()
+      glowMaterial.dispose()
       renderer.dispose()
       renderer.domElement.remove()
     }
-  }, [])
+  }, [voiceLevel, voiceActive])
 
-  return <div ref={host} className="particle-field" role="button" tabIndex={0}
+  return <div ref={host} className="particle-field" role={morphToSphere ? 'img' : 'button'} tabIndex={morphToSphere ? -1 : 0}
     aria-label={morphToSphere ? t('field.sphere') : t('field.start')} />
 }

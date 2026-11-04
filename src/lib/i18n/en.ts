@@ -36,7 +36,7 @@ export const en: Record<MsgKey, string> = {
   "prompt.question": "Shall we start the cloud migration?",
   "prompt.yes": "Yes",
   "prompt.aria": "Confirm cloud migration",
-  "field.sphere": "Particle sphere: click to make a ripple",
+  "field.sphere": "Voice-responsive particle sphere",
   "field.start": "Click the screen to form the particle sphere",
   "setup.aria": "Migration setup form",
   "setup.title": "Prepare the migration",
