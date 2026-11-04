@@ -1,8 +1,9 @@
 /**
  * 에이전트 질문 응답용 임시 백엔드. 브라우저에는 키를 두지 않고, 키는 서버 환경변수로만 읽는다.
- *   AGENT_PROVIDER = anthropic | gemini (없으면 키가 있는 쪽을 고른다. 둘 다 없으면 모델 없이 "none"을 돌려주고 화면이 규칙 기반 답을 쓴다)
+ *   AGENT_PROVIDER = anthropic | gemini | gemini-live (없으면 키가 있는 쪽을 고른다. 둘 다 없으면 모델 없이 "none"을 돌려주고 화면이 규칙 기반 답을 쓴다)
  *   ANTHROPIC_API_KEY, AGENT_MODEL(기본 claude-haiku-5-5), ANTHROPIC_BASE_URL(시험용)
  *   GEMINI_API_KEY, AGENT_MODEL(기본 gemini-2.5-flash), GEMINI_BASE_URL(시험용)
+ *   gemini-live: Gemini Live(웹소켓)로 묻고, 오디오는 버리고 "출력 전사"(말한 내용의 글)만 답으로 쓴다. 모델은 AGENT_MODEL(기본 gemini-3.8-live)
  * 요청: { question, context, lang }. context는 화면이 만든 "현재 상태 요약"(비밀값 없음).
  */
 import { NextResponse } from 'next/server'
@@ -59,6 +60,41 @@ async function callGemini(system: string, user: string): Promise<string> {
   return (data.candidates?.[0]?.content?.parts ?? []).map(part => part.text ?? '').join('').trim()
 }
 
+/** Gemini Live: 오디오 출력이 필수라서 소리는 받아서 버리고, 같이 오는 전사 글만 모은다(첫 글자는 약 1.5초, 전체는 말하는 길이만큼). */
+async function callGeminiLive(system: string, user: string): Promise<string> {
+  const key = process.env.GEMINI_API_KEY
+  if (!key) throw new Error('no_key')
+  const base = process.env.GEMINI_LIVE_URL || 'wss://generativelanguage.googleapis.com'
+  const model = process.env.AGENT_MODEL || 'gemini-3.8-live'
+  return await new Promise<string>((resolve, reject) => {
+    const socket = new WebSocket(`${base}/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${encodeURIComponent(key)}`)
+    let text = ''
+    let settled = false
+    const settle = (error: Error | null) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      try { socket.close() } catch { /* 이미 닫힘 */ }
+      if (error) reject(error); else resolve(text.trim())
+    }
+    const timer = setTimeout(() => settle(new Error('live_timeout')), TIMEOUT_MS)
+    socket.onopen = () => socket.send(JSON.stringify({ setup: { model: 'models/' + model, generationConfig: { responseModalities: ['AUDIO'] }, systemInstruction: { parts: [{ text: system }] }, outputAudioTranscription: {} } }))
+    socket.onmessage = async event => {
+      const raw = typeof event.data === 'string' ? event.data : Buffer.from(await (event.data as Blob).arrayBuffer()).toString('utf8')
+      let message: { setupComplete?: unknown; serverContent?: { outputTranscription?: { text?: string }; turnComplete?: boolean } }
+      try { message = JSON.parse(raw) } catch { return }
+      if (message.setupComplete) {
+        socket.send(JSON.stringify({ clientContent: { turns: [{ role: 'user', parts: [{ text: user }] }], turnComplete: true } }))
+        return
+      }
+      if (message.serverContent?.outputTranscription?.text) text += message.serverContent.outputTranscription.text
+      if (message.serverContent?.turnComplete) settle(null)
+    }
+    socket.onerror = () => settle(new Error('live_error'))
+    socket.onclose = event => settle(new Error('live_closed_' + event.code))
+  })
+}
+
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null) as { question?: unknown; context?: unknown; lang?: unknown } | null
   const question = String(body?.question ?? '').trim().slice(0, MAX_QUESTION)
@@ -67,11 +103,12 @@ export async function POST(request: Request) {
   if (!question) return NextResponse.json({ error: 'empty_question' }, { status: 400 })
 
   const provider = process.env.AGENT_PROVIDER || (process.env.ANTHROPIC_API_KEY ? 'anthropic' : process.env.GEMINI_API_KEY ? 'gemini' : 'none')
-  if (provider !== 'anthropic' && provider !== 'gemini') return NextResponse.json({ answer: null, provider: 'none' })
+  if (provider !== 'anthropic' && provider !== 'gemini' && provider !== 'gemini-live') return NextResponse.json({ answer: null, provider: 'none' })
 
   const user = `현재 상태:\n${context || '(없음)'}\n\n질문: ${question}`
   try {
-    const answer = provider === 'anthropic' ? await callAnthropic(systemPrompt(lang), user) : await callGemini(systemPrompt(lang), user)
+    const system = systemPrompt(lang)
+    const answer = provider === 'anthropic' ? await callAnthropic(system, user) : provider === 'gemini-live' ? await callGeminiLive(system, user) : await callGemini(system, user)
     if (!answer) return NextResponse.json({ answer: null, provider, error: 'empty_answer' })
     return NextResponse.json({ answer, provider })
   } catch (error) {

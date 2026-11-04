@@ -66,7 +66,7 @@ NEXT_PUBLIC_API_MODE=sse npm run dev                  # 다른 터미널
 ## 에이전트 질문 (임시 백엔드)
 시연 중 "헤이 자칼, 지금 무슨 단계야?", "뭐가 문제야?", "로그 읊어 줘"처럼 물으면 현재 상태를 요약해 답하고 말로 읽어 줍니다(첫 화면 이후, 화면 아래 패널의 입력창으로도 가능).
 - 화면이 상태 요약(비밀값 없음)을 `/api/agent`에 보내고, 서버가 모델을 호출합니다. **키는 서버 환경변수로만** 둡니다(`NEXT_PUBLIC_` 금지).
-- `ANTHROPIC_API_KEY`(기본 모델 `claude-haiku-5-5`) 또는 `GEMINI_API_KEY`, 모델 변경은 `AGENT_MODEL`, 고르는 방식은 `AGENT_PROVIDER=anthropic|gemini`
+- `ANTHROPIC_API_KEY`(기본 모델 `claude-haiku-5-5`) 또는 `GEMINI_API_KEY`, 모델 변경은 `AGENT_MODEL`, 고르는 방식은 `AGENT_PROVIDER=anthropic|gemini|gemini-live`(Live는 소리를 버리고 전사 글만 씀, 기본 모델 `gemini-3.8-live`, 무료 텍스트 모델보다 빠름)
 - 키가 없거나 모델 호출이 실패하면 규칙 기반 답으로 대신합니다. 시험: `npm run build` 뒤 `npm run test:e2e:agent`(가짜 모델 서버 사용, 실제 호출 없음)
 
 ## 테스트
