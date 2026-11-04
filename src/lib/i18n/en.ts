@@ -892,7 +892,7 @@ export const en: Record<MsgKey, string> = {
   "plan.diagram.legendPlanned": "Planned path",
   "plan.diagram.legendKeep": "Kept on source",
   "plan.diagram.legendLock": "Verified image digest pinned",
-  "plan.diagram.config": "{n} config changes ship with the app deployment",
+  "plan.diagram.config": "Config changes ({n}) ship with the app deployment",
   "plan.diagram.empty": "Waiting for infrastructure items to draw",
   "plan.preview.empty": "Waiting for the resource preview",
   "plan.provider.ON_PREM": "On-premises",

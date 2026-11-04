@@ -65,8 +65,9 @@ try {
   // 승인 화면: 이미지 대조가 일치로 보이고, 계획 수정 요청을 하면 계획 단계로 돌아가 버전이 올라간다.
   check(await page.locator('.approval-digest:not(.is-warn)').count() === 1, '승인 화면에 이미지 대조(일치)가 보인다')
   await press('.approval-actions .flow-secondary:nth-child(2)')
+  // 계획 화면으로 돌아오면 메타 줄에 새 리비전이 보인다(넘어가기 전에 확인)
+  await page.locator('.plan-meta').filter({ hasText: /(리비전|revision|リビジョン) 2/ }).waitFor({ timeout: 30000 }).then(() => check(true, '계획 수정 뒤 계획 리비전 2가 보인다'), () => check(false, '계획 수정 뒤 계획 리비전 2가 보인다'))
   await press('.plan-next button')
-  check(/v2/.test(await text()) || await page.locator('.plan-heading small span').count() >= 2, '계획 수정 뒤 계획 버전 v2가 보인다')
   check(/v2/.test(await page.locator('.approval-digest').innerText()), '승인 화면의 계획 버전이 v2다')
   await page.locator('.approval-check input').check()
   await press('.approval-actions .flow-primary')
