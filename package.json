@@ -13,6 +13,7 @@
     "test:e2e:sse": "node tests/e2e/sse-states.mjs",
     "test:e2e:review": "node tests/e2e/review.mjs",
     "test:e2e:agent": "node tests/e2e/agent.mjs",
+    "test:e2e:github": "node tests/e2e/github.mjs",
     "contract:check": "node --test \"tests/unit/contract.test.ts\""
   },
   "dependencies": {
@@ -20,6 +21,7 @@
     "@radix-ui/react-hover-card": "^1.2.1",
     "@radix-ui/react-tabs": "^1.2.1",
     "next": "^16.4.4",
+    "next-auth": "5.0.0-beta.32",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "three": "^0.181.0"

@@ -3,6 +3,10 @@
 import { useRef, useState } from 'react'
 import { useT } from '../lib/i18n'
 import { DEFAULT_REGION, startRequestFor, type StartRequest, type Target } from '../lib/migration/events'
+import { requiresSource, sseStartMode } from '../lib/migration/config'
+import { useMigration } from '../lib/migration/MigrationProvider'
+import type { PinnedSource } from '../lib/github/repos'
+import RepoPicker from './RepoPicker'
 
 type Props = { target: Target; onTarget: (target: Target) => void; onNext: (request: StartRequest) => void }
 
@@ -21,6 +25,24 @@ export default function MigrationSetup({ target, onTarget, onNext }: Props) {
   const [regions, setRegions] = useState<Partial<Record<Target, string>>>({})
   const [agentId, setAgentId] = useState('')
   const [dragging, setDragging] = useState(false)
+  // 고른 공개 저장소(서버가 기본 브랜치 커밋 SHA를 고정한 값)
+  const [source, setSource] = useState<PinnedSource | null>(null)
+  // SSE 모드에서 백엔드가 source를 아직 못 받을 때(#60 전) "다음"을 누르면 시작하지 않고 대기 안내를 보여 준다.
+  const [pending, setPending] = useState(false)
+  const { mode } = useMigration()
+  const needsSource = requiresSource(mode)
+  const backendWaiting = mode === 'sse' && sseStartMode() === 'wait'
+  const blocked = needsSource && !source
+  const chooseSource = (next: PinnedSource | null) => { setSource(next); setPending(false) }
+  const submit = () => {
+    if (blocked) return
+    if (backendWaiting) { setPending(true); return }
+    onNext(startRequestFor(target, {
+      region: regions[target], agentId: agentId.trim() || undefined,
+      source: source ?? undefined,
+      // .env는 파일 이름만 알고 있어 'local:<이름>'은 백엔드가 쓸 수 있는 업로드 참조가 아니다: 보내지 않는다.
+    }))
+  }
 
   const addFiles = (incoming: FileList | File[]) => {
     setFiles(current => {
@@ -65,10 +87,10 @@ export default function MigrationSetup({ target, onTarget, onNext }: Props) {
           <input className="migration-input" type="text" name="region" autoComplete="off" placeholder={t('setup.regionPh')} />
         </label>
         <p className="migration-hint">{t('setup.hint')}</p>
-        <label className="migration-field">
+        <div className="migration-field">
           <span className="migration-label">{t('setup.repo')}</span>
-          <input className="migration-input" type="url" name="repository" autoComplete="off" placeholder="https://github.com/owner/repo" />
-        </label>
+          <RepoPicker value={source} onChange={chooseSource} returnTo={'/?stage=setup&target=' + target} />
+        </div>
         <div className="migration-field">
           <span className="migration-label">{t('setup.target')}</span>
           <div className="migration-segment" role="radiogroup" aria-label={t('setup.targetAria')}>
@@ -130,12 +152,15 @@ export default function MigrationSetup({ target, onTarget, onNext }: Props) {
           </ul>}
         </div>
       </div>
+      {pending && source && <div className="repo-pending" role="alert">
+        <strong>{t('pending.step')}</strong>
+        <span>{t('pending.lead')}</span>
+        <span>{t('pending.repo', { name: source.full_name, sha: source.commit_sha.slice(0, 7) })}</span>
+      </div>}
       <div className="migration-footer">
-        <button className="migration-next" type="button" onClick={() => onNext(startRequestFor(target, {
-          region: regions[target], agentId: agentId.trim() || undefined,
-          // 보내는 것은 참조 문자열뿐이다(.env 내용은 어디에도 보내지 않는다).
-          envFileRef: files.length > 0 ? 'local:' + files[0].name : undefined,
-        }))}>
+        {blocked && <span className="migration-hint repo-footer-note">{t('setup.repoRequired')}</span>}
+        {!needsSource && !source && <span className="migration-hint repo-footer-note">{t('setup.repoDemoNote')}</span>}
+        <button className="migration-next" type="button" disabled={blocked} aria-disabled={blocked} onClick={submit}>
           {t('setup.next')} <span aria-hidden="true">→</span>
         </button>
       </div>

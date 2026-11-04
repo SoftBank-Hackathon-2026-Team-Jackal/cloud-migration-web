@@ -102,6 +102,11 @@ test('REST 요청·응답 형식', () => {
   assert.equal(validateRest('StartRequest')({ target: 'aws' }), false)
   assert.equal(validateRest('StartRequest')({ target: { provider: 'AWS', profile: 'aws-ec2-basic' } }), false, 'AWS는 대상이 아니다')
   assert.equal(validateRest('StartRequest')({ ...startRequestFor('gcp'), password: 'x' }), false)
+  // 고른 공개 GitHub 저장소(source): 커밋 SHA로 고정한 참조만, 토큰 같은 다른 값은 받지 않는다.
+  const source = { kind: 'GITHUB_PUBLIC' as const, repository_id: 42, full_name: 'octo/real', commit_sha: 'a'.repeat(40) }
+  assertValid(validateRest('StartRequest'), { project_id: 'demo', source_provider: 'AWS', target_provider: 'GCP', ...startRequestFor('gcp', { source }) }, 'StartRequest source')
+  assert.equal(validateRest('StartRequest')({ ...startRequestFor('gcp'), source: { ...source, commit_sha: 'main' } }), false, 'source는 브랜치가 아니라 커밋 SHA')
+  assert.equal(validateRest('StartRequest')({ ...startRequestFor('gcp'), source: { ...source, token: 'gho_x' } }), false, 'source에 토큰을 싣지 않는다')
   assertValid(validateRest('StartResponse'), { workflow_id: 'wf-1', run_id: 'run-1', mode: 'scaffold' }, 'StartResponse(백엔드)')
   const digest = 'a'.repeat(64)
   assertValid(validateRest('ApprovalRequest'), { decision: 'APPROVE', scope: 'FULL', manifest_digest: digest, preview_digest: digest }, 'ApprovalRequest')

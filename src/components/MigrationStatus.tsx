@@ -3,6 +3,7 @@
 import { useT } from '../lib/i18n'
 import { useMigration } from '../lib/migration/MigrationProvider'
 import { PHASE_OF_STAGE } from '../lib/migration/events'
+import { BACKEND_PENDING, SOURCE_REQUIRED } from '../lib/migration/sseProvider'
 import type { Stage } from '../lib/stages'
 
 /** 연결이 끊겨 다시 연결하는 동안 화면 아래에 뜨는 안내. 복구되면 사라진다(기존 토스트 스타일 재사용). */
@@ -18,7 +19,7 @@ export function ConnectionToast() {
  * 실패는 그 단계(또는 어느 단계에도 속하지 않는 오류)일 때만, 취소는 모든 단계에서 보인다.
  * 승인 화면의 "승인하지 않고 취소"는 그 화면 자체의 안내를 쓰므로 여기서는 보이지 않는다.
  */
-export function StatusPanel({ stage, onHome }: { stage: Stage; onHome: () => void }) {
+export function StatusPanel({ stage, onHome, onSetup }: { stage: Stage; onHome: () => void; onSetup?: () => void }) {
   const t = useT()
   const { state, provider } = useMigration()
   const phase = stage in PHASE_OF_STAGE ? PHASE_OF_STAGE[stage as keyof typeof PHASE_OF_STAGE] : null
@@ -55,6 +56,20 @@ export function StatusPanel({ stage, onHome }: { stage: Stage; onHome: () => voi
 
   const failure = state.status === 'failed' ? (state.failures[phase] ?? (state.error && state.error.phase === null ? state.error : undefined)) : undefined
   if (!failure) return null
+  // 시작하지 않고 멈춘 경우(SSE): 실패가 아니라 대기 안내. 분석이 시작된 것처럼 보이지 않게 단계 화면을 덮는다.
+  if (failure.code === BACKEND_PENDING || failure.code === SOURCE_REQUIRED) {
+    return <section className="flow-stage approval-stage is-ready" role="alert" aria-label={t('pending.step')}>
+      <div className="approval-panel">
+        <small className="approval-step">{t('pending.step')}</small>
+        <h2>{t('pending.title')}</h2>
+        <p className="approval-lead">{t(failure.code === BACKEND_PENDING ? 'pending.lead' : 'pending.sourceLead')}</p>
+        <div className="approval-actions">
+          <button type="button" className="flow-secondary" onClick={onHome}>{t('pending.home')}</button>
+          {onSetup && <button type="button" className="flow-primary" onClick={onSetup}>{t('pending.setup')} <span aria-hidden="true">→</span></button>}
+        </div>
+      </div>
+    </section>
+  }
   return <section className="flow-stage approval-stage is-ready" role="alert" aria-label={t('fail.step')}>
     <div className="approval-panel">
       <small className="approval-step">{t('fail.step')}</small>

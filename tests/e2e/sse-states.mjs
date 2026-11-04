@@ -2,7 +2,8 @@
 /**
  * SSE 모드의 연결·실패·취소 상태 시험(헤드리스).
  *   1) npm run mock:server                                  (http://127.0.0.1:8000)
- *   2) NEXT_PUBLIC_API_MODE=sse 로 띄운 앱                  (예: NEXT_PUBLIC_API_MODE=sse npx next dev -p 3200)
+ *   2) NEXT_PUBLIC_API_MODE=sse NEXT_PUBLIC_SSE_START=legacy 로 띄운 앱 (예: NEXT_PUBLIC_API_MODE=sse NEXT_PUBLIC_SSE_START=legacy npx next dev -p 3200)
+ *      legacy: 목업 서버는 source 없이 시작한다. 기본(wait)은 백엔드 연결 대기라 POST /migrations를 부르지 않는다.
  *   3) BASE_URL=http://127.0.0.1:3200 node tests/e2e/sse-states.mjs
  * 서버의 개발용 엔드포인트(/__debug/disconnect, /migrations/{id}/debug/fail)를 쓴다.
  */

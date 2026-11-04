@@ -36,6 +36,37 @@ npm run build
 npm run typecheck
 ```
 
+## GitHub 로그인과 저장소 선택
+
+설정 화면의 "GitHub 저장소"는 주소 입력 대신 **GitHub 로그인 → 공개 저장소 검색 → 선택**입니다. 고르면 서버가 그 저장소를 id로 다시 조회해 공개 저장소인지 확인하고, 기본 브랜치의 지금 커밋 SHA를 고정합니다. 시작 요청에는 `source: { kind: "GITHUB_PUBLIC", repository_id, full_name, commit_sha }`만 실립니다.
+
+- [Auth.js](https://authjs.dev) + GitHub OAuth App, DB·사용자 테이블 없이 **암호화된 JWT 쿠키 세션**만 씁니다. 요청 권한은 `read:user`뿐이며 `repo` 권한은 요청하지 않습니다.
+- GitHub 액세스 토큰은 서버 쪽 JWT 안에만 있습니다. 브라우저가 받는 세션(`/api/auth/session`)과 `/api/github/*` 응답에는 토큰이 없습니다. 브라우저에서 플랫폼 API로 토큰이나 소스 코드를 보내지 않습니다.
+- 서버 API: `GET /api/github/repos?page=&per_page=&q=` (GitHub `GET /user/repos`를 페이지 단위로 호출, 공개 저장소만, `repository_id·full_name·default_branch·description·html_url·updated_at`만 돌려줌. 검색어가 있으면 최근 갱신 순 500개 안에서 이름·설명으로 거름), `POST /api/github/source {repository_id}` (기본 브랜치 커밋 SHA 고정).
+- 오류: 로그인 안 함·설정 없음·토큰 만료(GitHub 401 → 다시 로그인 안내)·GitHub 한도 초과·그 밖의 GitHub 오류를 화면에서 구분해 보여 줍니다.
+
+### 설정
+
+1. GitHub → Settings → Developer settings → **OAuth Apps → New OAuth App**
+   - Homepage URL: `http://localhost:3000` (운영: `https://<배포 도메인>`)
+   - Authorization callback URL
+     - 로컬: `http://localhost:3000/api/auth/callback/github` (Next가 `127.0.0.1`을 `localhost`로 바꿔 콜백 주소를 만들기 때문에 `127.0.0.1`이 아니라 `localhost`로 등록합니다. `127.0.0.1:3000`에서 로그인을 누르면 화면이 `localhost:3000`으로 옮겨 가서 로그인을 이어 갑니다.)
+     - 운영: `https://<배포 도메인>/api/auth/callback/github`
+   - OAuth App 하나에는 콜백 주소가 하나뿐이라 로컬용·운영용 앱을 따로 만듭니다.
+2. `.env.example`을 `.env.local`로 복사해 `AUTH_GITHUB_ID`(Client ID), `AUTH_GITHUB_SECRET`(Client secret), `AUTH_SECRET`(`npx auth secret` 또는 `openssl rand -base64 33`)을 채웁니다. `.env*.local`은 git에 올라가지 않습니다.
+3. **Vercel**: Project → Settings → Environment Variables에 같은 세 값을 Production(필요하면 Preview)용으로 넣고 다시 배포합니다. 운영 OAuth App의 콜백은 운영 도메인으로 맞춥니다. Preview 배포는 주소가 매번 바뀌므로 GitHub 로그인이 필요하면 고정된 Preview 도메인용 OAuth App을 따로 둡니다. `trustHost`를 켜 두어 `AUTH_URL`은 따로 넣지 않아도 됩니다.
+
+### 모드별 동작
+
+| 모드 | 저장소 선택 | "다음" |
+| --- | --- | --- |
+| 목업(기본) | 선택하면 `source`를 실어 보냄 | 고르지 않아도 데모 데이터로 진행(기존 데모 흐름 그대로) |
+| SSE, `NEXT_PUBLIC_SSE_START=wait`(기본) | 필수 | **백엔드 연결 대기**: 백엔드 `/migrations`가 아직 `source`를 받지 않으므로([platform#60](https://github.com/SoftBank-Hackathon-2026-Team-Jackal/cloud-migration-platform/issues/60)) `POST /migrations`를 부르지 않고 안내만 보여 줌 |
+| SSE, `source` | 필수 | `source`를 실어 `POST /migrations` |
+| SSE, `legacy` | 선택 | 목업 SSE 서버 시험 전용: 예전처럼 `source` 없이도 시작 |
+
+SSE 모드(legacy 제외)에서는 `?stage=` 주소로 단계를 바로 열거나 첫 화면의 "마이그레이션 시작"을 눌러도 저장소 없이 시작하지 않습니다(대기 안내, 음성 시작은 설정 화면으로 이동). `.env` 첨부는 파일 이름만 아는 상태라 업로드 참조가 아니므로 시작 요청에 보내지 않습니다.
+
 ## 데이터 모드 (목업 / SSE)
 
 화면은 `useMigration()`이 주는 상태만 읽고, 값이 어디서 오는지는 공급자가 정합니다.
@@ -44,6 +75,7 @@ npm run typecheck
 | --- | --- |
 | `NEXT_PUBLIC_API_MODE=mock\|sse` | `mock`(기본): 타이머 대본으로 똑같이 동작. `sse`: 서버 이벤트(SSE)로 동작 |
 | `NEXT_PUBLIC_API_BASE` | SSE 서버 주소 (기본 `http://127.0.0.1:8000`) |
+| `NEXT_PUBLIC_SSE_START=wait\|source\|legacy` | SSE 시작 방식 (기본 `wait`, 위 "모드별 동작" 참고) |
 
 `NEXT_PUBLIC_*` 값은 빌드 때 들어가므로 바꾼 뒤에는 다시 실행(빌드)해야 합니다.
 
@@ -51,7 +83,7 @@ npm run typecheck
 
 ```bash
 npm run mock:server                                   # http://127.0.0.1:8000 (PORT=9000 으로 바꿈)
-NEXT_PUBLIC_API_MODE=sse npm run dev                  # 다른 터미널
+NEXT_PUBLIC_API_MODE=sse NEXT_PUBLIC_SSE_START=legacy npm run dev   # 다른 터미널(목업 서버는 source 없이 시작)
 ```
 
 ## 백엔드 계약 상태 (SSE 모드)
@@ -73,9 +105,10 @@ NEXT_PUBLIC_API_MODE=sse npm run dev                  # 다른 터미널
 
 ```bash
 npm run typecheck
-npm test                    # reducer 단위 테스트
+npm test                    # reducer·GitHub API(가짜 GitHub, 네트워크 없음) 단위 테스트
 BASE_URL=http://127.0.0.1:3000 npm run test:e2e:review   # ?review=1, ?digest=mismatch 시험
 BASE_URL=http://127.0.0.1:3000 npm run test:e2e       # 핵심 흐름 브라우저 테스트(목업 모드의 앱, playwright 필요)
+npm run build && npm run test:e2e:github                # GitHub 로그인·저장소 선택(가짜 GitHub 서버, 실제 호출 없음). SSE는 같은 NEXT_PUBLIC_* 값으로 빌드·실행
 ```
 
 ```bash
@@ -88,7 +121,7 @@ npm run contract:check      # 이벤트 계약(contract/*.schema.json) 검증: �
 
 `.github/workflows/ci.yml`: push와 pull request마다 Node 22에서 `npm ci` → `npm run typecheck` → `npm test`(단위 + 계약) → `npm run build`를 돌립니다. 브라우저 테스트(`test:e2e`)는 느려서 기본으로는 돌지 않고, Actions 탭에서 **Run workflow**로 수동 실행할 때만 `e2e` job이 돕니다.
 
-SSE 모드의 핵심 흐름과 연결 끊김·실패·취소 상태는 `NEXT_PUBLIC_API_MODE=sse` 앱과 `npm run mock:server`를 띄운 뒤 `npm run test:e2e`, `npm run test:e2e:sse`로 확인합니다.
+SSE 모드의 핵심 흐름과 연결 끊김·실패·취소 상태는 `NEXT_PUBLIC_API_MODE=sse NEXT_PUBLIC_SSE_START=legacy` 앱과 `npm run mock:server`를 띄운 뒤 `npm run test:e2e`, `npm run test:e2e:sse`로 확인합니다.
 
 ## 주소 옵션
 

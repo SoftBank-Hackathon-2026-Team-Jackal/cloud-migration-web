@@ -49,6 +49,35 @@
           ],
           "additionalProperties": false
         },
+        "source": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "GITHUB_PUBLIC"
+              ]
+            },
+            "repository_id": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "full_name": {
+              "type": "string",
+              "pattern": "^[^/\\s]+/[^/\\s]+$"
+            },
+            "commit_sha": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            }
+          },
+          "required": [
+            "kind",
+            "repository_id",
+            "full_name",
+            "commit_sha"
+          ],
+          "additionalProperties": false
+        },
         "env_file_ref": {
           "type": "string"
         }
