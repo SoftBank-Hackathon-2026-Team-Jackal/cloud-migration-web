@@ -44,6 +44,8 @@ const REPORT: Partial<Record<Stage, string>> = {
   cutover: voiceClips.cutover_start,
 }
 
+type ChatMessage = { id: number; role: 'user' | 'agent'; text: string; tag?: 'report' | 'model' | 'local' }
+
 export default function FlowApp() {
   const { t, lang } = useI18n()
   const { provider, state: migrationState } = useMigration()
@@ -130,12 +132,30 @@ export default function FlowApp() {
     onWake: () => wake(),
     onStart: () => beginVoiceMigration(),
     onAsk: question => askHandler.current(question),
+    onSay: (text, meta) => pushChat('agent', text, meta.kind === 'answer' ? meta.source ?? 'local' : 'report'),
+    onHeard: text => pushChat('user', text),
   })
+
+  // 채팅 기록: 음성 안내·음성 질문·입력한 질문과 답을 한 곳에 남긴다. 위젯은 접을 수 있다.
+  const [chat, setChat] = useState<ChatMessage[]>([])
+  const [chatOpen, setChatOpen] = useState(true)
+  const [unread, setUnread] = useState(0)
+  const chatId = useRef(0)
+  const chatOpenRef = useRef(true)
+  const logRef = useRef<HTMLDivElement>(null)
+  chatOpenRef.current = chatOpen
+  function pushChat(role: ChatMessage['role'], text: string, tag?: ChatMessage['tag']) {
+    chatId.current += 1
+    const message: ChatMessage = { id: chatId.current, role, text, tag }
+    setChat(list => [...list.slice(-59), message])
+    if (role === 'agent' && !chatOpenRef.current) setUnread(count => count + 1)
+  }
+  useEffect(() => { if (chatOpen) setUnread(0) }, [chatOpen])
+  useEffect(() => { logRef.current?.scrollTo({ top: logRef.current.scrollHeight }) }, [chat, chatOpen])
 
   // 에이전트 질문: 화면의 현재 상태를 요약해 임시 백엔드(/api/agent)에 묻고, 답은 말로도 읽어 준다.
   const [question, setQuestion] = useState('')
   const [asking, setAsking] = useState(false)
-  const [answerSource, setAnswerSource] = useState<'model' | 'local' | null>(null)
   const askContext = useRef({ migrationState, stage, lang })
   askContext.current = { migrationState, stage, lang }
   askHandler.current = async (text: string) => {
@@ -143,9 +163,8 @@ export default function FlowApp() {
     const { migrationState: current, stage: currentStage, lang: currentLang } = askContext.current
     const facts = buildAgentFacts(current, currentStage, t(('stage.' + currentStage) as MsgKey))
     const { answer, source } = await askAgent(text, facts, currentLang)
-    setAnswerSource(source)
     setAsking(false)
-    voice.speakText(answer, currentLang)
+    voice.speakText(answer, currentLang, source)
   }
 
   function wake() {
@@ -169,6 +188,7 @@ export default function FlowApp() {
   useEffect(() => {
     const previous = previousStage.current
     previousStage.current = stage
+    if (previous === 'intro' && stage !== 'intro') setChatOpen(false)
     if (stage === 'intro' || previous === stage) return
     const message = REPORT[stage]
     if (message) voice.speak(message)
@@ -239,7 +259,9 @@ export default function FlowApp() {
       <ParticlePrompt key={lang} onComplete={() => setTextReady(true)} />
       <div className="prompt-action">
         {textReady && <button type="button" className="prompt-yes"
-          onClick={() => go('setup')}>{t('prompt.yes')}</button>}
+          onClick={() => beginVoiceMigration()}>마이그레이션 시작</button>}
+        {textReady && <button type="button" className="prompt-yes prompt-setup"
+          onClick={() => go('setup')}>{t('agent.setup')}</button>}
       </div>
     </section>}
     {stage === 'setup' && <MigrationSetup target={choice} onTarget={setTarget} onNext={request => { provider.start(request); go('analysis') }} />}
@@ -264,25 +286,38 @@ export default function FlowApp() {
     <LangSwitch />
     {exited && <StageRail stage={stage} />}
     {demoPanel && <DemoControls stage={stage} target={target} onJump={jump} onTarget={setTarget} />}
-    <aside className={'voice-console' + (stage === 'intro' ? ' is-intro' : '')} aria-label="자칼 음성 안내">
-      <div className="voice-console-head"><strong>JACKAL VOICE</strong><span>LOCAL DEMO</span></div>
-      {stage === 'intro' && <p className="voice-profile">등록된 시연 정보 · AWS EKS → GCP GKE</p>}
-      <p className="voice-caption" aria-live="polite">{voice.message || (started ? '“마이그레이션 시작하자”라고 말해 주세요.' : '“헤이 자칼”이라고 말해 주세요.')}</p>
-      {voice.heard && stage === 'intro' && <small className="voice-heard">인식: {voice.heard}</small>}
-      {voice.error && <small className="voice-error">{voice.error}</small>}
-      <div className="voice-actions">
-        <button type="button" onClick={voice.toggleMic} disabled={!voice.recognitionSupported}
-          aria-pressed={voice.micEnabled}>{voice.micEnabled ? '● 듣는 중 · 끄기' : '마이크 켜기'}</button>
-        <button type="button" onClick={voice.toggleSound} aria-pressed={voice.soundEnabled}>{voice.soundEnabled ? '음성 켜짐' : '음성 꺼짐'}</button>
-        {stage === 'intro' && <button type="button" onClick={wake}>헤이 자칼</button>}
-        {stage === 'intro' && started && <button type="button" onClick={() => beginVoiceMigration()}>마이그레이션 시작하자</button>}
-      </div>
-      {stage !== 'intro' && <form className="voice-ask" onSubmit={event => { event.preventDefault(); const text = question.trim(); if (text && !asking) { setQuestion(''); void askHandler.current(text) } }}>
-        <input value={question} onChange={event => setQuestion(event.target.value)} placeholder={t('agent.placeholder')} aria-label={t('agent.label')} maxLength={200} />
-        <button type="submit" disabled={asking || !question.trim()}>{asking ? t('agent.thinking') : t('agent.send')}</button>
-      </form>}
-      {stage !== 'intro' && !voice.message && <small className="voice-heard">{t('agent.hint')}</small>}
-      {stage !== 'intro' && answerSource && voice.message && <small className="voice-heard" data-agent-source={answerSource}>{answerSource === 'model' ? t('agent.sourceModel') : t('agent.sourceLocal')}</small>}
+    <aside className={'jv' + (chatOpen ? ' is-open' : '') + (stage === 'intro' ? ' is-intro' : '')} aria-label={t('agent.title')}>
+      {chatOpen && <section className="jv-panel" aria-label={t('agent.title')}>
+        <header className="jv-head">
+          <strong>JACKAL</strong><span>LOCAL DEMO</span>
+          <div className="jv-head-actions">
+            <button type="button" onClick={voice.toggleMic} disabled={!voice.recognitionSupported} aria-pressed={voice.micEnabled}>{voice.micEnabled ? t('agent.micOn') : t('agent.mic')}</button>
+            <button type="button" onClick={voice.toggleSound} aria-pressed={voice.soundEnabled}>{voice.soundEnabled ? t('agent.soundOn') : t('agent.soundOff')}</button>
+            <button type="button" className="jv-fold" onClick={() => setChatOpen(false)} aria-label={t('agent.fold')} title={t('agent.fold')}>–</button>
+          </div>
+        </header>
+        {stage === 'intro' && <p className="jv-profile">{t('agent.profile')}</p>}
+        <div className="jv-log" role="log" aria-live="polite" ref={logRef}>
+          {chat.length === 0 && <p className="jv-empty">{started ? t('prompt.question') : '“헤이 자칼”'} · {t('agent.empty')}</p>}
+          {chat.map(message => <div key={message.id} className={'jv-msg is-' + message.role}>
+            <p>{message.text}</p>
+            {message.role === 'agent' && message.tag && <small data-msg-tag={message.tag} {...(message.tag === 'model' || message.tag === 'local' ? { 'data-agent-source': message.tag } : {})}>{message.tag === 'model' ? t('agent.sourceModel') : message.tag === 'local' ? t('agent.sourceLocal') : t('agent.sourceReport')}</small>}
+          </div>)}
+          {asking && <div className="jv-msg is-agent is-typing"><p>{t('agent.thinking')}</p></div>}
+        </div>
+        {voice.error && <small className="jv-error">{voice.error}</small>}
+        {stage === 'intro' && <div className="jv-chips">
+          <button type="button" onClick={wake}>헤이 자칼</button>
+          {started && <button type="button" onClick={() => beginVoiceMigration()}>마이그레이션 시작하자</button>}
+        </div>}
+        {stage !== 'intro' && <form className="jv-form" onSubmit={event => { event.preventDefault(); const text = question.trim(); if (text && !asking) { setQuestion(''); pushChat('user', text); void askHandler.current(text) } }}>
+          <input value={question} onChange={event => setQuestion(event.target.value)} placeholder={t('agent.placeholder')} aria-label={t('agent.label')} maxLength={200} />
+          <button type="submit" disabled={asking || !question.trim()}>{t('agent.send')}</button>
+        </form>}
+      </section>}
+      <button type="button" className={'jv-pill' + (voice.speaking ? ' is-speaking' : '')} aria-expanded={chatOpen} aria-label={chatOpen ? t('agent.fold') : t('agent.open')} onClick={() => setChatOpen(open => !open)}>
+        <span className="jv-dot" aria-hidden="true" />{t('agent.title')}{!chatOpen && unread > 0 && <b>{unread}</b>}
+      </button>
     </aside>
   </main>
 }

@@ -61,12 +61,16 @@ async function ask(port, text) {
   page.on('request', request => browserRequests.push({ url: request.url(), headers: request.headers(), body: request.postData() }))
   await page.goto(`http://127.0.0.1:${port}/?lang=ko&stage=traffic&target=gcp`)
   await page.waitForTimeout(4000)
-  await page.locator('.voice-ask input').fill(text)
-  await page.locator('.voice-ask input').press('Enter')
+  // 시연 중에는 위젯이 접혀 있다: 눌러서 열고, 입력창에 질문을 쓴다.
+  await page.locator('.jv-pill').click()
+  await page.locator('.jv-form input').fill(text)
+  await page.locator('.jv-form input').press('Enter')
   await page.waitForSelector('[data-agent-source]', { timeout: 20000 })
   const result = {
-    source: await page.locator('[data-agent-source]').getAttribute('data-agent-source'),
-    caption: await page.locator('.voice-caption').innerText(),
+    source: await page.locator('[data-agent-source]').last().getAttribute('data-agent-source'),
+    caption: await page.locator('.jv-msg.is-agent p').last().innerText(),
+    userMessage: await page.locator('.jv-msg.is-user p').last().innerText(),
+    reports: await page.locator('[data-msg-tag="report"]').count(),
     html: await page.content(),
     browserRequests,
   }
@@ -82,7 +86,9 @@ try {
   fakeMode = 'ok'
   const first = await ask(3401, '지금 무슨 단계야?')
   check(first.source === 'model', '모델 답으로 표시된다')
-  check(first.caption.includes('모델 답변'), '답이 화면에 보인다')
+  check(first.caption.includes('모델 답변'), '답이 채팅에 보인다')
+  check(first.userMessage === '지금 무슨 단계야?', '내가 한 질문도 채팅에 남는다')
+  check(first.reports >= 1, '음성 안내 문구(보고)도 채팅에 남는다')
   const call = received.at(-1)
   check(call && call.url === '/v1/messages' && call.key === TEST_KEY, '서버가 모델 서버에 키를 붙여 호출한다')
   const prompt = call?.body?.messages?.[0]?.content ?? ''

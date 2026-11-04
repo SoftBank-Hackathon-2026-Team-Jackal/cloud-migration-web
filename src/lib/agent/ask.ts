@@ -3,7 +3,8 @@ import { answerLocally, type AgentLang } from './mock'
 
 export type AgentAnswer = { answer: string; source: 'model' | 'local' }
 
-const REQUEST_TIMEOUT_MS = 12000
+// 서버(모델) 제한 시간보다 조금 길게 둔다.
+const REQUEST_TIMEOUT_MS = 50000
 
 /**
  * 질문을 임시 백엔드(/api/agent)에 보내고, 모델 답이 없거나 실패하면 규칙 기반 답(answerLocally)으로 대신한다.

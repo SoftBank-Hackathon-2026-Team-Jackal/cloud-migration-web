@@ -9,7 +9,8 @@ import { NextResponse } from 'next/server'
 
 const MAX_QUESTION = 300
 const MAX_CONTEXT = 6000
-const TIMEOUT_MS = 15000
+// 무료 모델은 느릴 수 있어(실측 13~25초) 넉넉히 둔다. AGENT_TIMEOUT_MS로 바꿀 수 있다.
+const TIMEOUT_MS = Number(process.env.AGENT_TIMEOUT_MS) || 45000
 const LANGUAGE = { ko: '한국어', en: 'English', ja: '日本語' } as const
 type Lang = keyof typeof LANGUAGE
 
@@ -43,10 +44,14 @@ async function callGemini(system: string, user: string): Promise<string> {
   if (!key) throw new Error('no_key')
   const base = process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com'
   const model = process.env.AGENT_MODEL || 'gemini-2.5-flash'
+  // Gemma 계열은 시스템 지침 필드를 받지 않으므로 지침을 사용자 글 앞에 붙인다.
+  const body = model.startsWith('gemma')
+    ? { contents: [{ role: 'user', parts: [{ text: `${system}\n\n${user}` }] }], generationConfig: { maxOutputTokens: 300 } }
+    : { systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: user }] }], generationConfig: { maxOutputTokens: 300 } }
   const response = await fetch(`${base}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
-    body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: user }] }], generationConfig: { maxOutputTokens: 300 } }),
+    body: JSON.stringify(body),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   })
   if (!response.ok) throw new Error('upstream_' + response.status)

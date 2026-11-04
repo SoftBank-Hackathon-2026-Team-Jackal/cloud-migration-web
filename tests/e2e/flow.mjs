@@ -44,7 +44,7 @@ try {
     await page.mouse.click(768, 400)
     if (await page.locator('.prompt-yes').waitFor({ timeout: 10000 }).then(() => true, () => false)) break
   }
-  await press('.prompt-yes')
+  await press('.prompt-setup')
   note('소개 → 설정')
   // 설정 화면: 대상을 GCP로 고르면 대상 리전 선택이 나온다(기본 ap-northeast-2).
   await page.locator('[role=radio]').first().click()
