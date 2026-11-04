@@ -59,10 +59,13 @@ function AnalysisCluster({ title, subtitle, root, stream, progress, nodes, disco
   const t = useT()
   const foundCount = nodes.filter(node => discovered.has(node.key)).length
   const listRef = useRef<HTMLDivElement>(null)
+  // 끝나면 목록을 작은 줄로 접어 스크롤 없이 전부 보여 준다(위로 사라졌던 01~03번도 다시 보이게).
+  const compact = progress === 100
   useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })
-  }, [foundCount])
-  return <section className={'analysis-cluster analysis-' + stream}>
+    if (compact) listRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+    else listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })
+  }, [foundCount, compact])
+  return <section className={'analysis-cluster analysis-' + stream + (compact ? ' is-compact' : '')}>
     <div className="analysis-cluster-heading">
       <span className="analysis-cluster-icon" data-particle-target="circle" aria-hidden="true">{stream === 'infrastructure' ? '◫' : '⌘'}</span>
       <div>
@@ -133,6 +136,7 @@ export default function AnalysisStage({ target, onAdvance, onComplete, orbHandof
   const finished = infrastructure === 100 && code === 100
   useEffect(() => { if (finished) onComplete?.() }, [finished, onComplete])
   const usedMethods = new Set(activeUpdates.flatMap(update => update.via ?? []))
+  const latest = activeUpdates[activeUpdates.length - 1]
 
   useEffect(() => {
     if (!proceed || advancedRef.current) return
@@ -195,15 +199,21 @@ export default function AnalysisStage({ target, onAdvance, onComplete, orbHandof
           {mode === 'mock' && !replayed && <small data-particle-target="text">DEMO</small>}
         </div>
         <div className="scan-methods" role="group" aria-label={t('scan.title')}>
-          {SCAN_METHODS.map(method => <span key={method} data-particle-target="text" className={usedMethods.has(method) ? 'is-used' : ''}>{t(('scan.' + method) as MsgKey)}</span>)}
+          {SCAN_METHODS.map(method => {
+            // 새 발견 항목이 이 방법으로 찾은 것이면 칩이 한 번 깜빡인다(key가 바뀌어 애니메이션이 다시 돈다).
+            const flashing = latest?.via?.includes(method)
+            return <span key={method + (flashing ? '-' + latest?.id : '')} data-particle-target="text"
+              className={(usedMethods.has(method) ? 'is-used' : '') + (flashing && !replayed ? ' is-flash' : '')}>{t(('scan.' + method) as MsgKey)}</span>
+          })}
         </div>
         <div className="analysis-discovery-items" tabIndex={0} aria-live="polite">
           {activeUpdates.length === 0
             ? <p data-particle-target="text">{t('analysis.liveEmpty')}</p>
-            : [...activeUpdates].reverse().map(update => <div className="analysis-discovery-item" key={update.id}>
+            : [...activeUpdates].reverse().map(update => <div className={'analysis-discovery-item is-' + update.stream} key={update.id} title={textOf(t, update).detail}>
                 <small>{update.stream === 'infrastructure' ? t('analysis.streamInfra') : t('analysis.streamCode')}</small>
                 <strong>{textOf(t, update).message}</strong>
-                <em>{textOf(t, update).detail}</em>
+                {/* 멀리서도 읽히도록 피드는 한 줄 제목과 근거 칩만 보인다. 세부 문구는 낭독기·마우스 올림으로 */}
+                <em className="sr-only">{textOf(t, update).detail}</em>
                 {update.via && <span className="scan-via">{update.via.map(method => <i key={method}>{t(('scan.' + method) as MsgKey)}</i>)}</span>}
               </div>)}
         </div>

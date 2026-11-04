@@ -101,3 +101,27 @@
 .cutover-approval .approval-diagram-body{justify-content:center}
 .cutover-approval .approval-diagram-body>.arch{flex:0 0 auto;width:100%;max-width:420px;height:auto;max-height:260px;margin:0 auto}
 .cutover-approval .approval-diagram{contain:none}
+
+/* ── 분석 화면: 완료 뒤 한눈에 보기 · 한 줄 피드 · 출처 세로선 · 근거 칩 깜빡임 ── */
+/* 완료되면 항목을 작은 줄(번호 · 이름 · 세부 한 줄)로 접고 스크롤을 없앤다 */
+.analysis-stage .analysis-cluster.is-compact .analysis-result-list{max-height:none;overflow:visible;-webkit-mask-image:none;mask-image:none}
+.analysis-stage .analysis-cluster.is-compact .analysis-result.is-discovered{max-height:52px}
+.analysis-stage .analysis-cluster.is-compact .analysis-result-content{height:52px;padding:0 8px 0 0;flex-direction:row;align-items:center;gap:12px;transition:height .7s var(--ease-out)}
+.analysis-stage .analysis-cluster.is-compact .analysis-result-content small{display:none}
+.analysis-stage .analysis-cluster.is-compact .analysis-result-content strong{flex:none;margin:0;font-size:16px}
+.analysis-stage .analysis-cluster.is-compact .analysis-result-content p{flex:1;min-width:0;margin:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:var(--text-muted)}
+.analysis-stage .analysis-cluster.is-compact .analysis-result-point{top:20px}
+.analysis-stage .analysis-cluster.is-compact .analysis-result::before{display:none}
+
+/* 피드: 세부 문구를 숨기고 제목 + 근거 칩만, 왼쪽 세로선으로 출처 구분(인프라 실선 · 소스코드 점선) */
+.analysis-stage .analysis-discovery-item{grid-template-columns:minmax(0,1fr);row-gap:6px;padding:11px 0 12px 12px;border-left:2px solid #222}
+.analysis-stage .analysis-discovery-item.is-code{border-left:2px dashed #9a9a9a}
+.analysis-stage .analysis-discovery-item small{grid-row:auto;padding:0;font-size:11px;letter-spacing:.02em}
+.analysis-stage .analysis-discovery-item strong{font-size:14px;line-height:1.35}
+.analysis-stage .analysis-discovery-item .scan-via{grid-column:1}
+.analysis-stage .analysis-discovery-items{gap:6px}
+.analysis-stage .analysis-discovery-item+.analysis-discovery-item{border-top:0}
+
+/* 근거 칩: 새 항목이 그 방법으로 발견되면 한 번 검게 깜빡인다 */
+@keyframes scan-flash{0%{background:#111;border-color:#111;color:#fff;transform:scale(1.06)}100%{background:#fff;border-color:#222;color:#222;transform:scale(1)}}
+.scan-methods span.is-flash{animation:scan-flash 1.1s var(--ease-out) both}
