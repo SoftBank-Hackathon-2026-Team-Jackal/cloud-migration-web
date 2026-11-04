@@ -6,3 +6,6 @@ out
 next-env.d.ts
 .DS_Store
 .env*.local
+
+# taste-skill 작업 파일(로컬 전용)
+.taste-skill/

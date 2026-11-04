@@ -1,11 +1,13 @@
 'use client'
 
-import { useEffect, useRef, useState, type RefObject } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import type { Target } from '../lib/stages'
-import type { PlanStepData } from '../lib/migration/events'
+import { shortDigest, type PlanEnvironment, type PlanIssue, type PlanPreviewData, type PlanResource, type PlanStepData, type SecurityRule } from '../lib/migration/events'
 import { PLAN_FIRST_REVEAL_MS, PLAN_REVEAL_GAP_MS, PLAN_REVEAL_MS } from '../lib/migration/script'
-import { useT, type MsgKey, type Translate } from '../lib/i18n'
+import { useT, useTOr, type MsgKey, type TranslateOr } from '../lib/i18n'
 import { ViewTabs } from './DiagramParts'
+import PlanTopology from './PlanTopology'
+import { LEDGER_GROUPS, ledgerGroupOf, planSummary, planWarnings } from '../lib/migration/planModel'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
 
 type PlanStep = PlanStepData
@@ -14,13 +16,120 @@ type PlanStep = PlanStepData
 const GCP_AFTER = new Set(['network', 'compute'])
 const GCP_CHANGE = new Set(['network'])
 
-/** 문구는 이벤트 값이 있으면 그대로 쓰고, 비어 있으면 id로 사전에서 찾는다(대상이 GCP일 때만 다른 문구 포함). */
-function stepText(t: Translate, step: PlanStep, target: Target, field: 'before' | 'after' | 'evidence' | 'change') {
+/** 문구는 이벤트 값이 있으면 그대로 쓰고, 비어 있으면 id로 사전에서 찾는다(대상이 GCP일 때만 다른 문구 포함). 사전에도 없으면 id. */
+function stepText(tOr: TranslateOr, step: PlanStep, target: Target, field: 'before' | 'after' | 'evidence' | 'change') {
   if (step[field]) return step[field]
   const gcp = target === 'gcp'
-  if (field === 'after' && gcp && GCP_AFTER.has(step.id)) return t(('plan.step.' + step.id + '.gcpAfter') as MsgKey)
-  if (field === 'change' && gcp && GCP_CHANGE.has(step.id)) return t(('plan.step.' + step.id + '.gcpChange') as MsgKey)
-  return t(('plan.step.' + step.id + '.' + field) as MsgKey)
+  if (field === 'after' && gcp && GCP_AFTER.has(step.id)) return tOr('plan.step.' + step.id + '.gcpAfter', step.id)
+  if (field === 'change' && gcp && GCP_CHANGE.has(step.id)) return tOr('plan.step.' + step.id + '.gcpChange')
+  return tOr('plan.step.' + step.id + '.' + field, field === 'before' || field === 'after' ? step.id : '')
+}
+
+/** 리소스 이름·설명: 이벤트 값 → 대상별 사전 문구 → 공통 사전 문구 → id */
+function resourceText(tOr: TranslateOr, resource: PlanResource, path: Target, field: 'name' | 'detail') {
+  if (resource[field]) return resource[field]
+  return tOr('plan.res.' + path + '.' + resource.id + '.' + field, tOr('plan.res.' + resource.id + '.' + field, field === 'name' ? resource.id : ''))
+}
+const issueText = (tOr: TranslateOr, issue: PlanIssue) => issue.message || tOr('plan.warn.' + issue.id, issue.id)
+const roleText = (tOr: TranslateOr, role: string) => tOr('plan.role.' + role, role)
+function placeText(tOr: TranslateOr, env: PlanEnvironment) {
+  return { provider: tOr('plan.provider.' + env.provider, env.provider), place: [env.platform, tOr('region.' + env.location, env.location)].filter(Boolean).join(' · ') }
+}
+
+/** 경고 표시는 이 점 하나로만(찾은 내용 줄 · 리소스 줄 · 검증 칸이 같은 경고를 같은 모양으로) */
+function WarnDot({ label }: { label?: string }) {
+  return <i className="plan-warn-dot" role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : true} />
+}
+
+function Ledger({ preview, path, revealed, warnings }: { preview: PlanPreviewData; path: Target; revealed: number; warnings: PlanIssue[] }) {
+  const t = useT()
+  const tOr = useTOr()
+  const groups = LEDGER_GROUPS.map(group => ({ group, rows: preview.resources.filter(resource => ledgerGroupOf(resource) === group) })).filter(item => item.rows.length > 0)
+  let index = 0
+  const warnOf = (id: string) => warnings.find(issue => issue.resource === id)
+  return <div className="plan-ledger-wrap" style={{ '--rows': preview.resources.length, '--groups': groups.length } as CSSProperties}>
+    <table className="plan-ledger">
+      <thead><tr><th scope="col">{t('plan.col.resource')}</th><th scope="col" className="is-num">{t('plan.col.size')}</th><th scope="col" className="is-change">{t('plan.col.change')}</th></tr></thead>
+      {groups.map(({ group, rows }) => <tbody key={group}>
+        <tr className="plan-ledger-group"><th scope="rowgroup" colSpan={3}>{t(('plan.group.' + group) as MsgKey)}</th></tr>
+        {rows.map(resource => {
+          const order = index++
+          const warn = warnOf(resource.id)
+          return <tr key={resource.id} className={'plan-ledger-row plan-reveal' + (revealed > order ? ' is-visible' : '') + (resource.change === 'KEEP_SOURCE' ? ' is-keep' : '')}>
+            <th scope="row">
+              <span className="plan-cell-main">{resourceText(tOr, resource, path, 'name')}{warn && <WarnDot label={t('plan.warnAria', { text: issueText(tOr, warn) })} />}</span>
+              <span className="plan-cell-sub">{resourceText(tOr, resource, path, 'detail')}</span>
+            </th>
+            <td className="is-num">
+              <span className="plan-cell-main">{resource.size || '—'}</span>
+              {resource.size_detail && <span className="plan-cell-sub">{resource.size_detail}</span>}
+            </td>
+            <td className="is-change"><span className={'plan-chip is-' + resource.change}>{t(('plan.change.' + resource.change) as MsgKey)}</span></td>
+          </tr>
+        })}
+      </tbody>)}
+    </table>
+    <aside className="plan-wells">
+      <section className="plan-well" aria-labelledby="plan-well-env">
+        <h3 id="plan-well-env">{t('plan.well.env')}</h3>
+        <dl>{preview.env_remap.map(item => <div key={item.key}>
+          <dt><code>{item.key}</code></dt>
+          <dd>{item.keep ? <span className="plan-muted">{t('plan.env.keep')}</span>
+            : item.secret ? <><svg className="plan-lock" viewBox="0 0 10 11" role="img" aria-label={t('plan.env.secretAria')}><rect x="1" y="4.5" width="8" height="6" rx="1" /><path d="M3 4.5V3a2 2 0 0 1 4 0v1.5" /></svg><code>{item.to}</code></>
+            : <code>{item.to}</code>}</dd>
+        </div>)}</dl>
+        <p>{t('plan.well.envNote')}</p>
+      </section>
+      <section className="plan-well" aria-labelledby="plan-well-sec">
+        <h3 id="plan-well-sec">{t('plan.well.security')}</h3>
+        <dl>{preview.security_rules.map((rule: SecurityRule, ruleIndex) => <div key={ruleIndex}>
+          <dt>{rule.from === '*' && rule.to === '*' ? roleText(tOr, '*') : roleText(tOr, rule.from) + ' → ' + roleText(tOr, rule.to)}</dt>
+          <dd>{rule.action === 'DENY' ? t('plan.rule.deny') : rule.port === null ? <span aria-label={t('plan.rule.allAria')}>*</span> : rule.port}</dd>
+        </div>)}</dl>
+      </section>
+      <section className="plan-well" aria-labelledby="plan-well-val">
+        <h3 id="plan-well-val">{t('plan.well.validation')}</h3>
+        <dl>
+          <div><dt>{t('plan.val.errors')}</dt><dd>{preview.validation.errors.length}</dd></div>
+          <div><dt>{t('plan.val.warnings')}</dt><dd>{warnings.length > 0 && <WarnDot />}{warnings.length}</dd></div>
+        </dl>
+        {preview.validation.errors.map(issue => <p key={issue.id} className="plan-issue is-error">{issueText(tOr, issue)}</p>)}
+        {warnings.map(issue => <p key={issue.id} className="plan-issue">{issueText(tOr, issue)}</p>)}
+        {preview.validation.errors.length === 0 && warnings.length === 0 && <p>{t('plan.val.clean')}</p>}
+      </section>
+    </aside>
+  </div>
+}
+
+function MappingTable({ steps, target, revealed }: { steps: PlanStep[]; target: Target; revealed: number }) {
+  const t = useT()
+  const tOr = useTOr()
+  const groups = (['infrastructure', 'code'] as const).map(group => ({ group, rows: steps.filter(step => step.group === group) })).filter(item => item.rows.length > 0)
+  return <div className="plan-ledger-wrap is-single" style={{ '--rows': steps.length, '--groups': groups.length } as CSSProperties}>
+    <table className="plan-ledger plan-mapping">
+      <thead><tr>
+        <th scope="col">{t('plan.col.mapping')}</th><th scope="col">{t('plan.col.grade')}</th><th scope="col">{t('plan.col.action')}</th><th scope="col" className="is-verify">{t('plan.col.verify')}</th>
+      </tr></thead>
+      {groups.map(({ group, rows }) => <tbody key={group}>
+        <tr className="plan-ledger-group"><th scope="rowgroup" colSpan={4}>{t(('plan.group.' + group) as MsgKey)}</th></tr>
+        {rows.map(step => {
+          const order = steps.indexOf(step)
+          return <tr key={step.id} className={'plan-ledger-row plan-reveal' + (revealed > order ? ' is-visible' : '') + (step.keep_source ? ' is-keep' : '')}>
+            <th scope="row">
+              <span className="plan-cell-main"><span className="plan-before">{stepText(tOr, step, target, 'before')}</span><b aria-hidden="true">→</b><span>{step.keep_source ? t('plan.keep') : stepText(tOr, step, target, 'after')}</span></span>
+              <span className="plan-cell-sub">{stepText(tOr, step, target, 'evidence')}</span>
+            </th>
+            {/* 원본 유지 항목은 옮기지 않으므로 등급 대신 원본 유지로만 보인다 */}
+            <td>{step.keep_source
+              ? <span className="plan-chip is-KEEP_SOURCE">{t('plan.keep')}</span>
+              : <span className={'plan-chip is-grade-' + step.grade}>{t(('plan.grade.' + step.grade) as MsgKey)}</span>}</td>
+            <td>{step.keep_source ? <span className="plan-muted">—</span> : <span className={'plan-action is-' + step.action}>{t(('plan.action.' + step.action) as MsgKey)}</span>}</td>
+            <td className="is-verify"><span className={'plan-verify is-' + step.verification}>{t(('plan.verify.' + step.verification) as MsgKey)}</span></td>
+          </tr>
+        })}
+      </tbody>)}
+    </table>
+  </div>
 }
 
 // 항목을 하나씩 드러내는 연출 시간. 데이터는 이벤트로 먼저 와 있어도 화면은 이 간격으로 천천히 보여 준다.
@@ -133,15 +242,17 @@ function PlanParticleFlow({ stage }: { stage: RefObject<HTMLElement | null> }) {
 export default function AIPlanningStage({ target, onNext }: { target: Target; onNext: () => void }) {
   const { state } = useMigration()
   const analysis = state.analysis.findings
-  // 계획 항목은 데이터 계층에서 받는다. 화면이 열리면 바로 시작한다.
+  // 계획 항목·미리보기는 데이터 계층에서 받는다. 화면이 열리면 바로 시작한다.
   useStageFeed('planning', true, target)
   const steps = state.plan.steps
+  const preview = state.plan.preview
   const t = useT()
+  const tOr = useTOr()
   const stageRef = useRef<HTMLElement>(null)
   const [revealed, setRevealed] = useState(0)
   const [swapped, setSwapped] = useState(false)
   const [coreReady, setCoreReady] = useState(false)
-  const [view, setView] = useState<'list' | 'mapping'>('list')
+  const [view, setView] = useState<'ledger' | 'mapping' | 'diagram'>('ledger')
   // 분석 결과 없이 바로 이 화면을 연 경우(시연용 단계 이동)에는 분석이 끝난 것으로 보여 준다.
   const hasInfra = analysis.length === 0 || analysis.some(update => update.stream === 'infrastructure')
   const hasCode = analysis.length === 0 || analysis.some(update => update.stream === 'code')
@@ -156,9 +267,34 @@ export default function AIPlanningStage({ target, onNext }: { target: Target; on
       window.setTimeout(() => setRevealed(index + 1), FIRST_REVEAL + index * REVEAL_GAP))]
     return () => timers.forEach(timer => window.clearTimeout(timer))
   }, [])
-  // 받은 항목 중 연출이 드러낸 만큼만 보인다. 완료는 서버가 "계획 끝"을 알리고 모두 드러난 뒤다.
-  const visibleCount = Math.min(revealed, steps.length)
-  const complete = state.plan.ready && visibleCount === steps.length
+  // 받은 줄 중 연출이 드러낸 만큼만 보인다. 완료는 서버가 "계획 끝"을 알리고 모든 줄(매핑·리소스 중 많은 쪽)이 드러난 뒤다.
+  const units = Math.max(steps.length, preview?.resources.length ?? 0)
+  const visibleCount = Math.min(revealed, units)
+  const complete = state.plan.ready && units > 0 && visibleCount === units
+
+  const path: Target = target === 'onprem' ? 'onprem' : 'gcp'
+  const revision = preview?.revision ?? state.plan.meta?.revision ?? 1
+  const planId = preview?.plan_id ?? state.plan.meta?.plan_id
+  const summary = planSummary(steps)
+  const warnings = planWarnings(preview)
+  const errors = preview?.validation.errors.length ?? 0
+  const creating = preview?.resources.filter(resource => resource.change !== 'KEEP_SOURCE').length ?? 0
+  const keeping = preview ? preview.resources.length - creating : summary.keep
+  const source = placeText(tOr, preview?.source ?? { provider: 'AWS', platform: 'EKS', location: 'ap-northeast-2' })
+  const destination = preview ? placeText(tOr, preview.target) : { provider: t(('target.' + target) as MsgKey), place: '' }
+  const digest = shortDigest(state.plan.meta?.verified_digest ?? state.plan.meta?.built_digest ?? state.build.result?.digest)
+  const tabs = [
+    { id: 'ledger' as const, label: t('plan.tab.ledger') },
+    { id: 'mapping' as const, label: t('plan.tab.mapping') },
+    { id: 'diagram' as const, label: t('plan.tab.diagram') },
+  ]
+  const summaryParts = [
+    t('plan.summary.total', { n: summary.total }),
+    t('plan.summary.proceed', { n: summary.proceed }),
+    ...(summary.approval > 0 ? [t('plan.summary.approval', { n: summary.approval })] : []),
+    t('plan.summary.keep', { n: summary.keep }),
+    t('plan.summary.block', { n: summary.block }),
+  ]
 
   return <section ref={stageRef} className="plan-stage" aria-label={t('plan.aria')}>
     <div className="plan-visual" aria-hidden="true">
@@ -182,46 +318,51 @@ export default function AIPlanningStage({ target, onNext }: { target: Target; on
 
     <div className="plan-document">
       <header className="plan-heading">
-        <small>AI PLANNER + CODE ADAPTER <span>DEMO</span>{(state.plan.meta?.revision ?? 1) > 1 && <span>{t('plan.revision', { n: state.plan.meta?.revision ?? 1 })}</span>}</small>
+        {planId && <p className="plan-meta">{t('plan.meta', { id: planId, n: revision })}</p>}
         <h1>{t('plan.title')}</h1>
-        <p>{t('plan.lead')}</p>
-        <div className="plan-target"><span>{t('plan.from')}</span><strong>{t('plan.fromValue')}</strong><i>→</i><span>{t('plan.to')}</span><strong>{t(('target.' + target) as MsgKey)}</strong><small>{t('plan.example')}</small></div>
+        <p className="plan-finding">{preview
+          ? <>
+              <span>{t('plan.finding.create', { n: creating })}</span>
+              <span>{t('plan.finding.keep', { n: keeping })}</span>
+              <span>{errors > 0 ? t('plan.finding.errors', { n: errors }) : t('plan.finding.noErrors')}{', '}
+                {warnings.length > 0 ? <><WarnDot />{t('plan.finding.warnings', { n: warnings.length })}</> : t('plan.finding.noWarnings')}</span>
+            </>
+          : steps.length > 0
+            ? <><span>{t('plan.finding.mappings', { n: steps.length })}</span><span>{t('plan.finding.keep', { n: summary.keep })}</span></>
+            : <span>{t('plan.finding.waiting')}</span>}</p>
       </header>
-      <div className={'plan-changes' + (swapped ? ' is-swapped' : '')}>
-        <div className="plan-view-bar">
-          <ViewTabs label={t('tab.aria')} value={view} onChange={next => { setSwapped(true); setView(next) }}
-            items={[{ id: 'list', label: t('tab.list') }, { id: 'mapping', label: t('tab.mapping') }]} />
-        </div>
-        {view === 'mapping' && <div className="map-list" role="list" aria-label={t('map.aria')}>
-          <div className="map-head"><span>{t('map.from')}</span><span /><span>{t('map.to', { target: t(('target.' + target) as MsgKey) })}</span></div>
-          {steps.map((step, index) => <div key={step.id} role="listitem" className={'map-row' + (visibleCount > index ? ' is-visible' : '')}>
-            <div className="map-card">{stepText(t, step, target, 'before')}</div>
-            <div className={'map-link is-' + step.grade}><span className={'plan-grade is-' + step.grade}>{t(('plan.grade.' + step.grade) as MsgKey)}</span></div>
-            <div className="map-card is-after">{stepText(t, step, target, 'after')}</div>
-          </div>)}
+      <div className="plan-bar">
+        <ViewTabs label={t('plan.tabs.aria')} value={view} variant="segmented" onChange={next => { setSwapped(true); setView(next) }} items={tabs} />
+        <p className="plan-route" aria-label={t('plan.route.aria')}>
+          <span>{source.provider} {source.place}</span><b aria-hidden="true">→</b><span>{destination.provider} {destination.place}</span>
+        </p>
+      </div>
+      <div className={'plan-changes plan-body' + (swapped ? ' is-swapped' : '') + ' is-' + view}>
+        {view === 'ledger' && (preview
+          ? <Ledger key="ledger" preview={preview} path={path} revealed={visibleCount} warnings={warnings} />
+          : <p className="plan-empty">{t('plan.preview.empty')}</p>)}
+        {view === 'mapping' && <MappingTable key="mapping" steps={steps} target={target} revealed={visibleCount} />}
+        {view === 'diagram' && <div key="diagram" className="plan-topo">
+          <PlanTopology textOf={(step, field) => stepText(tOr, step, target, field)} steps={steps} preview={preview} digest={digest} revealed={visibleCount} sourceLabel={source} targetLabel={destination} />
+          <ul className="plan-topo-legend">
+            <li><i className="is-flow" />{t('plan.diagram.legendFlow')}</li>
+            <li><i className="is-planned" />{t('plan.diagram.legendPlanned')}</li>
+            <li><i className="is-keep" />{t('plan.diagram.legendKeep')}</li>
+            {digest && <li><i className="is-lock" />{t('plan.diagram.legendLock')}</li>}
+          </ul>
         </div>}
-        {view === 'list' && (['infrastructure', 'code'] as const).map(group => <section className="plan-change-group" key={group}>
-          <h2>{group === 'infrastructure' ? t('plan.groupInfra') : t('plan.groupCode')}</h2>
-          {steps.map((step, index) => step.group !== group ? null : <article key={step.id} data-step={index}
-            className={'plan-change' + (visibleCount > index ? ' is-visible' : '')}>
-            <span className="plan-change-index">{String(index + 1).padStart(2, '0')}</span>
-            <div className="plan-change-body">
-              <strong><span>{stepText(t, step, target, 'before')}</span><b aria-hidden="true">→</b><span>{stepText(t, step, target, 'after')}</span></strong>
-              <p className="plan-evidence">{t('plan.evidence', { text: stepText(t, step, target, 'evidence') })}</p>
-              <p>{stepText(t, step, target, 'change')}</p>
-              <p className="plan-grade-row"><small>{t('plan.grade.title')}</small><span className={'plan-grade is-' + step.grade}>{t(('plan.grade.' + step.grade) as MsgKey)}</span></p>
-            </div>
-          </article>)}
-        </section>)}
       </div>
-      <div className="plan-status" aria-live="polite">
-        <span className={complete ? 'is-complete' : ''} />
-        {complete ? t('plan.done') : t('plan.working')}
-        <small>{visibleCount} / {steps.length}</small>
-      </div>
-      <div className="plan-next">
-        <button type="button" className="flow-primary" disabled={!complete} onClick={onNext}>{t('plan.next')} <span aria-hidden="true">→</span></button>
-      </div>
+      <footer className="plan-foot">
+        <p className="plan-status" aria-live="polite">
+          <span className={'plan-status-dot' + (complete ? ' is-complete' : '')} aria-hidden="true" />
+          {complete
+            ? <span className="plan-summary">{summaryParts.map(part => <span key={part}>{part}</span>)}</span>
+            : <>{t('plan.working')}<small>{visibleCount} / {units || '—'}</small></>}
+        </p>
+        <div className="plan-next">
+          <button type="button" className="flow-primary" disabled={!complete} onClick={onNext}>{t('plan.next')} <span aria-hidden="true">→</span></button>
+        </div>
+      </footer>
     </div>
     <PlanParticleFlow stage={stageRef} />
   </section>
