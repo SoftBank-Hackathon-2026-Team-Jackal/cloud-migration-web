@@ -125,3 +125,36 @@
 /* 근거 칩: 새 항목이 그 방법으로 발견되면 한 번 검게 깜빡인다 */
 @keyframes scan-flash{0%{background:#111;border-color:#111;color:#fff;transform:scale(1.06)}100%{background:#fff;border-color:#222;color:#222;transform:scale(1)}}
 .scan-methods span.is-flash{animation:scan-flash 1.1s var(--ease-out) both}
+
+/* ── 분석 화면 세로 공간: 고정 높이(열 720px · 목록 440px · 항목 105px) 대신 화면 높이를 꽉 쓴다 ──
+ * 열은 화면 높이만큼 늘고, 목록은 열 안의 남은 높이를 모두 쓰며,
+ * 항목 높이는 '목록 높이 ÷ 항목 수'로 정해 스크롤 없이 전부 들어가게 한다(52~150px).
+ * 좁은 화면(≤820px, 세로로 쌓는 배치)은 기존 규칙 그대로. */
+@media(min-width:821px){
+  .analysis-stage .analysis-flow{align-items:stretch}
+  .analysis-stage .analysis-cluster,.analysis-stage .analysis-discovery{height:auto;min-height:0}
+  .analysis-stage .analysis-cluster{display:flex;flex-direction:column}
+  .analysis-stage .analysis-stream{flex:1;min-height:0;display:flex;flex-direction:column}
+  .analysis-stage .analysis-result-list{flex:1 1 0;min-height:0;max-height:none;container-type:size;overflow-y:auto;scrollbar-width:none}
+  .analysis-stage .analysis-result-list::-webkit-scrollbar{display:none}
+  .analysis-stage .analysis-infrastructure{--rows:7}
+  .analysis-stage .analysis-code{--rows:6}
+  .analysis-stage .analysis-result{--row-h:clamp(52px,calc(100cqh / var(--rows)),128px)}
+  .analysis-stage .analysis-cluster.is-compact .analysis-result{--row-h:clamp(44px,calc(100cqh / var(--rows)),76px)}
+  .analysis-stage .analysis-result.is-discovered,.analysis-stage .analysis-code .analysis-result.is-discovered{max-height:var(--row-h)}
+  .analysis-stage .analysis-result-content,.analysis-stage .analysis-code .analysis-result-content{height:var(--row-h);padding:0 8px 0 0;justify-content:center}
+  .analysis-stage .analysis-result-point,.analysis-stage .analysis-code .analysis-result-point{top:calc(var(--row-h) / 2 - 6px)}
+  .analysis-stage .analysis-result-content strong{margin-top:clamp(3px,calc(var(--row-h) * .06),9px);font-size:clamp(16px,calc(var(--row-h) * .19),24px)}
+  .analysis-stage .analysis-result-content p{margin-top:clamp(2px,calc(var(--row-h) * .05),8px);font-size:clamp(12px,calc(var(--row-h) * .11),14px);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:100%}
+  /* 칸이 낮을 때는 덜 중요한 줄부터 숨긴다: 분류(04 / StatefulSet) → 세부 */
+  @container (max-height:560px){.analysis-stage .analysis-result-content small{display:none}}
+  @container (max-height:380px){.analysis-stage .analysis-result-content p{display:none}}
+  .analysis-stage .analysis-discovery-items{flex:1}
+  /* 완료 뒤 접힌 목록도 같은 칸 높이 규칙을 따르되 한 줄 배치를 유지 */
+  .analysis-stage .analysis-cluster.is-compact .analysis-result-list{max-height:none;overflow:hidden}
+  .analysis-stage .analysis-cluster.is-compact .analysis-result.is-discovered{max-height:var(--row-h)}
+  .analysis-stage .analysis-cluster.is-compact .analysis-result-content{height:var(--row-h);padding:0 8px 0 0;justify-content:flex-start}
+  .analysis-stage .analysis-cluster.is-compact .analysis-result-point{top:calc(var(--row-h) / 2 - 6px)}
+  .analysis-stage .analysis-cluster.is-compact .analysis-result-content strong{margin:0}
+  .analysis-stage .analysis-cluster.is-compact .analysis-result-content p{margin:0}
+}
