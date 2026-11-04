@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  # 브라우저 테스트는 느리고 playwright 설치가 필요해 수동 실행(Actions 탭의 Run workflow)에서만 돈다.
+  e2e:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm i --no-save playwright && npx playwright install --with-deps chromium
+      - run: npm run build
+      - name: 목업 모드 앱을 띄우고 핵심 흐름 시험
+        run: |
+          npm start &
+          npx -y wait-on http://127.0.0.1:3000 --timeout 60000
+          npm run test:e2e
