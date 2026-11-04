@@ -39,9 +39,16 @@ try {
   await page.goto(`${BASE_URL}/?lang=${LANG}&target=gcp`)
 
   // 소개 화면은 클릭하면 입자가 구로 모이고, 문장이 다 쓰이면 "예" 버튼이 나온다.
-  await page.mouse.click(768, 400)
+  // 개발 서버처럼 느린 첫 로드에서는 하이드레이션 전의 클릭이 무시되므로 "예" 버튼이 나올 때까지 클릭을 되풀이한다.
+  for (let attempt = 0; attempt < 6; attempt++) {
+    await page.mouse.click(768, 400)
+    if (await page.locator('.prompt-yes').waitFor({ timeout: 10000 }).then(() => true, () => false)) break
+  }
   await press('.prompt-yes')
   note('소개 → 설정')
+  // 설정 화면: 대상을 AWS로 고르면 대상 리전 선택이 나온다(기본 ap-northeast-2).
+  await page.locator('[role=radio]').first().click()
+  check(await page.locator('select[name=destRegion]').inputValue() === 'ap-northeast-2', 'AWS 선택 시 대상 리전 기본값 ap-northeast-2')
   await press('.migration-next')
 
   await press('.analysis-next-area button')
@@ -54,12 +61,19 @@ try {
   await press('.plan-next button')
   note('계획 완료')
 
+  // 승인 화면: 이미지 대조가 일치로 보이고, 계획 수정 요청을 하면 계획 단계로 돌아가 버전이 올라간다.
+  check(await page.locator('.approval-digest:not(.is-warn)').count() === 1, '승인 화면에 이미지 대조(일치)가 보인다')
+  await press('.approval-actions .flow-secondary:nth-child(2)')
+  await press('.plan-next button')
+  check(/v2/.test(await text()) || await page.locator('.plan-heading small span').count() >= 2, '계획 수정 뒤 계획 버전 v2가 보인다')
+  check(/v2/.test(await page.locator('.approval-digest').innerText()), '승인 화면의 계획 버전이 v2다')
   await page.locator('.approval-check input').check()
   await press('.approval-actions .flow-primary')
   note('승인')
 
+  // 구축: 준비 상태 검사 3개와 같은 테스트 묶음 재실행이 끝나야 다음으로 넘어간다.
   await press('.flow-footer .flow-primary')
-  check((await text()).length > 0, '구축 완료 → 데이터 복제')
+  check((await text()).length > 0, '구축·준비 검사 완료 → 데이터 복제')
 
   await press('.flow-footer .flow-primary')
   note('데이터 복제 준비')

@@ -38,6 +38,7 @@ NEXT_PUBLIC_API_MODE=sse npm run dev                  # 다른 터미널
 ```bash
 npm run typecheck
 npm test                    # reducer 단위 테스트
+BASE_URL=http://127.0.0.1:3000 npm run test:e2e:review   # ?review=1, ?digest=mismatch 시험
 BASE_URL=http://127.0.0.1:3000 npm run test:e2e       # 핵심 흐름 브라우저 테스트(목업 모드의 앱, playwright 필요)
 ```
 
@@ -50,6 +51,9 @@ SSE 모드의 핵심 흐름과 연결 끊김·실패·취소 상태는 `NEXT_PUB
 | `?lang=ko\|en\|ja` | 화면 언어 (기본은 브라우저 설정, 마지막 선택은 저장됨) |
 | `?stage=<단계>&target=gcp\|onprem` | 해당 단계 화면부터 시작 |
 | `?aifix=1..4` | 샌드박스 검증에서 AI가 고치는 항목 수 (데모) |
+| `?review=1` | 샌드박스가 3번 실패해 사람 검토 대기 화면이 나옴 (데모, 목업 서버에도 전달됨) |
+| `?digest=mismatch` | 승인 화면의 이미지 대조가 불일치가 되어 승인이 막힘 (데모) |
+| `?target=aws\|gcp\|onprem` | 설정 대상 (AWS는 GCP와 같은 클라우드 경로) |
 
 ## 구조
 
