@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rest.schema.json",
+  "title": "REST 요청·응답",
+  "$defs": {
+    "StartRequest": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "enum": [
+            "gcp",
+            "onprem"
+          ]
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "StartResponse": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "Report": {
+      "type": "object",
+      "properties": {
+        "stages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "seconds": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "id",
+              "seconds"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "ai_fixes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "stages",
+        "ai_fixes"
+      ],
+      "additionalProperties": false
+    },
+    "Snapshot": {
+      "$ref": "events.schema.json#/$defs/snapshotData"
+    }
+  }
+}
