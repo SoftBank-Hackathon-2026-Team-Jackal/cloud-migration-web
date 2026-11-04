@@ -17,16 +17,25 @@ const STORAGE_KEY = 'jackal.lang'
 
 export type Params = Record<string, string | number>
 export type Translate = (key: MsgKey, params?: Params) => string
+/** 키가 사전에 없을 수도 있는 조회(서버가 보낸 id로 문구를 찾을 때). 없으면 fallback을 돌려준다. */
+export type TranslateOr = (key: string, fallback?: string, params?: Params) => string
 
-type Ctx = { lang: Lang; setLang: (lang: Lang) => void; t: Translate }
+type Ctx = { lang: Lang; setLang: (lang: Lang) => void; t: Translate; tOr: TranslateOr }
 
-const I18nContext = createContext<Ctx>({ lang: 'ko', setLang: () => {}, t: key => ko[key] })
+const lookup = (dict: Record<string, string>, key: string): string | undefined => (Object.prototype.hasOwnProperty.call(dict, key) ? dict[key] : undefined)
+const I18nContext = createContext<Ctx>({
+  lang: 'ko', setLang: () => {},
+  t: (key, params) => format(lookup(ko, key) ?? '', params),
+  tOr: (key, fallback = '', params) => format(lookup(ko, key) ?? fallback, params),
+})
 
 export function isLang(value: unknown): value is Lang {
   return value === 'ko' || value === 'en' || value === 'ja'
 }
 
-function format(text: string, params?: Params) {
+/** 사전에 없는 키(서버가 보낸 새 id 등)도 예외 없이 빈 문구가 된다. */
+export function format(text: string | undefined, params?: Params) {
+  if (typeof text !== 'string') return ''
   if (!params) return text
   return text.replace(/\{(\w+)\}/g, (match, name: string) => (name in params ? String(params[name]) : match))
 }
@@ -60,7 +69,8 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<Ctx>(() => {
     const dict = DICTS[lang]
-    return { lang, setLang, t: (key, params) => format(dict[key] ?? ko[key], params) }
+    const find = (key: string) => lookup(dict, key) ?? lookup(ko, key)
+    return { lang, setLang, t: (key, params) => format(find(key), params), tOr: (key, fallback = '', params) => format(find(key) ?? fallback, params) }
   }, [lang, setLang])
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>
@@ -72,6 +82,10 @@ export function useI18n() {
 
 export function useT(): Translate {
   return useContext(I18nContext).t
+}
+
+export function useTOr(): TranslateOr {
+  return useContext(I18nContext).tOr
 }
 
 export type { MsgKey }
