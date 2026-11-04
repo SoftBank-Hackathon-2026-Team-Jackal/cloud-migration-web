@@ -1,0 +1,106 @@
+[
+ {
+  "phase": "applying",
+  "weights": {
+   "origin": 90,
+   "target": 10
+  },
+  "step": 10,
+  "gate": {
+   "failed_requests": 0,
+   "max_failed_requests": 0,
+   "p99_ratio": 0.0,
+   "max_p99_ratio": 1.5,
+   "observe_left_seconds": 120
+  },
+  "residual": {
+   "requests_per_sec": 0,
+   "streams": 0
+  }
+ },
+ {
+  "phase": "observing",
+  "weights": {
+   "origin": 90,
+   "target": 10
+  },
+  "step": 10,
+  "gate": {
+   "failed_requests": 0,
+   "max_failed_requests": 0,
+   "p99_ratio": 0.9,
+   "max_p99_ratio": 1.5,
+   "observe_left_seconds": 120
+  },
+  "residual": {
+   "requests_per_sec": 0,
+   "streams": 0
+  }
+ },
+ {
+  "phase": "gate",
+  "weights": {
+   "origin": 90,
+   "target": 10
+  },
+  "step": 10,
+  "gate": {
+   "failed_requests": 0,
+   "max_failed_requests": 0,
+   "p99_ratio": 0.95,
+   "max_p99_ratio": 1.5,
+   "observe_left_seconds": 0
+  },
+  "residual": {
+   "requests_per_sec": 0,
+   "streams": 0
+  },
+  "decision": "advance"
+ },
+ {
+  "phase": "rolledback",
+  "weights": {
+   "origin": 100,
+   "target": 0
+  },
+  "step": 50,
+  "gate": {
+   "failed_requests": 0,
+   "max_failed_requests": 0,
+   "p99_ratio": 0.0,
+   "max_p99_ratio": 1.5,
+   "observe_left_seconds": 0
+  },
+  "residual": {
+   "requests_per_sec": 0,
+   "streams": 0
+  },
+  "decision": "rollback",
+  "notes": [
+   {
+    "key": "gateFail",
+    "params": {}
+   }
+  ]
+ },
+ {
+  "phase": "complete",
+  "weights": {
+   "origin": 0,
+   "target": 100
+  },
+  "step": 100,
+  "gate": {
+   "failed_requests": 0,
+   "max_failed_requests": 0,
+   "p99_ratio": 0.96,
+   "max_p99_ratio": 1.5,
+   "observe_left_seconds": 0
+  },
+  "residual": {
+   "requests_per_sec": 0,
+   "streams": 0
+  },
+  "decision": "done"
+ }
+]
