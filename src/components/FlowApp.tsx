@@ -18,12 +18,14 @@ import LangSwitch from './LangSwitch'
 import BackButton from './BackButton'
 import { ConnectionToast, StatusPanel } from './MigrationStatus'
 import { ArriveMorph, DISSOLVE_MS, TransitionLayer } from './ScreenFx'
-import { useI18n } from '../lib/i18n'
+import { useI18n, type MsgKey } from '../lib/i18n'
 import { useMigration } from '../lib/migration/MigrationProvider'
 import { captureScreen, fx, recentHandoff, registerTransition } from '../lib/particleHandoff'
 import { isStage, STAGE_ORDER, type Stage } from '../lib/stages'
 import { pathOf, type Target as SetupTarget } from '../lib/migration/events'
 import { useVoiceGuide } from '../lib/useVoiceGuide'
+import { buildAgentFacts } from '../lib/agent/context'
+import { askAgent } from '../lib/agent/ask'
 import voiceClips from '../lib/voiceClips.json'
 
 // 실제 환경을 바꾸기 전(입력~승인)까지만 이전 단계로 돌아갈 수 있다. 승인 이후는 되돌림이 아니라 롤백 정책을 따른다.
@@ -44,7 +46,7 @@ const REPORT: Partial<Record<Stage, string>> = {
 
 export default function FlowApp() {
   const { t, lang } = useI18n()
-  const { provider } = useMigration()
+  const { provider, state: migrationState } = useMigration()
   const [stage, setStage] = useState<Stage>('intro')
   const [started, setStarted] = useState(false)
   const [sphereFormed, setSphereFormed] = useState(false)
@@ -120,12 +122,31 @@ export default function FlowApp() {
     transition(() => applyJump(next), next === 'intro')
   }, [applyJump, transition])
 
+  const askHandler = useRef<(question: string) => void>(() => {})
   const voice = useVoiceGuide({
     started,
-    active: stage === 'intro',
+    active: true,
+    ask: stage !== 'intro',
     onWake: () => wake(),
     onStart: () => beginVoiceMigration(),
+    onAsk: question => askHandler.current(question),
   })
+
+  // 에이전트 질문: 화면의 현재 상태를 요약해 임시 백엔드(/api/agent)에 묻고, 답은 말로도 읽어 준다.
+  const [question, setQuestion] = useState('')
+  const [asking, setAsking] = useState(false)
+  const [answerSource, setAnswerSource] = useState<'model' | 'local' | null>(null)
+  const askContext = useRef({ migrationState, stage, lang })
+  askContext.current = { migrationState, stage, lang }
+  askHandler.current = async (text: string) => {
+    setAsking(true)
+    const { migrationState: current, stage: currentStage, lang: currentLang } = askContext.current
+    const facts = buildAgentFacts(current, currentStage, t(('stage.' + currentStage) as MsgKey))
+    const { answer, source } = await askAgent(text, facts, currentLang)
+    setAnswerSource(source)
+    setAsking(false)
+    voice.speakText(answer, currentLang)
+  }
 
   function wake() {
     if (stage !== 'intro' || started) return
@@ -250,12 +271,18 @@ export default function FlowApp() {
       {voice.heard && stage === 'intro' && <small className="voice-heard">인식: {voice.heard}</small>}
       {voice.error && <small className="voice-error">{voice.error}</small>}
       <div className="voice-actions">
-        {stage === 'intro' && <button type="button" onClick={voice.toggleMic} disabled={!voice.recognitionSupported}
-          aria-pressed={voice.micEnabled}>{voice.micEnabled ? '● 듣는 중 · 끄기' : '마이크 켜기'}</button>}
+        <button type="button" onClick={voice.toggleMic} disabled={!voice.recognitionSupported}
+          aria-pressed={voice.micEnabled}>{voice.micEnabled ? '● 듣는 중 · 끄기' : '마이크 켜기'}</button>
         <button type="button" onClick={voice.toggleSound} aria-pressed={voice.soundEnabled}>{voice.soundEnabled ? '음성 켜짐' : '음성 꺼짐'}</button>
         {stage === 'intro' && <button type="button" onClick={wake}>헤이 자칼</button>}
         {stage === 'intro' && started && <button type="button" onClick={() => beginVoiceMigration()}>마이그레이션 시작하자</button>}
       </div>
+      {stage !== 'intro' && <form className="voice-ask" onSubmit={event => { event.preventDefault(); const text = question.trim(); if (text && !asking) { setQuestion(''); void askHandler.current(text) } }}>
+        <input value={question} onChange={event => setQuestion(event.target.value)} placeholder={t('agent.placeholder')} aria-label={t('agent.label')} maxLength={200} />
+        <button type="submit" disabled={asking || !question.trim()}>{asking ? t('agent.thinking') : t('agent.send')}</button>
+      </form>}
+      {stage !== 'intro' && !voice.message && <small className="voice-heard">{t('agent.hint')}</small>}
+      {stage !== 'intro' && answerSource && voice.message && <small className="voice-heard" data-agent-source={answerSource}>{answerSource === 'model' ? t('agent.sourceModel') : t('agent.sourceLocal')}</small>}
     </aside>
   </main>
 }

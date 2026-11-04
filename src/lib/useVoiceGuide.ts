@@ -24,11 +24,14 @@ type SpeechWindow = Window & {
 const normalize = (value: string) => value.toLowerCase().replace(/[\s.,!?~·]/g, '')
 const clipByText = new Map(Object.entries(voiceClips).map(([id, text]) => [text, id]))
 
-export function useVoiceGuide({ started, active, onWake, onStart }: {
+export function useVoiceGuide({ started, active, ask = false, onWake, onStart, onAsk }: {
   started: boolean
   active: boolean
+  /** 시연이 시작된 뒤(첫 화면이 아닐 때): "헤이 자칼, …" 질문을 onAsk로 보낸다. */
+  ask?: boolean
   onWake: () => void
   onStart: () => void
+  onAsk?: (question: string) => void
 }) {
   const [micEnabled, setMicEnabled] = useState(false)
   const [recognitionSupported, setRecognitionSupported] = useState(false)
@@ -43,7 +46,9 @@ export function useVoiceGuide({ started, active, onWake, onStart }: {
   const activeRef = useRef(active)
   const speakingRef = useRef(false)
   const soundRef = useRef(true)
-  const callbacksRef = useRef({ onWake, onStart })
+  const callbacksRef = useRef({ onWake, onStart, onAsk })
+  const askRef = useRef(ask)
+  const askUntil = useRef(0)
   const restartTimer = useRef(0)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const contextRef = useRef<AudioContext | null>(null)
@@ -52,9 +57,11 @@ export function useVoiceGuide({ started, active, onWake, onStart }: {
   const finishRef = useRef<(() => void) | null>(null)
   const voiceLevel = useRef(0)
   const voiceActive = useRef(false)
+  const speakRef = useRef<((text: string) => void) | null>(null)
 
   useEffect(() => { startedRef.current = started }, [started])
-  useEffect(() => { callbacksRef.current = { onWake, onStart } }, [onWake, onStart])
+  useEffect(() => { callbacksRef.current = { onWake, onStart, onAsk } }, [onWake, onStart, onAsk])
+  useEffect(() => { askRef.current = ask }, [ask])
   useEffect(() => {
     activeRef.current = active
     if (!active) {
@@ -180,6 +187,29 @@ export function useVoiceGuide({ started, active, onWake, onStart }: {
     }).catch(() => { setError('자동 재생이 제한되었습니다. 화면 버튼을 눌러 다시 시작해 주세요.'); finish() })
   }, [armAudio, listen, stopAudio, stopListening])
 
+  speakRef.current = speak
+
+  /** 에이전트의 즉석 답변: 미리 녹음한 문구가 아니므로 브라우저 음성 합성으로 읽는다. */
+  const speakText = useCallback((text: string, language: 'ko' | 'en' | 'ja' = 'ko') => {
+    setMessage(text)
+    stopListening()
+    stopAudio()
+    const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined
+    if (!soundRef.current || !synth) {
+      window.setTimeout(listen, 150)
+      return
+    }
+    synth.cancel()
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.lang = { ko: 'ko-KR', en: 'en-US', ja: 'ja-JP' }[language]
+    speakingRef.current = true
+    setSpeaking(true)
+    const finish = () => { speakingRef.current = false; setSpeaking(false); window.setTimeout(listen, 180) }
+    utterance.onend = finish
+    utterance.onerror = finish
+    synth.speak(utterance)
+  }, [listen, stopAudio, stopListening])
+
   const toggleMic = useCallback(() => {
     if (micRef.current) {
       micRef.current = false
@@ -203,6 +233,19 @@ export function useVoiceGuide({ started, active, onWake, onStart }: {
       const transcript = event.results[0]?.[0]?.transcript ?? ''
       setHeard(transcript)
       const command = normalize(transcript)
+      if (askRef.current && callbacksRef.current.onAsk) {
+        // 시연 중에는 호출어(헤이 자칼) 뒤의 말만 질문으로 받는다. 호출어만 말하면 10초 동안 다음 말을 질문으로 받는다.
+        const wake = transcript.match(/헤이\s*(자칼|재칼|쟈칼)\s*[,.!?]?\s*(.*)$/i) || transcript.match(/hey\s*jackal\s*[,.!?]?\s*(.*)$/i)
+        if (wake) {
+          const rest = (wake[wake.length - 1] || '').trim()
+          if (rest.length > 1) { askUntil.current = 0; callbacksRef.current.onAsk(rest) }
+          else { askUntil.current = Date.now() + 10000; speakRef.current?.(voiceClips.wake) }
+        } else if (Date.now() < askUntil.current) {
+          askUntil.current = 0
+          callbacksRef.current.onAsk(transcript.trim())
+        }
+        return
+      }
       if (/헤이(자칼|재칼|쟈칼)|heyjackal/.test(command)) callbacksRef.current.onWake()
       else if (startedRef.current && /(마이그레이션|이전).*(시작|진행)/.test(command)) callbacksRef.current.onStart()
     }
@@ -249,5 +292,5 @@ export function useVoiceGuide({ started, active, onWake, onStart }: {
     } else armAudio()
   }, [armAudio, stopAudio])
 
-  return { micEnabled, recognitionSupported, soundEnabled, speaking, heard, message, error, speak, toggleMic, toggleSound, armAudio, voiceLevel, voiceActive }
+  return { micEnabled, recognitionSupported, soundEnabled, speaking, heard, message, error, speak, speakText, toggleMic, toggleSound, armAudio, voiceLevel, voiceActive }
 }

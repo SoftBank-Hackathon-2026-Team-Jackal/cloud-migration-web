@@ -12,6 +12,7 @@
     "test:e2e": "node tests/e2e/flow.mjs",
     "test:e2e:sse": "node tests/e2e/sse-states.mjs",
     "test:e2e:review": "node tests/e2e/review.mjs",
+    "test:e2e:agent": "node tests/e2e/agent.mjs",
     "contract:check": "node --test \"tests/unit/contract.test.ts\""
   },
   "dependencies": {
