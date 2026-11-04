@@ -42,7 +42,7 @@ export default function MigrationSetup({ target, onTarget, onNext }: Props) {
       }
     }}>
       <div className="migration-heading">
-        <h2 className="migration-title">{t('setup.title')}</h2>
+        <h2 className="migration-title" aria-level={1}>{t('setup.title')}</h2>
         <p>{t('setup.subtitle')}</p>
       </div>
       <div className="migration-fields">

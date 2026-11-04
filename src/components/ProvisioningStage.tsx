@@ -70,7 +70,7 @@ function ProvisioningBody({ ready, target, onNext }: { ready: boolean; target: T
         <span style={{ width: progress + '%' }} />
       </div>
       <div className="analysis-stream">
-        <div ref={listRef} className={'analysis-result-list' + (events.length > 0 ? ' has-results' : '')}>
+        <div ref={listRef} tabIndex={0} className={'analysis-result-list' + (events.length > 0 ? ' has-results' : '')}>
           {nodes.map((key, index) => <div key={key} className={'analysis-result' + (discovered.has(key) ? ' is-discovered' : '')} aria-hidden={!discovered.has(key)}>
             <span className="analysis-result-point" aria-hidden="true" />
             <div className="analysis-result-content">
@@ -110,7 +110,7 @@ function ProvisioningBody({ ready, target, onNext }: { ready: boolean; target: T
         <ZoomableDiagram><ArchitectureDiagram view="after" target={target} states={nodeStates} adaptive /></ZoomableDiagram>
         <p className="flow-note">{t('prov.diagramNote')}</p>
       </div>}
-      {view === 'log' && <div className="analysis-discovery-items" aria-live="polite">
+      {view === 'log' && <div className="analysis-discovery-items" tabIndex={0} aria-live="polite">
         {events.length === 0
           ? <p>{t('prov.logEmpty')}</p>
           : [...events].reverse().map(event => <div className="analysis-discovery-item" key={event.id}>

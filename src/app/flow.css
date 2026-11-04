@@ -616,3 +616,6 @@ body{overflow-wrap:break-word}
 .build-result.is-failed{color:#b42318}
 .approval-digest.is-warn dd{color:#b42318}
 .approval-digest dd{font-size:12.5px}
+.analysis-result-list:focus-visible{outline:2px solid #444;outline-offset:2px}
+@media(prefers-reduced-motion:reduce){.live-req-dot{animation:none}}
+.analysis-discovery-items:focus-visible{outline:2px solid #444;outline-offset:-2px}

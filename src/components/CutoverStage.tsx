@@ -48,7 +48,7 @@ function CutoverBody({ ready, target, phase, setPhase, onRestart }: BodyProps) {
     return <><div className="flow-center">
       <div className="approval-panel approval-inline">
         <small className="approval-step">{t('cutover.approve.step')} <span>DEMO</span></small>
-        <h2>{t('cutover.approve.title')}</h2>
+        <h2 aria-level={1}>{t('cutover.approve.title')}</h2>
         <p className="approval-lead">{t('cutover.approve.lead', { target: targetName })}</p>
         <dl className="approval-rows">
           <div><dt>{t('cutover.approve.pause')}</dt><dd>{t('cutover.approve.pauseVal')}</dd></div>

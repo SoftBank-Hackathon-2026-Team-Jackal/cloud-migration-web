@@ -2,7 +2,7 @@ import type { MsgKey } from './ko'
 
 export const ja: Record<MsgKey, string> = {
   "nav.back": "戻る",
-  "nav.backAria": "前の段階へ戻る",
+  "nav.backAria": "戻る（前の段階へ）",
   "lang.aria": "言語",
   "flow.aria": "クラウド移行デモ",
   "target.gcp": "GCP",

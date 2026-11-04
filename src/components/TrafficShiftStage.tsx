@@ -145,7 +145,7 @@ function TrafficBody({ ready, target, onNext }: { ready: boolean; target: Target
           <strong>{t('traffic.feed.title')}</strong>
           <small>DEMO</small>
         </div>
-        <div className="analysis-discovery-items" aria-live="polite">
+        <div className="analysis-discovery-items" tabIndex={0} aria-live="polite">
           {logs.length === 0
             ? <p>{t('traffic.feed.empty')}</p>
             : logs.map(entry => <div className={'analysis-discovery-item traffic-log is-' + entry.tone} key={entry.id}>

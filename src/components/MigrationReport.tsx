@@ -108,7 +108,7 @@ export default function MigrationReport({ target, onRestart }: { target: Target;
       <header className="report-head">
         <span className="cutover-done-mark" aria-hidden="true">✓</span>
         <div>
-          <h2>{t('cutover.done.title')}</h2>
+          <h2 aria-level={1}>{t('cutover.done.title')}</h2>
           <p className="approval-lead">{report.summary}</p>
         </div>
         <small className="flow-pill">DEMO</small>

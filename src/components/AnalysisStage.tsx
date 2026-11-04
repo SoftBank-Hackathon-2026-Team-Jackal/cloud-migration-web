@@ -79,7 +79,7 @@ function AnalysisCluster({ title, subtitle, root, stream, progress, nodes, disco
         <span className="analysis-root-orb" data-particle-target="circle" aria-hidden="true" />
         <div><strong data-particle-target="text">{root}</strong><small data-particle-target="text">{progress === 100 ? t('analysis.explored') : t('analysis.exploring')}</small></div>
       </div>
-      <div ref={listRef} className={'analysis-result-list' + (foundCount > 0 ? ' has-results' : '')}>
+      <div ref={listRef} tabIndex={0} className={'analysis-result-list' + (foundCount > 0 ? ' has-results' : '')}>
         {nodes.map((node, index) => <div key={node.key}
           className={'analysis-result' + (discovered.has(node.key) ? ' is-discovered' : '')}
           aria-hidden={!discovered.has(node.key)}>
@@ -180,6 +180,7 @@ export default function AnalysisStage({ target, onAdvance, orbHandoff = false }:
 
   return <section ref={stageRef} className={'analysis-stage' + (ready ? ' is-ready' : '') + (leaving ? ' is-handoff' : '')}
     aria-label={t('analysis.aria')}>
+    <h1 className="sr-only">{t('analysis.aria')}</h1>
     <div className="analysis-flow">
       <AnalysisCluster title={t('analysis.infra.title')} subtitle={t('analysis.infra.sub')}
         root={t('analysis.infra.root')} stream="infrastructure" progress={infrastructure} nodes={INFRA_NODES} discovered={discovered} findings={findings} />
@@ -194,7 +195,7 @@ export default function AnalysisStage({ target, onAdvance, orbHandoff = false }:
         <div className="scan-methods" role="group" aria-label={t('scan.title')}>
           {SCAN_METHODS.map(method => <span key={method} data-particle-target="text" className={usedMethods.has(method) ? 'is-used' : ''}>{t(('scan.' + method) as MsgKey)}</span>)}
         </div>
-        <div className="analysis-discovery-items" aria-live="polite">
+        <div className="analysis-discovery-items" tabIndex={0} aria-live="polite">
           {activeUpdates.length === 0
             ? <p data-particle-target="text">{t('analysis.liveEmpty')}</p>
             : [...activeUpdates].reverse().map(update => <div className="analysis-discovery-item" key={update.id}>

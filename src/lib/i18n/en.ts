@@ -2,7 +2,7 @@ import type { MsgKey } from './ko'
 
 export const en: Record<MsgKey, string> = {
   "nav.back": "Back",
-  "nav.backAria": "Go to the previous step",
+  "nav.backAria": "Back to the previous step",
   "lang.aria": "Language",
   "flow.aria": "Cloud migration demo",
   "target.gcp": "GCP",

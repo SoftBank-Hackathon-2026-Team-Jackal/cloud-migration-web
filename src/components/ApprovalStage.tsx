@@ -47,7 +47,7 @@ export default function ApprovalStage({ target, onApprove, onCancel, onRevise }:
     return <section className="flow-stage approval-stage is-ready" aria-label={t('approval.cancelled.step')}>
       <div className="approval-panel">
         <small className="approval-step">{t('approval.cancelled.step')}</small>
-        <h2>{t('approval.cancelled.title')}</h2>
+        <h2 aria-level={1}>{t('approval.cancelled.title')}</h2>
         <p className="approval-lead">{t('approval.cancelled.lead')}</p>
         <div className="approval-actions">
           <button type="button" className="flow-primary" onClick={onCancel}>{t('approval.cancelled.home')} <span aria-hidden="true">→</span></button>
@@ -60,7 +60,7 @@ export default function ApprovalStage({ target, onApprove, onCancel, onRevise }:
     <div className="approval-panel approval-wide">
       <div className="approval-main">
         <small className="approval-step">{t('approval.step')} <span>DEMO</span></small>
-        <h2>{t('approval.title')}</h2>
+        <h2 aria-level={1}>{t('approval.title')}</h2>
         <p className="approval-lead">{t('approval.lead')}</p>
         <dl className="approval-rows">
           {rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}

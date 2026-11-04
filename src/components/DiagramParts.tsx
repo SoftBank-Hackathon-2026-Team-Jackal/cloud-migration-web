@@ -12,7 +12,8 @@ export function ViewTabs<T extends string>({ items, value, onChange, label }: {
 }) {
   return <Tabs.Root className="view-tabs-root" value={value} onValueChange={next => onChange(next as T)} activationMode="manual">
     <Tabs.List className="view-tabs" aria-label={label}>
-      {items.map(item => <Tabs.Trigger key={item.id} value={item.id} className={item.id === value ? 'is-selected' : ''}>{item.label}</Tabs.Trigger>)}
+      {/* 탭 내용은 선택된 것만 화면에 있어서 Radix가 붙이는 aria-controls가 없는 요소를 가리킨다. 뺀다. */}
+      {items.map(item => <Tabs.Trigger key={item.id} value={item.id} aria-controls={undefined} className={item.id === value ? 'is-selected' : ''}>{item.label}</Tabs.Trigger>)}
     </Tabs.List>
   </Tabs.Root>
 }
