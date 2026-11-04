@@ -7,7 +7,7 @@ import ArchitectureDiagram, { type NodeState } from './ArchitectureDiagram'
 import AiTip, { type TipFix } from './AiTip'
 import ZoomableDiagram from './ZoomableDiagram'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
-import type { BuildCheckData, BuildFixData, CheckState } from '../lib/migration/events'
+import { shortDigest, type BuildCheckData, type BuildErrorCode, type BuildFixData, type BuildResultData, type CheckState } from '../lib/migration/events'
 
 // running: 검증 중 · failed: 실패 · fixing: AI(픽서)가 수정 중 · recheck: AI(리베리파이어)가 재검증 중 · done: 통과
 // fixed: fixing/recheck 때 지금까지 고친 개수(한 검증 항목 안에서 수정이 여러 개일 수 있다)
@@ -38,7 +38,11 @@ const DIFF: ReadonlyArray<DiffLine> = [
 
 export default function RehearsalStage({ target, onNext }: { target: Target; onNext: () => void }) {
   const t = useT()
-  return <StageShell kicker="SANDBOX · REHEARSAL" title={t('rehearsal.title')}
+  const { state } = useMigration()
+  // 샌드박스 루프의 시도 횟수(시도 n/3)를 머리글 위 작은 글자에 붙인다.
+  const attempt = state.build.attempt
+  const kicker = 'SANDBOX · REHEARSAL' + (attempt ? ' · ' + t('rehearsal.attempt', { n: attempt, max: state.build.result?.max_attempts ?? 3 }) : '')
+  return <StageShell kicker={kicker} title={t('rehearsal.title')}
     subtitle={t('rehearsal.subtitle')}>
     {ready => <RehearsalBody ready={ready} target={target} onNext={onNext} />}
   </StageShell>
@@ -47,6 +51,23 @@ export default function RehearsalStage({ target, onNext }: { target: Target; onN
 // 검증 항목이 어느 구성 요소를 확인하는지(샌드박스는 코드·기능만 보므로 진입·DNS는 대상이 아니다)
 const CHECK_NODES: Record<string, string[]> = {
   build: ['group', 'app'], health: ['app', 'entry'], db: ['db'], render: ['group'], secret: [], scope: [],
+}
+
+// 이미지 빌드 실패 코드별 안내와 다음 행동(재업로드 / AI 수정 / 재시도). 시도를 다 썼으면 사람 검토다.
+const NEXT_ACTION: Record<BuildErrorCode, 'reupload' | 'aifix' | 'retry'> = {
+  SOURCE_NOT_FOUND: 'reupload', DOCKERFILE_MISSING: 'aifix', BUILD_FAILED: 'aifix', PUSH_FAILED: 'retry', TIMEOUT: 'retry',
+}
+
+function BuildResultNote({ result }: { result: BuildResultData }) {
+  const t = useT()
+  if (result.status === 'SUCCEEDED') {
+    return <p className="flow-note build-result">{t('rehearsal.build.ok', { digest: shortDigest(result.digest) })}{result.reused ? ' · ' + t('rehearsal.build.reused') : ''}</p>
+  }
+  const code = result.error_code ?? 'BUILD_FAILED'
+  const next = result.attempt >= result.max_attempts ? 'review' : NEXT_ACTION[code]
+  return <p className="flow-note build-result is-failed" role="status">
+    {t('rehearsal.build.fail', { code })} {t(('rehearsal.err.' + code) as MsgKey)} {t(('rehearsal.next.' + next) as MsgKey)}
+  </p>
 }
 
 const MARK: Record<CheckState, string> = { running: '', failed: '!', fixing: '✎', recheck: '', done: '✓' }
@@ -127,6 +148,7 @@ function RehearsalBody({ ready, target, onNext }: { ready: boolean; target: Targ
           <small>{t(statusKey as MsgKey)}</small>
         </article>
       })}
+      {migration.build.result && <BuildResultNote result={migration.build.result} />}
     </section>
 
     <aside className="flow-panel rehearsal-side" aria-label={t('rehearsal.diffTitle')}>

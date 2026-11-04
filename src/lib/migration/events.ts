@@ -6,6 +6,11 @@
 export type Target = 'aws' | 'gcp' | 'onprem'
 
 /** 화면 흐름(구성도·구축 대본)이 쓰는 경로. 정해 둔 기본값: AWS 대상은 클라우드(GCP와 같은) 경로를 쓴다. */
+/** 이미지 Digest 앞 12자리(sha256: 제외) */
+export function shortDigest(digest: string | null | undefined): string {
+  return digest ? digest.replace(/^sha256:/, '').slice(0, 12) : ''
+}
+
 export type FlowPath = 'gcp' | 'onprem'
 export function pathOf(target: Target): FlowPath {
   return target === 'onprem' ? 'onprem' : 'gcp'

@@ -8,10 +8,12 @@ import CostCompare from './CostCompare'
 import GovernanceMatrix from './GovernanceMatrix'
 import { ViewTabs } from './DiagramParts'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
+import { checkDigests } from '../lib/migration/digest'
+import { shortDigest } from '../lib/migration/events'
 
-type Props = { target: Target; onApprove: () => void; onCancel: () => void }
+type Props = { target: Target; onApprove: () => void; onCancel: () => void; onRevise: () => void }
 
-export default function ApprovalStage({ target, onApprove, onCancel }: Props) {
+export default function ApprovalStage({ target, onApprove, onCancel, onRevise }: Props) {
   const t = useT()
   const { state, provider } = useMigration()
   // 승인 요청(approval.required)을 받는 화면. 승인·취소는 데이터 계층을 거쳐 서버로 간다.
@@ -33,6 +35,12 @@ export default function ApprovalStage({ target, onApprove, onCancel }: Props) {
     [t('approval.row.pause'), t('approval.val.pause')],
   ]
   // 서버가 제외 항목을 보내 주면 그대로, 비어 있으면 화면의 기본 문구를 쓴다.
+  // 이미지 Digest 대조: 빌드한 이미지 = 검증한 이미지 = 배포할 이미지. 다르면 경고하고 승인을 막는다.
+  const plan = state.plan.meta
+  const digest = checkDigests({ built: state.build.result?.digest ?? plan?.built_digest, verified: plan?.verified_digest, deploy: plan?.built_digest })
+  const digestValue = digest.status === 'mismatch'
+    ? t('approval.digest.mismatch', { built: shortDigest(digest.built) || '—', verified: shortDigest(digest.verified) || '—', deploy: shortDigest(digest.deploy) || '—' })
+    : t('approval.digest.match', { digest: shortDigest(digest.deploy ?? digest.built), revision: plan?.revision ?? 1, template: plan?.template_version ?? '—' })
   const excluded = state.approval.excluded.length > 0 ? state.approval.excluded : [t('approval.ex1'), t('approval.ex2')]
 
   if (cancelled) {
@@ -56,6 +64,7 @@ export default function ApprovalStage({ target, onApprove, onCancel }: Props) {
         <p className="approval-lead">{t('approval.lead')}</p>
         <dl className="approval-rows">
           {rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+          {digest.status !== 'unknown' && <div className={digest.status === 'mismatch' ? 'approval-digest is-warn' : 'approval-digest'} role={digest.status === 'mismatch' ? 'alert' : undefined}><dt>{t('approval.row.digest')}</dt><dd>{digestValue}</dd></div>}
         </dl>
         <div className="approval-excluded">
           <strong>{t('approval.excluded')}</strong>
@@ -67,7 +76,8 @@ export default function ApprovalStage({ target, onApprove, onCancel }: Props) {
         </label>
         <div className="approval-actions">
           <button type="button" className="flow-secondary" onClick={() => { provider.cancel(); setCancelled(true) }}>{t('approval.cancel')}</button>
-          <button type="button" className="flow-primary" disabled={!checked} onClick={() => { provider.approve(); onApprove() }}>{t('approval.go')} <span aria-hidden="true">→</span></button>
+          <button type="button" className="flow-secondary" onClick={() => { provider.revisePlan(); onRevise() }}>{t('approval.revise')}</button>
+          <button type="button" className="flow-primary" disabled={!checked || digest.status === 'mismatch'} onClick={() => { provider.approve(plan?.revision); onApprove() }}>{t('approval.go')} <span aria-hidden="true">→</span></button>
         </div>
       </div>
       <aside className="approval-diagram" aria-label={t('approval.diagram.title')}>

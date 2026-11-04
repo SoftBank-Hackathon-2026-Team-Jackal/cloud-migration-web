@@ -172,7 +172,7 @@ export default function FlowApp() {
     {stage === 'rehearsal' && <RehearsalStage key={round} target={target} onNext={next('planning')} />}
     {stage === 'planning' && <AIPlanningStage key={round} target={target} onNext={next('approval')} />}
     {stage === 'planning' && <ArriveMorph key={'planning' + round} />}
-    {stage === 'approval' && <ApprovalStage key={round} target={target} onApprove={next('provisioning')} onCancel={() => jump('intro')} />}
+    {stage === 'approval' && <ApprovalStage key={round} target={target} onApprove={next('provisioning')} onCancel={() => jump('intro')} onRevise={() => go('planning')} />}
     {stage === 'approval' && <ArriveMorph key={'approval' + round} />}
     {stage === 'provisioning' && <ProvisioningStage key={round + target} target={target} onNext={next('data')} />}
     {stage === 'data' && <DataMigrationStage key={round} target={target} onNext={next('traffic')} />}

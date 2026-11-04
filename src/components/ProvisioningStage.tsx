@@ -10,6 +10,8 @@ import ArchitectureDiagram, { type NodeState } from './ArchitectureDiagram'
 import ZoomableDiagram from './ZoomableDiagram'
 import { ViewTabs } from './DiagramParts'
 
+const CHECK_NAMES = ['pods_ready', 'db_connect', 'app_health', 'retest'] as const
+
 // 만들어지는 리소스가 구성도의 어느 요소에 해당하는지
 const NODE_MAP: Record<Target, Record<string, string[]>> = {
   gcp: { network: ['group'], cluster: ['group'], db: ['db'], app: ['app'], lb: ['entry'], cert: ['dns', 'user'] },
@@ -27,7 +29,12 @@ export default function ProvisioningStage({ target, onNext }: { target: Target; 
 function ProvisioningBody({ ready, target, onNext }: { ready: boolean; target: Target; onNext: () => void }) {
   const t = useT()
   // 만들어진 리소스는 provision.resource 이벤트로 받는다.
-  const events = useMigration().state.provision.resources
+  const { state: migration } = useMigration()
+  const events = migration.provision.resources
+  // 리소스가 만들어진 뒤의 준비 상태 검사 3개와, 승인 뒤 같은 테스트 묶음 재실행(retest)
+  const checks = migration.provision.checks
+  const checkOf = (name: string) => checks.find(item => item.name === name)
+  const checksDone = CHECK_NAMES.every(name => checkOf(name)?.state === 'done')
   useStageFeed('provisioning', ready, target)
   const nodes = NODES[target]
   const text = (key: string, field: 'name' | 'detail' | 'log' | 'info') => t(('prov.' + target + '.' + key + '.' + field) as MsgKey)
@@ -47,7 +54,7 @@ function ProvisioningBody({ ready, target, onNext }: { ready: boolean; target: T
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })
-  }, [events.length])
+  }, [events.length, checks.length])
 
   return <div className="flow-split">
     <section className="analysis-cluster analysis-infrastructure flow-cluster" aria-label={t('prov.clusterTitle', { target: targetName })}>
@@ -72,6 +79,19 @@ function ProvisioningBody({ ready, target, onNext }: { ready: boolean; target: T
               <p>{findings.get(key)}</p>
             </div>
           </div>)}
+          {CHECK_NAMES.map((name, index) => {
+            const check = checkOf(name)
+            return <div key={name} className={'analysis-result' + (check ? ' is-discovered' : '')} aria-hidden={!check}>
+              <span className="analysis-result-point" aria-hidden="true" />
+              <div className="analysis-result-content">
+                <small>{String(nodes.length + index + 1).padStart(2, '0')} / {t(('prov.check.' + name + '.detail') as MsgKey)}</small>
+                <strong>{t(('prov.check.' + name + '.name') as MsgKey)}</strong>
+                <p>{check?.state === 'done'
+                  ? (name === 'retest' ? t('prov.check.retest.info', { passed: check.passed ?? 0, total: check.total ?? 0 }) : t(('prov.check.' + name + '.info') as MsgKey))
+                  : t('prov.check.running')}</p>
+              </div>
+            </div>
+          })}
         </div>
         {!finished
           ? <div className="analysis-scanning" aria-hidden="true"><span />{t('prov.nextResource')}</div>
@@ -106,8 +126,8 @@ function ProvisioningBody({ ready, target, onNext }: { ready: boolean; target: T
     </aside>
 
     <div className="flow-footer flow-footer-wide">
-      <span>{finished ? t('prov.footDone') : t('prov.footRun')}</span>
-      <button type="button" className="flow-primary" disabled={!finished} onClick={onNext}>{t('prov.go')} <span aria-hidden="true">→</span></button>
+      <span>{finished && checksDone ? t('prov.footDone') : t('prov.footRun')}</span>
+      <button type="button" className="flow-primary" disabled={!finished || !checksDone} onClick={onNext}>{t('prov.go')} <span aria-hidden="true">→</span></button>
     </div>
   </div>
 }

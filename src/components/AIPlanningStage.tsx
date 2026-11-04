@@ -182,7 +182,7 @@ export default function AIPlanningStage({ target, onNext }: { target: Target; on
 
     <div className="plan-document">
       <header className="plan-heading">
-        <small>AI PLANNER + CODE ADAPTER <span>DEMO</span></small>
+        <small>AI PLANNER + CODE ADAPTER <span>DEMO</span>{(state.plan.meta?.revision ?? 1) > 1 && <span>{t('plan.revision', { n: state.plan.meta?.revision ?? 1 })}</span>}</small>
         <h1>{t('plan.title')}</h1>
         <p>{t('plan.lead')}</p>
         <div className="plan-target"><span>{t('plan.from')}</span><strong>{t('plan.fromValue')}</strong><i>→</i><span>{t('plan.to')}</span><strong>{t(('target.' + target) as MsgKey)}</strong><small>{t('plan.example')}</small></div>

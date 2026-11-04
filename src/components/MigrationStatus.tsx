@@ -20,9 +20,25 @@ export function ConnectionToast() {
  */
 export function StatusPanel({ stage, onHome }: { stage: Stage; onHome: () => void }) {
   const t = useT()
-  const { state } = useMigration()
+  const { state, provider } = useMigration()
   const phase = stage in PHASE_OF_STAGE ? PHASE_OF_STAGE[stage as keyof typeof PHASE_OF_STAGE] : null
   if (!phase) return null
+
+  // 샌드박스 루프가 최대 시도를 넘으면 사람 검토를 기다린다: 수정 후 재시도 또는 취소만 있다.
+  if (stage === 'rehearsal' && state.build.review && state.status !== 'cancelled') {
+    return <section className="flow-stage approval-stage is-ready" role="alert" aria-label={t('review.step')}>
+      <div className="approval-panel">
+        <small className="approval-step">{t('review.step')}</small>
+        <h2>{t('review.title')}</h2>
+        <p className="approval-lead">{t('review.lead', { n: state.build.review.attempts })}</p>
+        <p className="approval-lead">{t('review.hint')}</p>
+        <div className="approval-actions">
+          <button type="button" className="flow-secondary" onClick={() => provider.cancel()}>{t('review.cancel')}</button>
+          <button type="button" className="flow-primary" onClick={() => provider.retrySandbox()}>{t('review.retry')} <span aria-hidden="true">→</span></button>
+        </div>
+      </div>
+    </section>
+  }
 
   if (state.status === 'cancelled' && stage !== 'approval') {
     return <section className="flow-stage approval-stage is-ready" role="alert" aria-label={t('cancel.step')}>

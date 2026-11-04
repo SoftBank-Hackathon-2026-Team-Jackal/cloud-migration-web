@@ -613,3 +613,6 @@ body{overflow-wrap:break-word}
 
 /* 오른쪽 칸의 내용 높이가 줄 높이를 키우지 않게 한다(줄 높이는 왼쪽 칸이 정하고, 넘치는 내용은 칸 안에서 스크롤) */
 .approval-diagram{contain:size}
+.build-result.is-failed{color:#b42318}
+.approval-digest.is-warn dd{color:#b42318}
+.approval-digest dd{font-size:12.5px}
