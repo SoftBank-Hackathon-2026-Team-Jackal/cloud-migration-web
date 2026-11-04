@@ -137,8 +137,8 @@
   .analysis-stage .analysis-stream{flex:1;min-height:0;display:flex;flex-direction:column}
   .analysis-stage .analysis-result-list{flex:1 1 0;min-height:0;max-height:none;container-type:size;overflow-y:auto;scrollbar-width:none}
   .analysis-stage .analysis-result-list::-webkit-scrollbar{display:none}
-  .analysis-stage .analysis-infrastructure{--rows:7}
-  .analysis-stage .analysis-code{--rows:6}
+  /* --rows는 화면이 받은 항목 수로 열마다 직접 넣는다(style). 값이 없을 때만 이 기본값 */
+  .analysis-stage .analysis-cluster{--rows:6}
   .analysis-stage .analysis-result{--row-h:clamp(52px,calc(100cqh / var(--rows)),128px)}
   .analysis-stage .analysis-cluster.is-compact .analysis-result{--row-h:clamp(44px,calc(100cqh / var(--rows)),76px)}
   .analysis-stage .analysis-result.is-discovered,.analysis-stage .analysis-code .analysis-result.is-discovered{max-height:var(--row-h)}

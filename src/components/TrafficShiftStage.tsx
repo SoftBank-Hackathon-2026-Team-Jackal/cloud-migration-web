@@ -7,7 +7,7 @@ import TrafficCanvas from './TrafficCanvas'
 import type { Target } from '../lib/stages'
 import { useT, type MsgKey } from '../lib/i18n'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
-import { OBSERVE_SECONDS, TRAFFIC_STEPS as STEPS } from '../lib/migration/trafficSim'
+import { OBSERVE_SECONDS, TRAFFIC_STEPS, stepIndexOf } from '../lib/migration/trafficSim'
 import type { TrafficPhase } from '../lib/migration/events'
 
 // 기준값의 기본값(서버가 snapshot의 gate에 실어 보내면 그 값을 쓴다)
@@ -39,7 +39,9 @@ function TrafficBody({ ready, target, onNext }: { ready: boolean; target: Target
   useStageFeed('traffic', ready, target)
   const snapshot = state.traffic.snapshot
   const phase: Phase = snapshot?.phase ?? 'applying'
-  const stepIndex = Math.max(0, STEPS.findIndex(step => step === snapshot?.step))
+  // 단계는 서버가 보낸 값(예: 50 → 100)을 쓰고, 없으면 기본 단계(10 · 50 · 100)다.
+  const STEPS: readonly number[] = snapshot?.steps?.length ? snapshot.steps : TRAFFIC_STEPS
+  const stepIndex = stepIndexOf(STEPS, snapshot?.step)
   const weightNew = snapshot?.weights.target ?? 0
   const observeLeft = snapshot?.gate.observe_left_seconds ?? 0
   const metrics = { failed: snapshot?.gate.failed_requests ?? 0, p99Ratio: snapshot?.gate.p99_ratio ?? 1 }

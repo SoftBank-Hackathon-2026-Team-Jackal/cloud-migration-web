@@ -78,11 +78,13 @@ function horizontalLayout(view: DiagramView, target: Target): Layout {
  * 이전 전(AWS)과 이전 후(대상 환경)의 구성을 같은 모양으로 그려 비교하게 해 주는 구성도.
  * adaptive를 켜면 놓인 칸의 크기를 재서, 세로형과 가로형 중 글자가 더 크게 보이는 쪽으로 그린다.
  */
-export default function ArchitectureDiagram({ view, target, states, adaptive = false }: {
+export default function ArchitectureDiagram({ view, target, states, adaptive = false, storage = true }: {
   view: DiagramView
   target: Target
   states?: Partial<Record<string, NodeState>>
   adaptive?: boolean
+  /** 분석·계획이 오브젝트 저장소를 보고했을 때만 S3 상자를 그린다(planModel.reportsStorage). */
+  storage?: boolean
 }) {
   const t = useT()
   const hostRef = useRef<HTMLDivElement>(null)
@@ -103,10 +105,14 @@ export default function ArchitectureDiagram({ view, target, states, adaptive = f
 
   // states를 안 주면 모든 노드를 완료 상태로 그린다.
   const stateOf = (id: string): NodeState => (states ? states[id] ?? 'off' : 'done')
-  const { boxes, edges, group } = horizontal ? horizontalLayout(view, target) : verticalLayout(view, target)
+  const layout = horizontal ? horizontalLayout(view, target) : verticalLayout(view, target)
+  const boxes = storage ? layout.boxes : layout.boxes.filter(box => box.id !== 's3')
+  const edges = storage ? layout.edges : layout.edges.filter(edge => edge.to !== 's3')
+  const group = layout.group
   const byId = new Map(boxes.map(box => [box.id, box]))
   const groupTitle = view === 'after' && target === 'onprem' ? t('diagram.k3s') : view === 'after' ? t('diagram.k8s') : t('diagram.eks')
-  const viewBox = horizontal ? HORIZONTAL : VERTICAL
+  // 저장소가 없으면 그 줄만큼 그림을 줄인다(세로형 아래쪽, 가로형 아래쪽).
+  const viewBox = horizontal ? (storage ? HORIZONTAL : { ...HORIZONTAL, h: 140 }) : (storage ? VERTICAL : { ...VERTICAL, h: 272 })
 
   const svg = <svg className={'arch' + (adaptive ? ' is-fit' : '')} viewBox={`0 0 ${viewBox.w} ${viewBox.h}`} role="img" aria-label={t('diagram.aria')}>
     <g className={'arch-node is-' + stateOf('group')}>

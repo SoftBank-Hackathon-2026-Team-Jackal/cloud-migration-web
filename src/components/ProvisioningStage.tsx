@@ -3,14 +3,29 @@
 import { useEffect, useRef, useState } from 'react'
 import StageShell from './StageShell'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
-import { PROVISION_NODES as NODES } from '../lib/migration/script'
 import type { Target } from '../lib/stages'
-import { useT, type MsgKey } from '../lib/i18n'
+import { useT, useTOr, type MsgKey } from '../lib/i18n'
+import { reportsStorage } from '../lib/migration/planModel'
 import ArchitectureDiagram, { type NodeState } from './ArchitectureDiagram'
 import ZoomableDiagram from './ZoomableDiagram'
 import { ViewTabs } from './DiagramParts'
 
-const CHECK_NAMES = ['pods_ready', 'db_connect', 'app_health', 'retest'] as const
+/** 새 줄은 빈 줄로 붙은 뒤 다음 프레임에 펼쳐진다(펼침 전환이 보이게). */
+function RevealRow({ index, category, name, info }: { index: number; category: string; name: string; info: string }) {
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setOpen(true))
+    return () => cancelAnimationFrame(frame)
+  }, [])
+  return <div className={'analysis-result' + (open ? ' is-discovered' : '')}>
+    <span className="analysis-result-point" aria-hidden="true" />
+    <div className="analysis-result-content">
+      <small>{String(index + 1).padStart(2, '0')}{category ? ' / ' + category : ''}</small>
+      <strong>{name}</strong>
+      <p>{info}</p>
+    </div>
+  </div>
+}
 
 // 만들어지는 리소스가 구성도의 어느 요소에 해당하는지
 const NODE_MAP: Record<Target, Record<string, string[]>> = {
@@ -33,17 +48,18 @@ function ProvisioningBody({ ready, target, onNext, onComplete }: { ready: boolea
   const events = migration.provision.resources
   // 리소스가 만들어진 뒤의 준비 상태 검사 3개와, 승인 뒤 같은 테스트 묶음 재실행(retest)
   const checks = migration.provision.checks
-  const checkOf = (name: string) => checks.find(item => item.name === name)
-  const checksDone = CHECK_NAMES.every(name => checkOf(name)?.state === 'done')
+  // 받은 검사가 모두 끝나야 다음으로 간다(검사 이름은 서버가 정한다).
+  const checksDone = checks.length > 0 && checks.every(check => check.state === 'done')
   useStageFeed('provisioning', ready, target)
-  const nodes = NODES[target]
-  const text = (key: string, field: 'name' | 'detail' | 'log' | 'info') => t(('prov.' + target + '.' + key + '.' + field) as MsgKey)
+  const tOr = useTOr()
+  // 이벤트에 이름·설명이 있으면 그대로, 없으면 알려진 key의 문구, 그것도 없으면 key 자체
+  const text = (key: string, field: 'name' | 'detail' | 'log' | 'info') => tOr('prov.' + target + '.' + key + '.' + field, field === 'name' || field === 'log' ? key : '')
+  const nameOf = (event: (typeof events)[number]) => event.name || text(event.key, 'name')
+  const infoOf = (event: (typeof events)[number]) => event.detail || text(event.key, 'info')
   const targetName = t(('target.' + target) as MsgKey)
   const listRef = useRef<HTMLDivElement>(null)
   const [view, setView] = useState<'diagram' | 'log'>('diagram')
   const [swapped, setSwapped] = useState(false)
-  const discovered = new Set(events.map(event => event.key))
-  const findings = new Map(events.map(event => [event.key, text(event.key, 'info')]))
   const progress = events.length ? events[events.length - 1].progress : 0
   const finished = progress === 100
   useEffect(() => { if (finished) onComplete?.() }, [finished, onComplete])
@@ -72,26 +88,13 @@ function ProvisioningBody({ ready, target, onNext, onComplete }: { ready: boolea
       </div>
       <div className="analysis-stream">
         <div ref={listRef} tabIndex={0} className={'analysis-result-list' + (events.length > 0 ? ' has-results' : '')}>
-          {nodes.map((key, index) => <div key={key} className={'analysis-result' + (discovered.has(key) ? ' is-discovered' : '')} aria-hidden={!discovered.has(key)}>
-            <span className="analysis-result-point" aria-hidden="true" />
-            <div className="analysis-result-content">
-              <small>{String(index + 1).padStart(2, '0')} / {text(key, 'detail')}</small>
-              <strong>{text(key, 'name')}</strong>
-              <p>{findings.get(key)}</p>
-            </div>
-          </div>)}
-          {CHECK_NAMES.map((name, index) => {
-            const check = checkOf(name)
-            return <div key={name} className={'analysis-result' + (check ? ' is-discovered' : '')} aria-hidden={!check}>
-              <span className="analysis-result-point" aria-hidden="true" />
-              <div className="analysis-result-content">
-                <small>{String(nodes.length + index + 1).padStart(2, '0')} / {t(('prov.check.' + name + '.detail') as MsgKey)}</small>
-                <strong>{t(('prov.check.' + name + '.name') as MsgKey)}</strong>
-                <p>{check?.state === 'done'
-                  ? (name === 'retest' ? t('prov.check.retest.info', { passed: check.passed ?? 0, total: check.total ?? 0 }) : t(('prov.check.' + name + '.info') as MsgKey))
-                  : t('prov.check.running')}</p>
-              </div>
-            </div>
+          {events.map((event, index) => <RevealRow key={event.id} index={index} category={text(event.key, 'detail')} name={nameOf(event)} info={infoOf(event)} />)}
+          {checks.map((check, index) => {
+            const known = 'prov.check.' + check.name
+            const info = check.state !== 'done' ? t('prov.check.running')
+              : check.name === 'retest' ? t('prov.check.retest.info', { passed: check.passed ?? 0, total: check.total ?? 0 })
+              : tOr(known + '.info', check.total !== undefined ? (check.passed ?? 0) + ' / ' + check.total : '')
+            return <RevealRow key={'check-' + check.name} index={events.length + index} category={tOr(known + '.detail')} name={tOr(known + '.name', check.name)} info={info} />
           })}
         </div>
         {!finished
@@ -108,7 +111,7 @@ function ProvisioningBody({ ready, target, onNext, onComplete }: { ready: boolea
         <small>DEMO</small>
       </div>
       {view === 'diagram' && <div className="prov-diagram">
-        <ZoomableDiagram><ArchitectureDiagram view="after" target={target} states={nodeStates} adaptive /></ZoomableDiagram>
+        <ZoomableDiagram><ArchitectureDiagram view="after" target={target} states={nodeStates} adaptive storage={reportsStorage(migration)} /></ZoomableDiagram>
         <p className="flow-note">{t('prov.diagramNote')}</p>
       </div>}
       {view === 'log' && <div className="analysis-discovery-items" tabIndex={0} aria-live="polite">
@@ -116,8 +119,8 @@ function ProvisioningBody({ ready, target, onNext, onComplete }: { ready: boolea
           ? <p>{t('prov.logEmpty')}</p>
           : [...events].reverse().map(event => <div className="analysis-discovery-item" key={event.id}>
               <small>{String(events.indexOf(event) + 1).padStart(2, '0')}</small>
-              <strong>{text(event.key, 'log')}</strong>
-              <em>{text(event.key, 'info')}</em>
+              <strong>{event.name || text(event.key, 'log')}</strong>
+              <em>{infoOf(event)}</em>
             </div>)}
       </div>}
       {finished && <div className="flow-handoff">

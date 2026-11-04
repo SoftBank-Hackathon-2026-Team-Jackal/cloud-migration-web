@@ -10,13 +10,12 @@ import { ArriveMorph } from './ScreenFx'
 import { runTransition } from '../lib/particleHandoff'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
 import type { Target } from '../lib/stages'
-import { useT, type MsgKey } from '../lib/i18n'
+import { useT, useTOr, type MsgKey } from '../lib/i18n'
 
 type Phase = 'approve' | 'running' | 'verify' | 'done'
 
 const STEPS = [1, 2, 3, 4, 5, 6]
 // 측정 결과(실패·지연·유실)는 3개가 모두 와야 측정이 끝난 것이다.
-const RESULT_COUNT = 3
 
 export default function CutoverStage({ target, onRestart, onComplete }: { target: Target; onRestart: () => void; onComplete: () => void }) {
   const t = useT()
@@ -30,6 +29,7 @@ type BodyProps = { ready: boolean; target: Target; phase: Phase; setPhase: (phas
 
 function CutoverBody({ ready, target, phase, setPhase, onRestart, onComplete }: BodyProps) {
   const t = useT()
+  const tOr = useTOr()
   const { state, provider, mode } = useMigration()
   // 두 번째 승인(approveCutover) 뒤에 오는 전환 단계·측정 결과 이벤트를 읽는다.
   useStageFeed('verification', ready, target)
@@ -37,7 +37,8 @@ function CutoverBody({ ready, target, phase, setPhase, onRestart, onComplete }: 
   const [checked, setChecked] = useState(false)
   const doneSteps = phase === 'approve' ? 0 : state.cutover.doneSteps
   const tiles = state.cutover.results
-  const measured = phase === 'verify' && tiles.length === RESULT_COUNT
+  // 측정이 끝났다: 서버가 마지막 결과를 보내 이전 상태가 done이 됐다(결과 id·개수는 서버가 정한다).
+  const measured = phase === 'verify' && tiles.length > 0 && state.status === 'done'
 
   // 6단계가 끝나고 측정 구간에 들어갔다는 이벤트가 오면 화면도 측정 단계로 넘어간다.
   useEffect(() => {
@@ -114,11 +115,16 @@ function CutoverBody({ ready, target, phase, setPhase, onRestart, onComplete }: 
       </div>
       {phase === 'verify'
         ? <div className="cutover-tiles">
-            {tiles.map(tile => <div key={tile.id} className="cutover-tile">
-              <small>{t(('cutover.tile.' + tile.id) as MsgKey)}</small>
-              <strong>{tile.value || t(('cutover.tile.' + tile.id + 'Value') as MsgKey)}</strong>
-              <em>✓ {t(('cutover.tile.' + tile.id + 'Rule') as MsgKey)}</em>
-            </div>)}
+            {tiles.map(tile => {
+              // 알려진 id(fail·delay·loss)는 화면 문구, 그 밖의 id(duplicate, checksum 등)는 받은 label·value를 그대로
+              const key = 'cutover.tile.' + tile.id
+              const rule = tOr(key + 'Rule')
+              return <div key={tile.id} className={'cutover-tile' + (tile.ok === false ? ' is-bad' : '')}>
+                <small>{tile.label || tOr(key, tile.id)}</small>
+                <strong>{tile.value || tOr(key + 'Value', '—')}</strong>
+                {(rule || tile.ok !== undefined) && <em>{tile.ok === false ? '✕' : '✓'} {rule}</em>}
+              </div>
+            })}
           </div>
         : <p className="flow-note">{t('cutover.measureNote')}</p>}
     </aside>

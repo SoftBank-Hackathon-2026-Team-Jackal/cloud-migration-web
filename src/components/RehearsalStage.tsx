@@ -7,20 +7,24 @@ import type { Target } from '../lib/stages'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
 import { shortDigest, type BuildErrorCode, type BuildFixData, type BuildResultData, type SandboxAttemptData, type SandboxEnvData, type SandboxStep } from '../lib/migration/events'
 
-type DiffLine = { kind: 'file' | 'del' | 'add' | 'note'; text: string; key?: MsgKey; fix?: string }
-const DIFF: ReadonlyArray<DiffLine> = [
-  { kind: 'file', text: '.env' },
-  { kind: 'del', text: '- DB_HOST=postgres', fix: 'db' },
-  { kind: 'add', text: '+ DB_HOST=postgresql.demo.svc.cluster.local', fix: 'db' },
-  { kind: 'del', text: '- HOST=127.0.0.1', fix: 'host' },
-  { kind: 'add', text: '+ HOST=0.0.0.0', fix: 'host' },
-  { kind: 'del', text: '- DB_USERNAME=demo_user' },
-  { kind: 'add', text: '+ DB_USERNAME=', key: 'rehearsal.diffAccount' },
-  { kind: 'file', text: '', key: 'rehearsal.diffFile' },
-  { kind: 'add', text: '+ containerPort: 8080', fix: 'port' },
-  { kind: 'add', text: '+ readinessProbe: { httpGet: { path: /health, port: 8080 } }', fix: 'probe' },
-  { kind: 'note', text: '', key: 'rehearsal.diffNote' },
-]
+type DiffLine = { kind: 'file' | 'del' | 'add' | 'note'; text: string }
+/** 받은 수정(build.fix)으로 전체 변경 내용을 만든다: 파일별로 묶고, 수정 이유가 있으면 주석 줄로 붙인다. */
+function diffOf(fixes: BuildFixData[]): DiffLine[] {
+  const files = new Map<string, BuildFixData[]>()
+  for (const fix of fixes) {
+    const file = fix.file ?? ''
+    files.set(file, [...(files.get(file) ?? []), fix])
+  }
+  const lines: DiffLine[] = []
+  for (const [file, items] of files) {
+    if (file) lines.push({ kind: 'file', text: file })
+    for (const fix of items) {
+      lines.push(...fix.lines.map(line => ({ kind: line.kind, text: line.text })))
+      if (fix.why) lines.push({ kind: 'note', text: '# ' + fix.why })
+    }
+  }
+  return lines
+}
 
 export default function RehearsalStage({ target, onNext, onComplete }: { target: Target; onNext: () => void; onComplete?: () => void }) {
   const t = useT()
@@ -177,7 +181,7 @@ function RehearsalBody({ ready, target, onNext, onComplete }: { ready: boolean; 
       {fixes.length > 0 && <details className="rehearsal-diff">
         <summary>{t('sbx.diffAll')}</summary>
         <pre className="flow-diff" aria-label={t('rehearsal.diffAria')}>
-          {DIFF.map((line, index) => <span key={index} className={'flow-diff-' + line.kind}>{line.text + (line.key ? t(line.key) : '')}</span>)}
+          {diffOf(fixes).map((line, index) => <span key={index} className={'flow-diff-' + line.kind}>{line.text}</span>)}
         </pre>
       </details>}
       <p className="flow-note">{t('rehearsal.note')}</p>

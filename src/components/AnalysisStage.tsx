@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import ParticleReveal from './ParticleReveal'
-import { useT, type MsgKey } from '../lib/i18n'
+import { useT, useTOr, type MsgKey, type TranslateOr } from '../lib/i18n'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
 import type { AnalysisFindingData, ScanMethod, Target } from '../lib/migration/events'
 
@@ -12,30 +12,39 @@ const SCAN_METHODS: ScanMethod[] = ['config', 'code', 'iam', 'trail']
 /** 발견 항목. message·detail이 비어 있으면 화면에서 key로 사전을 찾아 현재 언어로 보여 준다. 백엔드 값은 그대로 쓴다. */
 export type AnalysisUpdate = AnalysisFindingData
 
-const INFRA_NODES = [
-  { key: 'vpc' },
-  { key: 'alb' },
-  { key: 'ec2' },
-  { key: 'postgres' },
-  { key: 's3' },
-  { key: 'network' },
-  { key: 'iam' },
-]
+/** 분석 흐름이 끝났다는 표시만 하는 항목(예: code-done)은 열에 줄로 넣지 않는다. */
+const isMarker = (key: string) => /(^|-)done$/.test(key)
+/** 열에 놓을 항목: 받은 발견 항목을 key별로 하나씩, 도착한 순서대로. 고정된 key 목록을 쓰지 않는다. */
+function nodesOf(updates: AnalysisUpdate[], stream: AnalysisUpdate['stream']) {
+  const seen = new Map<string, AnalysisUpdate>()
+  for (const update of updates) if (update.stream === stream && !isMarker(update.key)) seen.set(update.key, update)
+  return [...seen.values()]
+}
 
-const CODE_NODES = [
-  { key: 'compose' },
-  { key: 'app' },
-  { key: 'database' },
-  { key: 'sdk' },
-  { key: 'env' },
-  { key: 'auth' },
-]
-
-function textOf(t: ReturnType<typeof useT>, update: AnalysisUpdate) {
+function textOf(tOr: TranslateOr, update: AnalysisUpdate) {
   return {
-    message: update.message || t(('analysis.u.' + update.key + '.msg') as MsgKey),
-    detail: update.detail || t(('analysis.u.' + update.key + '.detail') as MsgKey),
+    message: update.message || tOr('analysis.u.' + update.key + '.msg', update.key),
+    detail: update.detail || tOr('analysis.u.' + update.key + '.detail'),
   }
+}
+
+/** 새 항목은 빈 줄로 붙은 뒤 다음 프레임에 펼쳐진다(펼침 전환이 보이게). */
+function AnalysisRow({ index, update }: { index: number; update: AnalysisUpdate }) {
+  const tOr = useTOr()
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setOpen(true))
+    return () => cancelAnimationFrame(frame)
+  }, [])
+  const category = tOr('analysis.node.' + update.key + '.detail')
+  return <div className={'analysis-result' + (open ? ' is-discovered' : '')}>
+    <span className="analysis-result-point" aria-hidden="true" />
+    <div className="analysis-result-content">
+      <small>{String(index + 1).padStart(2, '0')}{category ? ' / ' + category : ''}</small>
+      <strong>{tOr('analysis.node.' + update.key + '.name', update.message || update.key)}</strong>
+      <p>{textOf(tOr, update).detail}</p>
+    </div>
+  </div>
 }
 
 function progressFor(updates: AnalysisUpdate[], stream: AnalysisUpdate['stream']) {
@@ -46,18 +55,16 @@ function progressFor(updates: AnalysisUpdate[], stream: AnalysisUpdate['stream']
   return progress
 }
 
-function AnalysisCluster({ title, subtitle, root, stream, progress, nodes, discovered, findings }: {
+function AnalysisCluster({ title, subtitle, root, stream, progress, nodes }: {
   title: string
   subtitle: string
   root: string
   stream: AnalysisUpdate['stream']
   progress: number
-  nodes: typeof INFRA_NODES
-  discovered: Set<string>
-  findings: Map<string, string>
+  nodes: AnalysisUpdate[]
 }) {
   const t = useT()
-  const foundCount = nodes.filter(node => discovered.has(node.key)).length
+  const foundCount = nodes.length
   const listRef = useRef<HTMLDivElement>(null)
   // 끝나면 목록을 작은 줄로 접어 스크롤 없이 전부 보여 준다(위로 사라졌던 01~03번도 다시 보이게).
   const compact = progress === 100
@@ -65,7 +72,7 @@ function AnalysisCluster({ title, subtitle, root, stream, progress, nodes, disco
     if (compact) listRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
     else listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })
   }, [foundCount, compact])
-  return <section className={'analysis-cluster analysis-' + stream + (compact ? ' is-compact' : '')}>
+  return <section className={'analysis-cluster analysis-' + stream + (compact ? ' is-compact' : '')} style={{ '--rows': Math.max(nodes.length, 6) } as CSSProperties}>
     <div className="analysis-cluster-heading">
       <span className="analysis-cluster-icon" data-particle-target="circle" aria-hidden="true">{stream === 'infrastructure' ? '◫' : '⌘'}</span>
       <div>
@@ -83,16 +90,7 @@ function AnalysisCluster({ title, subtitle, root, stream, progress, nodes, disco
         <div><strong data-particle-target="text">{root}</strong><small data-particle-target="text">{progress === 100 ? t('analysis.explored') : t('analysis.exploring')}</small></div>
       </div>
       <div ref={listRef} tabIndex={0} className={'analysis-result-list' + (foundCount > 0 ? ' has-results' : '')}>
-        {nodes.map((node, index) => <div key={node.key}
-          className={'analysis-result' + (discovered.has(node.key) ? ' is-discovered' : '')}
-          aria-hidden={!discovered.has(node.key)}>
-          <span className="analysis-result-point" aria-hidden="true" />
-          <div className="analysis-result-content">
-            <small>{String(index + 1).padStart(2, '0')} / {t(('analysis.node.' + node.key + '.detail') as MsgKey)}</small>
-            <strong>{t(('analysis.node.' + node.key + '.name') as MsgKey)}</strong>
-            <p>{findings.get(node.key)}</p>
-          </div>
-        </div>)}
+        {nodes.map((node, index) => <AnalysisRow key={node.key} index={index} update={node} />)}
       </div>
       {progress < 100
         ? <div className="analysis-scanning" aria-hidden="true"><span />{t('analysis.nextItem')}</div>
@@ -131,8 +129,7 @@ export default function AnalysisStage({ target, onAdvance, onComplete, orbHandof
   const activeUpdates = state.analysis.findings
   const infrastructure = progressFor(activeUpdates, 'infrastructure')
   const code = progressFor(activeUpdates, 'code')
-  const discovered = new Set(activeUpdates.map(update => update.key))
-  const findings = new Map(activeUpdates.map(update => [update.key, textOf(t, update).detail]))
+  const tOr = useTOr()
   const finished = infrastructure === 100 && code === 100
   useEffect(() => { if (finished) onComplete?.() }, [finished, onComplete])
   const usedMethods = new Set(activeUpdates.flatMap(update => update.via ?? []))
@@ -189,9 +186,9 @@ export default function AnalysisStage({ target, onAdvance, onComplete, orbHandof
     <h1 className="sr-only">{t('analysis.aria')}</h1>
     <div className="analysis-flow">
       <AnalysisCluster title={t('analysis.infra.title')} subtitle={t('analysis.infra.sub')}
-        root={t('analysis.infra.root')} stream="infrastructure" progress={infrastructure} nodes={INFRA_NODES} discovered={discovered} findings={findings} />
+        root={t('analysis.infra.root')} stream="infrastructure" progress={infrastructure} nodes={nodesOf(activeUpdates, 'infrastructure')} />
       <AnalysisCluster title={t('analysis.code.title')} subtitle={t('analysis.code.sub')}
-        root={t('analysis.code.root')} stream="code" progress={code} nodes={CODE_NODES} discovered={discovered} findings={findings} />
+        root={t('analysis.code.root')} stream="code" progress={code} nodes={nodesOf(activeUpdates, 'code')} />
       <aside className="analysis-discovery">
         <div className="analysis-discovery-title">
           <span className="analysis-live-dot" data-particle-target="circle" />
@@ -209,11 +206,11 @@ export default function AnalysisStage({ target, onAdvance, onComplete, orbHandof
         <div className="analysis-discovery-items" tabIndex={0} aria-live="polite">
           {activeUpdates.length === 0
             ? <p data-particle-target="text">{t('analysis.liveEmpty')}</p>
-            : [...activeUpdates].reverse().map(update => <div className={'analysis-discovery-item is-' + update.stream} key={update.id} title={textOf(t, update).detail}>
+            : [...activeUpdates].reverse().map(update => <div className={'analysis-discovery-item is-' + update.stream} key={update.id} title={textOf(tOr, update).detail}>
                 <small>{update.stream === 'infrastructure' ? t('analysis.streamInfra') : t('analysis.streamCode')}</small>
-                <strong>{textOf(t, update).message}</strong>
+                <strong>{textOf(tOr, update).message}</strong>
                 {/* 멀리서도 읽히도록 피드는 한 줄 제목과 근거 칩만 보인다. 세부 문구는 낭독기·마우스 올림으로 */}
-                <em className="sr-only">{textOf(t, update).detail}</em>
+                <em className="sr-only">{textOf(tOr, update).detail}</em>
                 {update.via && <span className="scan-via">{update.via.map(method => <i key={method}>{t(('scan.' + method) as MsgKey)}</i>)}</span>}
               </div>)}
         </div>

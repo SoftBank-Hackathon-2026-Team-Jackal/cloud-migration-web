@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useT, type MsgKey } from '../lib/i18n'
 import type { Target } from '../lib/stages'
+import { reportsStorage } from '../lib/migration/planModel'
 import ArchitectureDiagram, { type DiagramView } from './ArchitectureDiagram'
 import CostCompare from './CostCompare'
 import GovernanceMatrix from './GovernanceMatrix'
@@ -93,7 +94,7 @@ export default function ApprovalStage({ target, onApprove, onCancel, onRevise }:
         </div>
         <div className={'approval-diagram-body' + (swapped ? ' is-swapped' : '')}>
           {side === 'diagram' && <>
-            <ArchitectureDiagram view={view} target={target} />
+            <ArchitectureDiagram view={view} target={target} storage={reportsStorage(state)} />
             <small className="approval-diagram-note">{view === 'before' ? 'AWS · ' + t('plan.fromValue') : targetName}</small>
           </>}
           {side === 'governance' && <GovernanceMatrix target={target} />}
