@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import StageShell from './StageShell'
 import { useT, type MsgKey } from '../lib/i18n'
 import type { Target } from '../lib/stages'
@@ -78,13 +78,13 @@ const DIFF: ReadonlyArray<DiffLine> = [
   { kind: 'note', text: '', key: 'rehearsal.diffNote' },
 ]
 
-export default function RehearsalStage({ target, onNext }: { target: Target; onNext: () => void }) {
+export default function RehearsalStage({ target, onNext, onComplete }: { target: Target; onNext: () => void; onComplete?: () => void }) {
   const t = useT()
   const fixes = useMemo(() => FIX_POOL.slice(0, aiFixCount()), [])
   const script = useMemo(() => buildScript(fixes), [fixes])
   return <StageShell kicker="SANDBOX · REHEARSAL" title={t('rehearsal.title')}
     subtitle={t('rehearsal.subtitle')}>
-    {ready => <RehearsalBody ready={ready} script={script} fixes={fixes} target={target} onNext={onNext} />}
+    {ready => <RehearsalBody ready={ready} script={script} fixes={fixes} target={target} onNext={onNext} onComplete={onComplete} />}
   </StageShell>
 }
 
@@ -95,7 +95,7 @@ const CHECK_NODES: Record<string, string[]> = {
 
 const MARK: Record<CheckState, string> = { running: '', failed: '!', fixing: '✎', recheck: '', done: '✓' }
 
-function RehearsalBody({ ready, script, fixes, target, onNext }: { ready: boolean; script: Array<TimedItem<CheckEvent>>; fixes: Fix[]; target: Target; onNext: () => void }) {
+function RehearsalBody({ ready, script, fixes, target, onNext, onComplete }: { ready: boolean; script: Array<TimedItem<CheckEvent>>; fixes: Fix[]; target: Target; onNext: () => void; onComplete?: () => void }) {
   const t = useT()
   const events = useScript(script, ready)
   const states = new Map<string, CheckEvent>()
@@ -103,6 +103,7 @@ function RehearsalBody({ ready, script, fixes, target, onNext }: { ready: boolea
   const stateOf = (id: string) => states.get(id)?.state
   const done = CHECKS.filter(check => stateOf(check.id) === 'done').length
   const finished = done === CHECKS.length
+  useEffect(() => { if (finished) onComplete?.() }, [finished, onComplete])
   const last = events[events.length - 1]
   const fixesOf = (checkId: string) => fixes.filter(fix => fix.check === checkId)
   // 수정이 적용된 것: 재검증에 들어갔거나 통과한 항목의 수정 전부 + 수정 중인 항목에서는 지금까지 고친 개수만큼

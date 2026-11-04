@@ -127,9 +127,10 @@ type Handoff = {
   sources: Array<{ x: number; y: number; dx: number; dy: number }>
 }
 
-export default function AnalysisStage({ updates, onAdvance, orbHandoff = false }: {
+export default function AnalysisStage({ updates, onAdvance, onComplete, orbHandoff = false }: {
   updates?: AnalysisUpdate[]
   onAdvance: (results: AnalysisUpdate[]) => void
+  onComplete?: () => void
   /** 분석 직후에 계획 화면이 올 때만 쓰는 오브 이동 연출. 단계 순서가 바뀌어(분석 → 샌드박스) 지금은 끄고, 화면 전환 입자 층이 대신한다. */
   orbHandoff?: boolean
 }) {
@@ -158,6 +159,7 @@ export default function AnalysisStage({ updates, onAdvance, orbHandoff = false }
   const discovered = new Set(activeUpdates.map(update => update.key))
   const findings = new Map(activeUpdates.map(update => [update.key, textOf(t, update).detail]))
   const finished = infrastructure === 100 && code === 100
+  useEffect(() => { if (finished) onComplete?.() }, [finished, onComplete])
   const usedMethods = new Set(activeUpdates.flatMap(update => update.via ?? []))
 
   useEffect(() => {

@@ -29,16 +29,16 @@ function buildScript(target: Target): Array<TimedItem<LogEvent>> {
   }))
 }
 
-export default function ProvisioningStage({ target, onNext }: { target: Target; onNext: () => void }) {
+export default function ProvisioningStage({ target, onNext, onComplete }: { target: Target; onNext: () => void; onComplete?: () => void }) {
   const t = useT()
   const script = useMemo(() => buildScript(target), [target])
   return <StageShell kicker="PROVISIONING" title={t('prov.title')}
     subtitle={t('prov.subtitle', { target: t(('target.' + target) as MsgKey) })}>
-    {ready => <ProvisioningBody ready={ready} target={target} script={script} onNext={onNext} />}
+    {ready => <ProvisioningBody ready={ready} target={target} script={script} onNext={onNext} onComplete={onComplete} />}
   </StageShell>
 }
 
-function ProvisioningBody({ ready, target, script, onNext }: { ready: boolean; target: Target; script: Array<TimedItem<LogEvent>>; onNext: () => void }) {
+function ProvisioningBody({ ready, target, script, onNext, onComplete }: { ready: boolean; target: Target; script: Array<TimedItem<LogEvent>>; onNext: () => void; onComplete?: () => void }) {
   const t = useT()
   const events = useScript(script, ready)
   const nodes = NODES[target]
@@ -51,6 +51,7 @@ function ProvisioningBody({ ready, target, script, onNext }: { ready: boolean; t
   const findings = new Map(events.map(event => [event.key, text(event.key, 'info')]))
   const progress = events.length ? events[events.length - 1].progress : 0
   const finished = progress === 100
+  useEffect(() => { if (finished) onComplete?.() }, [finished, onComplete])
   const nodeStates: Record<string, NodeState> = {}
   events.forEach((event, index) => {
     const latest = index === events.length - 1 && !finished

@@ -1,11 +1,12 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import './flow.css'
+import './voice.css'
 import { I18nProvider } from '../lib/i18n'
 
 export const metadata: Metadata = {
-  title: 'Cloud Migration Demo',
-  description: 'Cloud migration platform demo · analysis, plan, approval, provisioning, data and traffic cutover',
+  title: 'Jackal Voice Migration Demo',
+  description: 'Voice guided cloud migration demo',
 }
 
 export const viewport: Viewport = {

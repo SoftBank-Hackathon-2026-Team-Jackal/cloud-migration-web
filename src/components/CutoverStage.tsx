@@ -24,17 +24,17 @@ const TILES: Array<TimedItem<Tile>> = [
   { after: 2400, item: { id: 'loss' } },
 ]
 
-export default function CutoverStage({ target, onRestart }: { target: Target; onRestart: () => void }) {
+export default function CutoverStage({ target, onRestart, onComplete }: { target: Target; onRestart: () => void; onComplete: () => void }) {
   const t = useT()
   const [phase, setPhase] = useState<Phase>('approve')
   return <StageShell kicker="DB CUTOVER · VERIFY" title={t('cutover.title')} subtitle={t(('cutover.sub.' + phase) as MsgKey)} hideHeader={phase === 'approve' || phase === 'done'}>
-    {ready => <CutoverBody ready={ready} target={target} phase={phase} setPhase={setPhase} onRestart={onRestart} />}
+    {ready => <CutoverBody ready={ready} target={target} phase={phase} setPhase={setPhase} onRestart={onRestart} onComplete={onComplete} />}
   </StageShell>
 }
 
-type BodyProps = { ready: boolean; target: Target; phase: Phase; setPhase: (phase: Phase) => void; onRestart: () => void }
+type BodyProps = { ready: boolean; target: Target; phase: Phase; setPhase: (phase: Phase) => void; onRestart: () => void; onComplete: () => void }
 
-function CutoverBody({ ready, target, phase, setPhase, onRestart }: BodyProps) {
+function CutoverBody({ ready, target, phase, setPhase, onRestart, onComplete }: BodyProps) {
   const t = useT()
   const targetName = t(('target.' + target) as MsgKey)
   const [doneSteps, setDoneSteps] = useState(0)
@@ -107,7 +107,7 @@ function CutoverBody({ ready, target, phase, setPhase, onRestart }: BodyProps) {
 
     <div className="flow-footer">
       <span>{measured ? t('cutover.foot.done') : phase === 'verify' ? t('cutover.foot.verify') : t('cutover.foot.running')}</span>
-      <button type="button" className="flow-primary" disabled={!measured} onClick={() => runTransition(() => setPhase('done'))}>{t('cutover.next')} <span aria-hidden="true">→</span></button>
+      <button type="button" className="flow-primary" disabled={!measured} onClick={() => runTransition(() => { setPhase('done'); onComplete() })}>{t('cutover.next')} <span aria-hidden="true">→</span></button>
     </div>
   </div><ArriveMorph key="cut-run" /></>
 }
