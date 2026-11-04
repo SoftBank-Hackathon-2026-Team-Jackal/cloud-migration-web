@@ -243,3 +243,23 @@ test('정합성 확인·전환 조건 확인·운영권 인계는 이름별 최�
   assert.equal(state.traffic.ready, null)
   assert.equal(state.cutover.handover.length, 0)
 })
+
+test('샌드박스 루프: 트랙별 단계·판정·최종 상태가 쌓이고, INFRA 재시도는 같은 attempt의 새 트랙이다', () => {
+  const checks = { required_passed: 0, required_total: 24, unsupported_calls: 0, calls_in_mapping: 9, calls_total: 9, blocked_egress: 0 }
+  let state = run(initialState,
+    ev({ type: 'sandbox.env', phase: 'build', status: 'running', data: { namespace: 'sbx-run-1', expires_minutes: 120, egress_allowed: 3 } }),
+    ev({ type: 'sandbox.step', phase: 'build', status: 'running', data: { run: 1, attempt: 1, step: 'apply', state: 'failed' } }),
+    ev({ type: 'sandbox.attempt', phase: 'build', status: 'running', data: { run: 1, attempt: 1, max_attempts: 3, verdict: { passed: false, reasons: ['timeout'] }, failure_class: 'INFRA', checks, fix_ids: [] } }),
+    ev({ type: 'sandbox.step', phase: 'build', status: 'running', data: { run: 2, attempt: 1, step: 'judge', state: 'done' } }),
+    ev({ type: 'sandbox.attempt', phase: 'build', status: 'running', data: { run: 2, attempt: 1, max_attempts: 3, verdict: { passed: true, reasons: [] }, failure_class: null, checks: { ...checks, required_passed: 24 }, fix_ids: [] } }),
+    ev({ type: 'sandbox.done', phase: 'build', status: 'done', data: { status: 'PASSED', cleanup_status: 'CLEANED', digest: 'sha256:abc' } }),
+  )
+  assert.equal(state.sandbox.env?.namespace, 'sbx-run-1')
+  assert.equal(state.sandbox.steps[1].apply, 'failed')
+  assert.equal(state.sandbox.steps[2].judge, 'done')
+  assert.deepEqual(state.sandbox.attempts.map(item => [item.run, item.attempt, item.failure_class]), [[1, 1, 'INFRA'], [2, 1, null]])
+  assert.equal(state.build.attempt, 1)
+  assert.equal(state.sandbox.done?.cleanup_status, 'CLEANED')
+  state = run(state, ev({ type: 'sandbox.attempt', phase: 'build', status: 'running', data: { run: 2, attempt: 1, max_attempts: 3, verdict: { passed: true, reasons: [] }, failure_class: null, checks, fix_ids: [] } }))
+  assert.equal(state.sandbox.attempts.length, 2, '같은 트랙의 판정은 덮어쓴다')
+})

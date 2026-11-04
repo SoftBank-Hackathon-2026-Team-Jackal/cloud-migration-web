@@ -14,6 +14,18 @@ function flag(name: string, value: string) {
   return new URLSearchParams(window.location.search).get(name) === value
 }
 
+export type SandboxScenario = 'pass' | 'spec' | 'code' | 'infra' | 'render'
+/**
+ * 시연용 ?sandbox=…: 샌드박스 루프의 결과를 고른다(기본 spec).
+ *  pass 한 번에 통과 · spec 매핑(환경변수) 수정 후 재렌더로 통과 · code 코드 수정·재빌드 후 통과
+ *  infra 환경 오류를 같은 입력으로 재시도해 통과 · render 변환기 오류로 중단(보고)
+ */
+export function sandboxScenario(): SandboxScenario {
+  if (typeof window === 'undefined') return 'spec'
+  const value = new URLSearchParams(window.location.search).get('sandbox')
+  return value === 'pass' || value === 'code' || value === 'infra' || value === 'render' ? value : 'spec'
+}
+
 /** 시연용 ?review=1: 샌드박스 루프가 3회 실패해 사람 검토 대기 화면이 나온다. */
 export function reviewDemo(): boolean {
   return flag('review', '1')

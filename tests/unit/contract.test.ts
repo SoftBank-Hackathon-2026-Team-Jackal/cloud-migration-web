@@ -181,7 +181,7 @@ test('목업 서버가 SSE로 보내는 이벤트(snapshot 포함)가 스키마�
         if (cancelled && event.type === 'error') break outer
       }
     }
-    for (const type of ['snapshot', 'analysis.finding', 'analysis.done', 'build.check', 'build.fix', 'build.result', 'plan.step', 'plan.ready', 'approval.required', 'provision.resource', 'provision.check', 'error']) {
+    for (const type of ['snapshot', 'analysis.finding', 'analysis.done', 'sandbox.env', 'sandbox.step', 'sandbox.attempt', 'sandbox.done', 'build.fix', 'build.result', 'plan.step', 'plan.ready', 'approval.required', 'provision.resource', 'provision.check', 'error']) {
       assert.ok(seen.includes(type), type + ' 이벤트를 받지 못했습니다')
     }
     const report = await (await fetch(`${base}/migrations/${id}/report`)).json()

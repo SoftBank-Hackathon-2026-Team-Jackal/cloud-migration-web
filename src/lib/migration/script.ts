@@ -4,7 +4,8 @@
  * 대본의 시각(after)은 "그 단계 화면이 준비된 순간"부터 센 ms이다.
  * Node가 그대로 읽으므로 런타임 import가 없고, 타입 문법만 쓴다(enum·네임스페이스 금지).
  */
-import type { AnalysisFindingData, BuildErrorCode, BuildFixData, DataProgressData, DataVerifyData, DraftEvent, TrafficReadyData, FixLine, FlowPath, Grade, PlanStepData, ReportData, Target } from './events'
+import type { AnalysisFindingData, BuildErrorCode, BuildFixData, DataProgressData, DataVerifyData, DraftEvent, TrafficReadyData, FixLine, FlowPath, Grade, PlanStepData, ReportData, SandboxChecks, SandboxDoneData, SandboxEnvData, SandboxFailureClass, SandboxStep, SandboxTestsData, Target } from './events'
+import type { SandboxScenario } from '../demoConfig'
 
 /** events.ts의 pathOf와 같다(이 모듈은 런타임 import가 없어야 Node가 그대로 읽는다). */
 const pathOf = (target: Target): FlowPath => (target === 'onprem' ? 'onprem' : 'gcp')
@@ -21,6 +22,8 @@ export type ScriptContext = {
   retried?: boolean
   /** 데모(?digest=mismatch): 검증한 이미지 Digest가 빌드한 것과 다르다. */
   digestMismatch?: boolean
+  /** 데모(?sandbox=…): 샌드박스 루프 결과 */
+  sandbox?: SandboxScenario
 }
 
 // ---- 이미지 Digest(데모 값) ----
@@ -64,8 +67,6 @@ function analysisTimeline(): TimedDraft[] {
 
 // ---- 샌드박스 검증(build) ----
 
-const CHECK_IDS = ['build', 'health', 'db', 'render', 'secret', 'scope']
-
 type FixId = 'db' | 'host' | 'port' | 'probe'
 // AI가 고치는 항목. 수정은 검증 항목 하나에 여러 개 붙을 수 있다(예: 상태 확인에서 서너 건).
 const FIX_POOL: Array<{ id: FixId; check: string; lines: FixLine[] }> = [
@@ -79,46 +80,85 @@ const FIX_GAP_MS = 1400 // 수정 하나를 고치는 데 걸리는 시간
 
 const MAX_ATTEMPTS = 3
 
-/** ?review=1 데모: 빌드가 3번 실패하고 사람 검토를 기다린다. */
+// 샌드박스 루프(AV-011~016): 빌드는 샌드박스 밖에서 먼저 → 임시 Namespace → 시도마다 렌더 → 적용 → 준비 검사 → 테스트 → 판정.
+// 실패하면 원인을 나눈다: SPEC(매핑) 재렌더 · CODE/BUILD 수정·재빌드 · INFRA 같은 입력으로 재시도(횟수 제외) · RENDER 중단·보고.
+// 통과하면 그 Digest가 고정되고, 성공·실패와 관계없이 정리(Namespace 삭제)한다.
+const SANDBOX_STEPS: SandboxStep[] = ['render', 'apply', 'ready', 'test', 'judge']
+const STEP_MS = 620
+const SANDBOX_TESTS: SandboxTestsData = { total: 24, catalog: 12, original: 8, generated: 4, read_only: 17 }
+const PASS_CHECKS: SandboxChecks = { required_passed: 24, required_total: 24, unsupported_calls: 0, calls_in_mapping: 9, calls_total: 9, blocked_egress: 0 }
+const SANDBOX_ENV: SandboxEnvData = { namespace: 'sbx-run-7f2c', expires_minutes: 120, egress_allowed: 3 }
+// 코드 수정 시나리오에서 첫 빌드(수정 전) 이미지
+const FIRST_DIGEST = 'sha256:4b1e07c9a2d3f5e6b7c8d9e0f1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4'
+
+type RunPlan = { attempt: number; fail?: { cls: SandboxFailureClass; at: SandboxStep; checks: SandboxChecks; reasons: string[] } }
+
+function sandboxPlans(scenario: SandboxScenario): RunPlan[] {
+  const failTests = (cls: SandboxFailureClass, reasons: string[]): RunPlan['fail'] => ({ cls, at: 'judge', reasons, checks: { ...PASS_CHECKS, required_passed: 21, calls_in_mapping: 8 } })
+  switch (scenario) {
+    case 'pass': return [{ attempt: 1 }]
+    case 'spec': return [{ attempt: 1, fail: failTests('SPEC', ['required test failed: db.read_write', 'call outside mapping: postgres:5432']) }, { attempt: 2 }]
+    case 'code': return [{ attempt: 1, fail: failTests('CODE', ['required test failed: files.upload']) }, { attempt: 2 }]
+    case 'infra': return [{ attempt: 1, fail: { cls: 'INFRA', at: 'apply', reasons: ['registry pull timeout'], checks: { ...PASS_CHECKS, required_passed: 0 } } }, { attempt: 1 }]
+    case 'render': return [{ attempt: 1, fail: { cls: 'RENDER', at: 'render', reasons: ['render output does not match requirements: service.ports'], checks: { ...PASS_CHECKS, required_passed: 0 } } }]
+  }
+}
+
+function buildTimeline(aiFixes: number, retried = false, scenario: SandboxScenario = 'spec'): TimedDraft[] {
+  const plans = sandboxPlans(scenario)
+  const fixing = plans.some(plan => plan.fail && (plan.fail.cls === 'SPEC' || plan.fail.cls === 'CODE'))
+  const fixes: BuildFixData[] = fixing ? FIX_POOL.slice(0, aiFixes).map(fix => ({ id: fix.id, check: fix.check, lines: fix.lines, why: '', evidence: '' })) : []
+  const items: TimedDraft[] = fixes.map(data => ({ after: 0, event: { type: 'build.fix', phase: 'build', status: 'running', data } }))
+  const build = (after: number, attempt: number, digest: string, reused: boolean) => items.push({ after, event: { type: 'build.result', phase: 'build', status: 'running', data: { attempt, max_attempts: MAX_ATTEMPTS, status: 'SUCCEEDED', digest, image_uri: 'registry.example.com/demo/app@' + digest, reused, error_code: null } } })
+  // 이미지 빌드(샌드박스 밖) → 임시 Namespace 준비 → 테스트 묶음 고정(Tester)
+  build(0, 1, scenario === 'code' ? FIRST_DIGEST : DEMO_DIGEST, retried)
+  items.push({ after: 200, event: { type: 'sandbox.env', phase: 'build', status: 'running', data: SANDBOX_ENV } })
+  items.push({ after: 450, event: { type: 'sandbox.tests', phase: 'build', status: 'running', data: SANDBOX_TESTS } })
+  let at = 800
+  let finalStatus: SandboxDoneData['status'] = 'PASSED'
+  plans.forEach((plan, index) => {
+    const run = index + 1
+    for (const step of SANDBOX_STEPS) {
+      items.push({ after: at, event: { type: 'sandbox.step', phase: 'build', status: 'running', data: { run, attempt: plan.attempt, step, state: 'running' } } })
+      at += STEP_MS
+      // 테스트 실패는 Activity 실패가 아니라 판정 결과다: 테스트 단계는 끝나고 판정에서 실패한다.
+      const failed = plan.fail?.at === step
+      items.push({ after: at, event: { type: 'sandbox.step', phase: 'build', status: 'running', data: { run, attempt: plan.attempt, step, state: failed ? 'failed' : 'done' } } })
+      if (failed) break
+    }
+    const fixIds = plan.fail && (plan.fail.cls === 'SPEC' || plan.fail.cls === 'CODE') ? fixes.map(fix => fix.id) : []
+    items.push({ after: at + 150, event: { type: 'sandbox.attempt', phase: 'build', status: 'running', data: {
+      run, attempt: plan.attempt, max_attempts: MAX_ATTEMPTS,
+      verdict: { passed: !plan.fail, reasons: plan.fail?.reasons ?? [] },
+      failure_class: plan.fail?.cls ?? null, checks: plan.fail?.checks ?? PASS_CHECKS, fix_ids: fixIds,
+    } } })
+    at += 500
+    if (!plan.fail) return
+    if (plan.fail.cls === 'RENDER') { finalStatus = 'STOPPED_RENDER'; return }
+    // Fixer가 하나씩 고친다(SPEC은 재렌더, CODE는 수정 뒤 재빌드). INFRA는 고치지 않고 같은 입력으로 다시 돈다.
+    at += fixIds.length * FIX_GAP_MS
+    if (plan.fail.cls === 'CODE') { build(at, 2, DEMO_DIGEST, false); at += 700 }
+    if (plan.fail.cls === 'INFRA') at += 600
+  })
+  // 정리는 검증 결과와 따로 보고한다: 먼저 정리 중(PENDING), 곧 정리 완료(CLEANED).
+  const digest = finalStatus === 'PASSED' ? DEMO_DIGEST : null
+  items.push({ after: at, event: { type: 'sandbox.done', phase: 'build', status: 'running', data: { status: finalStatus, cleanup_status: 'PENDING', digest } } })
+  items.push({ after: at + 900, event: { type: 'sandbox.done', phase: 'build', status: finalStatus === 'PASSED' ? 'done' : 'failed', data: { status: finalStatus, cleanup_status: 'CLEANED', digest } } })
+  return items
+}
+
+/** ?review=1 데모: 이미지 빌드가 3번 실패(BUILD)하고 사람 검토를 기다린다. 샌드박스에는 들어가지 못한다. */
 function reviewTimeline(): TimedDraft[] {
   const errors: BuildErrorCode[] = ['DOCKERFILE_MISSING', 'BUILD_FAILED', 'BUILD_FAILED']
   const items: TimedDraft[] = []
+  const none: SandboxChecks = { ...PASS_CHECKS, required_passed: 0, calls_in_mapping: 0 }
   errors.forEach((error, index) => {
     const attempt = index + 1
     const at = 600 + index * 2200
     items.push({ after: at, event: { type: 'build.result', phase: 'build', status: 'running', data: { attempt, max_attempts: MAX_ATTEMPTS, status: 'FAILED', digest: null, image_uri: null, reused: false, error_code: error } } })
-    items.push({ after: at + 400, event: { type: 'build.check', phase: 'build', status: 'running', data: { id: 'build', state: 'failed', attempt } } })
+    items.push({ after: at + 400, event: { type: 'sandbox.attempt', phase: 'build', status: 'running', data: { run: attempt, attempt, max_attempts: MAX_ATTEMPTS, verdict: { passed: false, reasons: ['image build failed: ' + error] }, failure_class: 'BUILD', checks: none, fix_ids: [] } } })
   })
   items.push({ after: 600 + errors.length * 2200, event: { type: 'build.review', phase: 'build', status: 'waiting', data: { reason: 'max_attempts', attempts: MAX_ATTEMPTS } } })
-  return items
-}
-
-function buildTimeline(aiFixes: number, retried = false): TimedDraft[] {
-  const fixes: BuildFixData[] = FIX_POOL.slice(0, aiFixes).map(fix => ({ id: fix.id, check: fix.check, lines: fix.lines, why: '', evidence: '' }))
-  // 수정 목록은 단계 시작에 한꺼번에 알려 준다(검증 항목 카드의 개수 표시와 변경 내용 칩이 처음부터 같은 목록을 본다).
-  const items: TimedDraft[] = fixes.map(data => ({ after: 0, event: { type: 'build.fix', phase: 'build', status: 'running', data } }))
-  // 이미지 빌드 결과: 검증 항목(테스트)을 돌리기 전에 첫 시도가 성공한 상태로 시작한다. 사람 검토 뒤 재시도면 이전 빌드를 재사용한다.
-  items.push({ after: 0, event: { type: 'build.result', phase: 'build', status: 'running', data: { attempt: 1, max_attempts: MAX_ATTEMPTS, status: 'SUCCEEDED', digest: DEMO_DIGEST, image_uri: DEMO_IMAGE_URI, reused: retried, error_code: null } } })
-  const check = (after: number, id: string, state: 'running' | 'failed' | 'fixing' | 'recheck' | 'done', fixed?: number) => {
-    items.push({ after, event: { type: 'build.check', phase: 'build', status: state === 'done' ? 'done' : 'running', data: fixed === undefined ? { id, state, attempt: 1 } : { id, state, fixed, attempt: 1 } } })
-  }
-  // 검증 항목은 차례로 돌고, 수정이 붙은 항목은 "실패 → 수정(여러 개면 하나씩) → 재검증 → 통과"를 거친다.
-  let at = 500
-  for (const id of CHECK_IDS) {
-    const count = fixes.filter(fix => fix.check === id).length
-    check(at, id, 'running')
-    if (count > 0) {
-      check(at + 900, id, 'failed')
-      for (let index = 0; index < count; index++) check(at + 1600 + index * FIX_GAP_MS, id, 'fixing', index)
-      const recheckAt = at + 1600 + count * FIX_GAP_MS + 200
-      check(recheckAt, id, 'recheck', count)
-      check(recheckAt + 1000, id, 'done', count)
-      at = recheckAt + 1400
-    } else {
-      check(at + 900, id, 'done')
-      at += 1400
-    }
-  }
   return items
 }
 
@@ -300,7 +340,7 @@ export type ScriptedPhase = 'analysis' | 'build' | 'planning' | 'provisioning' |
 export function timelineFor(phase: ScriptedPhase, context: ScriptContext): TimedDraft[] {
   switch (phase) {
     case 'analysis': return analysisTimeline()
-    case 'build': return context.review ? reviewTimeline() : buildTimeline(context.aiFixes, context.retried)
+    case 'build': return context.review ? reviewTimeline() : buildTimeline(context.aiFixes, context.retried, context.sandbox)
     case 'planning': return planTimeline(context.target, context.revision ?? 1, !!context.digestMismatch)
     case 'provisioning': return provisionTimeline(context.target)
     case 'verification': return cutoverTimeline()

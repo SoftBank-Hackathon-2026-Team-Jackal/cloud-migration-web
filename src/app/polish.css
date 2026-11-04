@@ -158,3 +158,75 @@
   .analysis-stage .analysis-cluster.is-compact .analysis-result-content strong{margin:0}
   .analysis-stage .analysis-cluster.is-compact .analysis-result-content p{margin:0}
 }
+
+/* ── 샌드박스: 시도 트랙 + 격리실 + 판정판 (백엔드 AV-011~019 루프를 그대로 보여 줌) ───────── */
+.sbx-tracks{display:flex;flex-direction:column;gap:10px;min-height:0;overflow-y:auto;scrollbar-width:none}
+.sbx-track{padding:13px 16px 14px;border:1px solid #e4e4e4;border-radius:16px;background:rgba(255,255,255,.62);animation:sbx-in .6s var(--ease-out) both}
+.sbx-track.is-current{border-color:#111;background:#fff;box-shadow:0 10px 30px rgba(0,0,0,.06)}
+.sbx-track.is-failed{background:rgba(255,255,255,.4)}
+.sbx-track header{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.sbx-track header strong{font-size:15px;font-weight:650;letter-spacing:-.02em}
+.sbx-track header small{color:var(--text-muted);font-size:12px;font-weight:500}
+.sbx-status{padding:3px 10px;border:1px solid #d6d6d6;border-radius:999px;color:#555;font-size:11px;font-weight:600;white-space:nowrap}
+.sbx-track.is-passed .sbx-status{border-color:#111;background:#111;color:#fff}
+.sbx-track.is-failed .sbx-status{border-color:#e3b9b4;color:#b42318}
+.sbx-lane{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));margin:14px 0 2px;padding:0;list-style:none}
+.sbx-lane li{position:relative;display:flex;flex-direction:column;align-items:center;gap:7px}
+.sbx-lane li::after{content:"";position:absolute;top:6px;left:calc(50% + 9px);right:calc(-50% + 9px);height:1px;background:#d4d4d4}
+.sbx-lane li:last-child::after{display:none}
+.sbx-lane li.is-done::after{background:#111}
+.sbx-lane li span{width:13px;height:13px;border:1.5px solid #c4c4c4;border-radius:50%;background:#fff;transition:background .3s,border-color .3s}
+.sbx-lane li em{color:var(--text-muted);font-size:11px;font-style:normal;white-space:nowrap}
+.sbx-lane li.is-done span{border-color:#111;background:#111}
+.sbx-lane li.is-done em,.sbx-lane li.is-running em{color:#222}
+.sbx-lane li.is-running span{border-color:#111;animation:sbx-pulse 1.1s ease-in-out infinite}
+.sbx-lane li.is-failed span{border-color:#b42318;background:#fff;box-shadow:inset 0 0 0 3px #fff,inset 0 0 0 7px #b42318}
+.sbx-lane li.is-failed em{color:#b42318}
+.sbx-next{margin:12px 0 0;color:#444;font-size:12px;line-height:1.5}
+.sbx-next code{display:block;margin-top:3px;color:var(--text-muted);font:11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace}
+.sbx-fix{margin-top:10px;padding:8px 11px;border-left:2px solid #111;background:#f3f3f3;animation:sbx-in .5s var(--ease-out) both}
+.sbx-fix small{color:#555;font-size:11px;font-weight:600}
+.sbx-fix pre{margin:4px 0 0;font:500 11.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap}
+.sbx-fix pre span{display:block}
+.sbx-tests{margin-top:2px}
+.sbx-tests b{color:#333;font-weight:600}
+.sbx-side{display:flex;flex-direction:column;gap:14px;min-height:0;overflow-y:auto;scrollbar-width:none}
+.sbx-chamber{margin:0}
+.sbx-chamber figcaption{color:var(--text-muted);font-size:11px;font-variant-numeric:tabular-nums}
+.sbx-chamber figcaption b{color:#333;font-weight:600}
+.sbx-chamber svg{display:block;width:100%;max-height:230px;margin-top:6px}
+.sbx-src{fill:none;stroke:#bdbdbd;stroke-width:1;stroke-dasharray:3 3}
+.sbx-wall{fill:rgba(255,255,255,.7);stroke:#111;stroke-width:1.2;stroke-dasharray:6 4}
+.sbx-pod{fill:#cfcfcf;transition:fill .6s ease}
+.sbx-chamber.is-applied .sbx-pod{fill:#111}
+.sbx-db{fill:#fff;stroke:#111;stroke-width:1.2}
+.sbx-gate{fill:#fafafa;stroke:#bdbdbd}
+.sbx-gate.is-warn{stroke:#b42318}
+.sbx-link{stroke:#999;stroke-width:1}
+.sbx-flow{stroke:#9a9a9a;stroke-width:1.2;stroke-dasharray:3 5}
+.sbx-chamber.is-applied .sbx-flow{animation:sbx-flow 1.2s linear infinite}
+.sbx-t{fill:#222;font:600 11px var(--font-sans)}
+.sbx-t.is-inv,.sbx-ts.is-inv{fill:#fff}
+.sbx-ts{fill:var(--text-muted);font:500 10px var(--font-sans)}
+.sbx-room{transition:opacity 1.1s var(--ease-out),filter 1.1s var(--ease-out)}
+.sbx-chamber.is-cleaned .sbx-room{opacity:.16;filter:blur(1.5px)}
+.sbx-cleaned{fill:#111;font:650 15px var(--font-sans);animation:sbx-in .8s var(--ease-out) both}
+.sbx-verdict dl{margin:6px 0 0}
+.sbx-verdict dl div{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-top:1px solid #e7e7e7;font-size:12.5px}
+.sbx-verdict dt{color:#444}
+.sbx-verdict dd{margin:0;font-weight:650;font-variant-numeric:tabular-nums}
+.sbx-verdict .is-ok dd::after{content:" ✓";color:#111}
+.sbx-verdict .is-bad dd{color:#b42318}
+.sbx-verdict .flow-panel-head small{color:var(--text-muted);font-size:11px}
+.sbx-tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.sbx-tile{display:flex;flex-direction:column;gap:3px;padding:10px 12px;border-radius:12px;background:#f0f0f0;transition:background .5s var(--ease-out),color .5s}
+.sbx-tile small{color:var(--text-muted);font-size:11px}
+.sbx-tile b{font:650 13px ui-monospace,SFMono-Regular,Menlo,monospace}
+.sbx-tile.is-locked{background:#111;color:#fff;animation:sbx-lock .7s var(--ease-out) both}
+.sbx-tile.is-locked small{color:#cfcfcf}
+.sbx-lock{width:10px;height:11px;margin-right:4px;vertical-align:-1px;fill:none;stroke:currentColor;stroke-width:1.4}
+.sbx-side details summary{cursor:pointer;color:#444;font-size:12px;font-weight:600}
+@keyframes sbx-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes sbx-pulse{50%{box-shadow:0 0 0 5px rgba(17,17,17,.1)}}
+@keyframes sbx-flow{to{stroke-dashoffset:-16}}
+@keyframes sbx-lock{0%{transform:scale(.96)}60%{transform:scale(1.03)}100%{transform:scale(1)}}

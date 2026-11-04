@@ -6,6 +6,7 @@ import type {
   AnalysisFindingData, ApprovalRequiredData, DataVerifyData, HandoverData, TrafficReadyData, BackendPhase, BuildCheckData, BuildFixData, BuildResultData, BuildReviewData, PlanReadyData, ProvisionCheckData, CutoverResultData,
   DataProgressData, ErrorData, MigrationEvent, MigrationStatus, PlanStepData, ProvisionResourceData,
   ReportData, TrafficNote, TrafficSnapshotData,
+  SandboxAttemptData, SandboxDoneData, SandboxEnvData, SandboxStep, SandboxStepData, SandboxTestsData,
 } from './events'
 
 export const LAG_HISTORY_POINTS = 48
@@ -23,6 +24,8 @@ export type MigrationState = {
   analysis: { findings: AnalysisFindingData[]; done: boolean }
   /** attempt: 지금 몇 번째 시도인지(build.check·build.result에서). review: 사람 검토 대기 */
   build: { checks: Record<string, BuildCheckData>; lastCheck: BuildCheckData | null; fixes: BuildFixData[]; attempt: number | null; result: BuildResultData | null; review: BuildReviewData | null }
+  /** 샌드박스 검증 루프: steps[트랙 순번][단계], attempts는 판정이 끝난 트랙들 */
+  sandbox: { env: SandboxEnvData | null; steps: Record<number, Partial<Record<SandboxStep, SandboxStepData['state']>>>; tests: SandboxTestsData | null; attempts: SandboxAttemptData[]; done: SandboxDoneData | null }
   plan: { steps: PlanStepData[]; ready: boolean; meta: PlanReadyData | null }
   approval: { required: boolean; excluded: string[]; rollbackPolicy: string; cutoverRequired: boolean }
   provision: { resources: ProvisionResourceData[]; checks: ProvisionCheckData[] }
@@ -41,6 +44,7 @@ export const initialState: MigrationState = {
   lastSeq: 0,
   analysis: { findings: [], done: false },
   build: { checks: {}, lastCheck: null, fixes: [], attempt: null, result: null, review: null },
+  sandbox: { env: null, steps: {}, tests: null, attempts: [], done: null },
   plan: { steps: [], ready: false, meta: null },
   approval: { required: false, excluded: [], rollbackPolicy: '', cutoverRequired: false },
   provision: { resources: [], checks: [] },
@@ -109,6 +113,18 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
       return { ...next, build: { ...next.build, result: event.data, attempt: event.data.attempt, review: null } }
     case 'build.review':
       return { ...next, status: 'waiting', build: { ...next.build, review: event.data } }
+    case 'sandbox.env':
+      return { ...next, sandbox: { ...next.sandbox, env: event.data } }
+    case 'sandbox.step': {
+      const { run, attempt, step, state } = event.data
+      return { ...next, build: { ...next.build, attempt }, sandbox: { ...next.sandbox, steps: { ...next.sandbox.steps, [run]: { ...next.sandbox.steps[run], [step]: state } } } }
+    }
+    case 'sandbox.tests':
+      return { ...next, sandbox: { ...next.sandbox, tests: event.data } }
+    case 'sandbox.attempt':
+      return { ...next, build: { ...next.build, attempt: event.data.attempt }, sandbox: { ...next.sandbox, attempts: [...next.sandbox.attempts.filter(item => item.run !== event.data.run), event.data].sort((a, b) => a.run - b.run) } }
+    case 'sandbox.done':
+      return { ...next, sandbox: { ...next.sandbox, done: event.data } }
     case 'build.fix':
       return { ...next, build: { ...next.build, fixes: upsert(next.build.fixes, event.data) } }
     case 'plan.step':
@@ -176,7 +192,7 @@ function clearPhase(state: MigrationState, phase: BackendPhase): MigrationState 
   const base = { ...state, failures }
   switch (phase) {
     case 'analysis': return { ...base, analysis: initialState.analysis }
-    case 'build': return { ...base, build: initialState.build }
+    case 'build': return { ...base, build: initialState.build, sandbox: initialState.sandbox }
     case 'planning': return { ...base, plan: initialState.plan }
     case 'awaiting_approval': return { ...base, approval: initialState.approval }
     case 'provisioning': return { ...base, provision: initialState.provision }

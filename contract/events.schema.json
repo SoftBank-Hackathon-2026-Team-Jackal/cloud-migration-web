@@ -63,6 +63,21 @@
     },
     {
       "$ref": "#/$defs/event:snapshot"
+    },
+    {
+      "$ref": "#/$defs/event:sandbox.env"
+    },
+    {
+      "$ref": "#/$defs/event:sandbox.step"
+    },
+    {
+      "$ref": "#/$defs/event:sandbox.tests"
+    },
+    {
+      "$ref": "#/$defs/event:sandbox.attempt"
+    },
+    {
+      "$ref": "#/$defs/event:sandbox.done"
     }
   ],
   "$defs": {
@@ -1261,6 +1276,21 @@
         },
         {
           "$ref": "#/$defs/event:error"
+        },
+        {
+          "$ref": "#/$defs/event:sandbox.env"
+        },
+        {
+          "$ref": "#/$defs/event:sandbox.step"
+        },
+        {
+          "$ref": "#/$defs/event:sandbox.tests"
+        },
+        {
+          "$ref": "#/$defs/event:sandbox.attempt"
+        },
+        {
+          "$ref": "#/$defs/event:sandbox.done"
         }
       ]
     },
@@ -1683,6 +1713,434 @@
         },
         "data": {
           "$ref": "#/$defs/data:cutover.handover"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "phase",
+        "type",
+        "status",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "data:sandbox.env": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expires_minutes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "egress_allowed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "namespace",
+        "expires_minutes",
+        "egress_allowed"
+      ],
+      "additionalProperties": false
+    },
+    "event:sandbox.env": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "type": {
+          "const": "sandbox.env"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/data:sandbox.env"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "phase",
+        "type",
+        "status",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "data:sandbox.step": {
+      "type": "object",
+      "properties": {
+        "run": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 6
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "step": {
+          "enum": [
+            "render",
+            "apply",
+            "ready",
+            "test",
+            "judge"
+          ]
+        },
+        "state": {
+          "enum": [
+            "running",
+            "done",
+            "failed"
+          ]
+        }
+      },
+      "required": [
+        "run",
+        "attempt",
+        "step",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "event:sandbox.step": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "type": {
+          "const": "sandbox.step"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/data:sandbox.step"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "phase",
+        "type",
+        "status",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "data:sandbox.tests": {
+      "type": "object",
+      "properties": {
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "catalog": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "original": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "generated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "read_only": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "total",
+        "catalog",
+        "original",
+        "generated",
+        "read_only"
+      ],
+      "additionalProperties": false
+    },
+    "event:sandbox.tests": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "type": {
+          "const": "sandbox.tests"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/data:sandbox.tests"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "phase",
+        "type",
+        "status",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "data:sandbox.attempt": {
+      "type": "object",
+      "properties": {
+        "run": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 6
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "verdict": {
+          "type": "object",
+          "properties": {
+            "passed": {
+              "type": "boolean"
+            },
+            "reasons": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "passed",
+            "reasons"
+          ],
+          "additionalProperties": false
+        },
+        "failure_class": {
+          "enum": [
+            "SPEC",
+            "CODE",
+            "BUILD",
+            "RENDER",
+            "INFRA",
+            null
+          ]
+        },
+        "checks": {
+          "type": "object",
+          "properties": {
+            "required_passed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "required_total": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "unsupported_calls": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "calls_in_mapping": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "calls_total": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "blocked_egress": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "required_passed",
+            "required_total",
+            "unsupported_calls",
+            "calls_in_mapping",
+            "calls_total",
+            "blocked_egress"
+          ],
+          "additionalProperties": false
+        },
+        "fix_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "run",
+        "attempt",
+        "max_attempts",
+        "verdict",
+        "failure_class",
+        "checks",
+        "fix_ids"
+      ],
+      "additionalProperties": false
+    },
+    "event:sandbox.attempt": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "type": {
+          "const": "sandbox.attempt"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/data:sandbox.attempt"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "phase",
+        "type",
+        "status",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "data:sandbox.done": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "PASSED",
+            "FAILED",
+            "NEEDS_REVIEW",
+            "STOPPED_RENDER"
+          ]
+        },
+        "cleanup_status": {
+          "enum": [
+            "CLEANED",
+            "FAILED",
+            "PENDING"
+          ]
+        },
+        "digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "cleanup_status",
+        "digest"
+      ],
+      "additionalProperties": false
+    },
+    "event:sandbox.done": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "type": {
+          "const": "sandbox.done"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/data:sandbox.done"
         }
       },
       "required": [

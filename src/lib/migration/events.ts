@@ -60,6 +60,38 @@ export type BuildResultData = {
 }
 /** 샌드박스 루프가 최대 시도를 넘어 사람 검토를 기다린다(status: waiting). */
 export type BuildReviewData = { reason: 'max_attempts'; attempts: number }
+
+/*
+ * 샌드박스 검증 루프 [가정: SSE 이벤트 이름·필드는 백엔드와 미정].
+ * 모양은 백엔드 계약을 따른다: cmp_contracts.verification(SandboxAttempt · SandboxVerification · BuildAttempt),
+ * 흐름은 specs/analysis-verification AV-011~019 (렌더 → 적용 → 준비 검사 → 테스트 → 판정, 실패 분류·수정 루프, 정리).
+ */
+export type SandboxStep = 'render' | 'apply' | 'ready' | 'test' | 'judge'
+export type SandboxFailureClass = 'SPEC' | 'CODE' | 'BUILD' | 'RENDER' | 'INFRA'
+/** 실행마다 하나 띄우는 임시 Namespace. 원본은 읽기만 한다. */
+export type SandboxEnvData = { namespace: string; expires_minutes: number; egress_allowed: number }
+/** run: 화면의 트랙 순번(프론트 [가정]). 환경(INFRA) 재시도는 시도 횟수(attempt)를 늘리지 않으므로 같은 attempt의 run이 둘일 수 있다. */
+export type SandboxStepData = { run: number; attempt: number; step: SandboxStep; state: 'running' | 'done' | 'failed' }
+/** 테스트 묶음(출처별 개수, 읽기 전용 개수). 시도마다 같은 묶음을 고정해 쓴다. */
+export type SandboxTestsData = { total: number; catalog: number; original: number; generated: number; read_only: number }
+/** 판정 조건(AV-014): 필수 테스트 통과 · 지원하지 않는 호출 없음 · 실제 호출 ⊆ 매핑 · 차단된 출구 시도 0 */
+export type SandboxChecks = { required_passed: number; required_total: number; unsupported_calls: number; calls_in_mapping: number; calls_total: number; blocked_egress: number }
+/** SandboxAttempt: 시도 하나의 판정. fix_ids는 이 실패를 고친 build.fix id(없으면 빈 배열). */
+export type SandboxAttemptData = {
+  run: number
+  attempt: number
+  max_attempts: number
+  verdict: { passed: boolean; reasons: string[] }
+  failure_class: SandboxFailureClass | null
+  checks: SandboxChecks
+  fix_ids: string[]
+}
+/** SandboxVerification의 최종 상태와 정리 상태(검증 상태와 따로 보고한다). digest는 통과 시 고정된 이미지. */
+export type SandboxDoneData = {
+  status: 'PASSED' | 'FAILED' | 'NEEDS_REVIEW' | 'STOPPED_RENDER'
+  cleanup_status: 'CLEANED' | 'FAILED' | 'PENDING'
+  digest: string | null
+}
 export type FixLine = { kind: 'del' | 'add'; text: string }
 export type BuildFixData = { id: string; check: string; lines: FixLine[]; why: string; evidence: string }
 
@@ -171,6 +203,11 @@ export type MigrationEvent =
   | Base<'plan.step', PlanStepData>
   | Base<'build.result', BuildResultData>
   | Base<'build.review', BuildReviewData>
+  | Base<'sandbox.env', SandboxEnvData>
+  | Base<'sandbox.step', SandboxStepData>
+  | Base<'sandbox.tests', SandboxTestsData>
+  | Base<'sandbox.attempt', SandboxAttemptData>
+  | Base<'sandbox.done', SandboxDoneData>
   | Base<'plan.ready', PlanReadyData>
   | Base<'approval.required', ApprovalRequiredData>
   | Base<'provision.resource', ProvisionResourceData>
