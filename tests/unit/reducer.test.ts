@@ -223,3 +223,23 @@ test('단계 초기화는 새 필드(시도·검토·검사)도 비운다', () =
   assert.equal(state.build.result, null)
   assert.equal(state.provision.checks.length, 0)
 })
+
+test('정합성 확인·전환 조건 확인·운영권 인계는 이름별 최신 상태를 가지고 단계 초기화로 비워진다', () => {
+  seq = 0
+  let state = run(initialState,
+    ev({ type: 'data.verify', phase: 'data_copy', status: 'running', data: { name: 'rows', state: 'running' } }),
+    ev({ type: 'data.verify', phase: 'data_copy', status: 'running', data: { name: 'rows', state: 'done', source: 10, target: 10 } }),
+    ev({ type: 'data.verify', phase: 'data_copy', status: 'done', data: { name: 'checksum', state: 'done' } }),
+    ev({ type: 'traffic.ready', phase: 'traffic', status: 'running', data: { state: 'running', lag_ms: 38, longest_tx_ms: 420, commits_per_sec: 118 } }),
+    ev({ type: 'traffic.ready', phase: 'traffic', status: 'running', data: { state: 'done', lag_ms: 12, longest_tx_ms: 85, commits_per_sec: 118 } }),
+    ev({ type: 'cutover.handover', phase: 'verification', status: 'running', data: { item: 'dns', state: 'running' } }),
+    ev({ type: 'cutover.handover', phase: 'verification', status: 'done', data: { item: 'dns', state: 'done' } }))
+  assert.equal(state.data.verify.length, 2)
+  assert.equal(state.data.verify.find(item => item.name === 'rows')?.state, 'done')
+  assert.equal(state.traffic.ready?.state, 'done')
+  assert.deepEqual(state.cutover.handover, [{ item: 'dns', state: 'done' }])
+  state = ['data_copy', 'traffic', 'verification'].reduce((current, phase) => reducer(current, { type: 'resetPhase', phase: phase as 'data_copy' | 'traffic' | 'verification' }), state)
+  assert.equal(state.data.verify.length, 0)
+  assert.equal(state.traffic.ready, null)
+  assert.equal(state.cutover.handover.length, 0)
+})

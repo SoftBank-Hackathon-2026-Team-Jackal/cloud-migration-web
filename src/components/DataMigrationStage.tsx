@@ -2,6 +2,7 @@
 
 import StageShell from './StageShell'
 import ReplicationDiagram from './ReplicationDiagram'
+import ProposalTag from './ProposalTag'
 import { useI18n, type MsgKey } from '../lib/i18n'
 import type { Target } from '../lib/stages'
 import type { DataStep } from '../lib/migration/events'
@@ -26,7 +27,7 @@ function DataBody({ ready, target, onNext }: { ready: boolean; target: Target; o
   const { t, lang } = useI18n()
   const locale = lang === 'ko' ? 'ko-KR' : lang === 'ja' ? 'ja-JP' : 'en-US'
   // 복제 진행 값은 data.progress 이벤트로 받는다(시작 전에는 연결 단계의 0 값).
-  const { state } = useMigration()
+  const { state, mode } = useMigration()
   useStageFeed('data_copy', ready, target)
   const progress = state.data.current
   const history = state.data.lagHistory
@@ -59,6 +60,21 @@ function DataBody({ ready, target, onNext }: { ready: boolean; target: Target; o
           <small>{state === 'done' ? t('data.state.done') : state === 'running' ? t('data.state.running') : t('data.state.wait')}</small>
         </article>
       })}
+      {(mode === 'mock' || state.data.verify.length > 0) && (() => {
+        // 데이터 정합성 확인: 복제가 준비된 뒤 행 수 → 체크섬 순서 (data.verify 이벤트, 프론트 [가정])
+        const rowsCheck = state.data.verify.find(item => item.name === 'rows')
+        const sumCheck = state.data.verify.find(item => item.name === 'checksum')
+        const verifyState = sumCheck?.state === 'done' ? 'done' : rowsCheck ? 'running' : ''
+        const detail = !rowsCheck ? t('data.verify.wait') : [
+          rowsCheck.state === 'done' ? t('data.verify.rowsDone', { n: (rowsCheck.target ?? totalRows).toLocaleString(locale) }) : t('data.verify.rowsRun'),
+          sumCheck ? (sumCheck.state === 'done' ? t('data.verify.sumDone') : t('data.verify.sumRun')) : t('data.verify.sumWait'),
+        ].join(' · ')
+        return <article className={'flow-check' + (verifyState ? ' is-' + verifyState : '')}>
+          <span className="flow-check-mark" aria-hidden="true">{verifyState === 'done' ? '✓' : verifyState === 'running' ? '' : '05'}</span>
+          <div><strong>{t('data.verify.title')} <ProposalTag /></strong><p>{detail}</p></div>
+          <small>{verifyState === 'done' ? t('data.state.done') : verifyState === 'running' ? t('data.state.running') : t('data.state.wait')}</small>
+        </article>
+      })()}
       <p className="flow-note">{t('data.note')}</p>
     </section>
 

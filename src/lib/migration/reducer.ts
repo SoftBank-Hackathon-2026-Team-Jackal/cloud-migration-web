@@ -3,7 +3,7 @@
  * 같은 id의 이벤트는 덮어쓰므로(upsert) 재접속·단계 재전송으로 같은 이벤트가 다시 와도 결과가 같다.
  */
 import type {
-  AnalysisFindingData, ApprovalRequiredData, BackendPhase, BuildCheckData, BuildFixData, BuildResultData, BuildReviewData, PlanReadyData, ProvisionCheckData, CutoverResultData,
+  AnalysisFindingData, ApprovalRequiredData, DataVerifyData, HandoverData, TrafficReadyData, BackendPhase, BuildCheckData, BuildFixData, BuildResultData, BuildReviewData, PlanReadyData, ProvisionCheckData, CutoverResultData,
   DataProgressData, ErrorData, MigrationEvent, MigrationStatus, PlanStepData, ProvisionResourceData,
   ReportData, TrafficNote, TrafficSnapshotData,
 } from './events'
@@ -26,9 +26,9 @@ export type MigrationState = {
   plan: { steps: PlanStepData[]; ready: boolean; meta: PlanReadyData | null }
   approval: { required: boolean; excluded: string[]; rollbackPolicy: string; cutoverRequired: boolean }
   provision: { resources: ProvisionResourceData[]; checks: ProvisionCheckData[] }
-  data: { current: DataProgressData | null; lagHistory: number[] }
-  traffic: { snapshot: TrafficSnapshotData | null; logs: TrafficLogEntry[]; logCounter: number }
-  cutover: { doneSteps: number; verifying: boolean; results: CutoverResultData[] }
+  data: { current: DataProgressData | null; lagHistory: number[]; verify: DataVerifyData[] }
+  traffic: { snapshot: TrafficSnapshotData | null; logs: TrafficLogEntry[]; logCounter: number; ready: TrafficReadyData | null }
+  cutover: { doneSteps: number; verifying: boolean; results: CutoverResultData[]; handover: HandoverData[] }
   report: ReportData | null
   failures: Partial<Record<BackendPhase, Failure>>
   error: ErrorData | null
@@ -44,9 +44,9 @@ export const initialState: MigrationState = {
   plan: { steps: [], ready: false, meta: null },
   approval: { required: false, excluded: [], rollbackPolicy: '', cutoverRequired: false },
   provision: { resources: [], checks: [] },
-  data: { current: null, lagHistory: [] },
-  traffic: { snapshot: null, logs: [], logCounter: 0 },
-  cutover: { doneSteps: 0, verifying: false, results: [] },
+  data: { current: null, lagHistory: [], verify: [] },
+  traffic: { snapshot: null, logs: [], logCounter: 0, ready: null },
+  cutover: { doneSteps: 0, verifying: false, results: [], handover: [] },
   report: null,
   failures: {},
   error: null,
@@ -133,10 +133,18 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
     case 'data.progress': {
       const lag = event.data.lag_ms
       const lagHistory = lag === null ? next.data.lagHistory : [...next.data.lagHistory.slice(-(LAG_HISTORY_POINTS - 1)), lag]
-      return { ...next, data: { current: event.data, lagHistory } }
+      return { ...next, data: { ...next.data, current: event.data, lagHistory } }
     }
+    case 'data.verify': {
+      const verify = next.data.verify.slice()
+      const index = verify.findIndex(item => item.name === event.data.name)
+      if (index < 0) verify.push(event.data); else verify[index] = event.data
+      return { ...next, data: { ...next.data, verify } }
+    }
+    case 'traffic.ready':
+      return { ...next, traffic: { ...next.traffic, ready: event.data } }
     case 'traffic.snapshot':
-      return { ...next, traffic: { snapshot: event.data, ...addTrafficLogs(next, event.data, event.at) } }
+      return { ...next, traffic: { ...next.traffic, snapshot: event.data, ...addTrafficLogs(next, event.data, event.at) } }
     case 'cutover.step': {
       const { n, state: stepState } = event.data
       const doneSteps = stepState === 'running' ? Math.max(next.cutover.doneSteps, n - 1) : Math.max(next.cutover.doneSteps, n)
@@ -146,6 +154,12 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
       const results = upsert(next.cutover.results, event.data)
       // 결과가 3개(실패·지연·유실) 모두 모이면 이전 완료
       return { ...next, cutover: { ...next.cutover, results }, status: results.length >= 3 ? 'done' : next.status }
+    }
+    case 'cutover.handover': {
+      const handover = next.cutover.handover.slice()
+      const index = handover.findIndex(item => item.item === event.data.item)
+      if (index < 0) handover.push(event.data); else handover[index] = event.data
+      return { ...next, cutover: { ...next.cutover, handover } }
     }
     case 'error': {
       const phase = event.data.phase ?? event.phase

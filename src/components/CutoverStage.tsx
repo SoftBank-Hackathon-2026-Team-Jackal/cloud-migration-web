@@ -30,7 +30,7 @@ type BodyProps = { ready: boolean; target: Target; phase: Phase; setPhase: (phas
 
 function CutoverBody({ ready, target, phase, setPhase, onRestart }: BodyProps) {
   const t = useT()
-  const { state, provider } = useMigration()
+  const { state, provider, mode } = useMigration()
   // 두 번째 승인(approveCutover) 뒤에 오는 전환 단계·측정 결과 이벤트를 읽는다.
   useStageFeed('verification', ready, target)
   const targetName = t(('target.' + target) as MsgKey)
@@ -78,6 +78,21 @@ function CutoverBody({ ready, target, phase, setPhase, onRestart }: BodyProps) {
           <small>{state === 'done' ? t('cutover.state.done') : state === 'running' ? t('cutover.state.running') : t('cutover.state.wait')}</small>
         </article>
       })}
+      {(mode === 'mock' || state.cutover.handover.length > 0) && (() => {
+        // 최종 검증 뒤 운영권 인계: DNS 전환 → 원본 대기 → 권한 이전 (cutover.handover 이벤트, 프론트 [가정])
+        const items = state.cutover.handover
+        const finished = items.length === 3 && items.every(item => item.state === 'done')
+        const handoverState = phase !== 'verify' ? '' : finished ? 'done' : items.length > 0 ? 'running' : ''
+        const detail = items.length === 0 ? t('cutover.handover.wait') : (['dns', 'origin', 'access'] as const).map(name => {
+          const item = items.find(entry => entry.item === name)
+          return t(('cutover.handover.' + name) as MsgKey) + (item?.state === 'done' ? ' ✓' : '')
+        }).join(' · ')
+        return <article className={'flow-check' + (handoverState ? ' is-' + handoverState : '')}>
+          <span className="flow-check-mark" aria-hidden="true">{handoverState === 'done' ? '✓' : handoverState === 'running' ? '' : '07'}</span>
+          <div><strong>{t('cutover.handover.title')} <ProposalTag /></strong><p>{detail}</p></div>
+          <small>{handoverState === 'done' ? t('cutover.state.done') : handoverState === 'running' ? t('cutover.state.running') : t('cutover.state.wait')}</small>
+        </article>
+      })()}
     </section>
     <aside className="flow-panel" aria-label={t('cutover.panelAria')}>
       <CutoverDiagram steps={phase === 'verify' ? 6 : doneSteps} />

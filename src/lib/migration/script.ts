@@ -4,7 +4,7 @@
  * 대본의 시각(after)은 "그 단계 화면이 준비된 순간"부터 센 ms이다.
  * Node가 그대로 읽으므로 런타임 import가 없고, 타입 문법만 쓴다(enum·네임스페이스 금지).
  */
-import type { AnalysisFindingData, BuildErrorCode, BuildFixData, DataProgressData, DraftEvent, FixLine, FlowPath, Grade, PlanStepData, ReportData, Target } from './events'
+import type { AnalysisFindingData, BuildErrorCode, BuildFixData, DataProgressData, DataVerifyData, DraftEvent, TrafficReadyData, FixLine, FlowPath, Grade, PlanStepData, ReportData, Target } from './events'
 
 /** events.ts의 pathOf와 같다(이 모듈은 런타임 import가 없어야 Node가 그대로 읽는다). */
 const pathOf = (target: Target): FlowPath => (target === 'onprem' ? 'onprem' : 'gcp')
@@ -192,6 +192,33 @@ function provisionTimeline(target: Target): TimedDraft[] {
 // ---- 데이터 복제 ----
 
 export const DATA_TOTAL_ROWS = 128400
+
+// ---- 데이터 정합성 확인 (복제가 ready가 된 뒤, 행 수 → 체크섬 순서) ----
+const DATA_VERIFY_TIMELINE: Array<{ after: number; data: DataVerifyData }> = [
+  { after: 0, data: { name: 'rows', state: 'running' } },
+  { after: 700, data: { name: 'rows', state: 'done', source: DATA_TOTAL_ROWS, target: DATA_TOTAL_ROWS } },
+  { after: 700, data: { name: 'checksum', state: 'running' } },
+  { after: 1600, data: { name: 'checksum', state: 'done' } },
+]
+/** 복제 준비 완료 시점부터 지난 시간(ms)까지 보낼 정합성 확인 이벤트를 돌려준다. cursor는 이미 보낸 개수. */
+export function dueDataVerify(elapsedMs: number, cursor: number): { events: DraftEvent[]; cursor: number } {
+  const events: DraftEvent[] = []
+  let next = cursor
+  while (next < DATA_VERIFY_TIMELINE.length && DATA_VERIFY_TIMELINE[next].after <= elapsedMs) {
+    const { data } = DATA_VERIFY_TIMELINE[next]
+    events.push({ type: 'data.verify', phase: 'data_copy', status: data.name === 'checksum' && data.state === 'done' ? 'done' : 'running', data })
+    next += 1
+  }
+  return { events, cursor: next }
+}
+export const DATA_VERIFY_TOTAL_MS = DATA_VERIFY_TIMELINE[DATA_VERIFY_TIMELINE.length - 1].after
+
+// ---- 전환 조건 확인 (트래픽 단계 시작 때, 소울님 PoC의 "전환 가능 시점" 값) ----
+export const TRAFFIC_READY_MS = 900
+export const TRAFFIC_READY_EVENTS: Array<{ after: number; data: TrafficReadyData }> = [
+  { after: 0, data: { state: 'running', lag_ms: 38, longest_tx_ms: 420, commits_per_sec: 118 } },
+  { after: TRAFFIC_READY_MS, data: { state: 'done', lag_ms: 12, longest_tx_ms: 85, commits_per_sec: 118 } },
+]
 export const DATA_TICK_MS = 250
 
 function lagAt(seconds: number): number | null {
@@ -237,6 +264,13 @@ function cutoverTimeline(): TimedDraft[] {
   items.push({ after: verifyAt, event: { type: 'cutover.step', phase: 'verification', status: 'running', data: { n: 6, state: 'verify' } } })
   CUTOVER_RESULTS.forEach((result, index) => {
     items.push({ after: verifyAt + RESULT_AT[index], event: { type: 'cutover.result', phase: 'verification', status: index === CUTOVER_RESULTS.length - 1 ? 'done' : 'running', data: result } })
+  })
+  // 최종 검증 뒤 운영권 인계: DNS 마지막 전환 → 원본 대기 유지 → 운영 권한 이전 (순서대로)
+  const handoverAt = verifyAt + RESULT_AT[RESULT_AT.length - 1] + 500
+  const HANDOVER: Array<'dns' | 'origin' | 'access'> = ['dns', 'origin', 'access']
+  HANDOVER.forEach((item, index) => {
+    items.push({ after: handoverAt + index * 700, event: { type: 'cutover.handover', phase: 'verification', status: 'running', data: { item, state: 'running' } } })
+    items.push({ after: handoverAt + index * 700 + 600, event: { type: 'cutover.handover', phase: 'verification', status: 'done', data: { item, state: 'done' } } })
   })
   return items
 }

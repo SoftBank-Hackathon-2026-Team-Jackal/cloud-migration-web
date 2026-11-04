@@ -124,6 +124,11 @@ function TrafficBody({ ready, target, onNext }: { ready: boolean; target: Target
           <strong>{t('traffic.gates.title')} <ProposalTag /></strong>
           <span className={'traffic-state is-' + phase}>{statusText}</span>
         </div>
+        {state.traffic.ready && <div className="traffic-gate">
+          <span>{t('traffic.ready.title')}</span>
+          <b>{state.traffic.ready.state === 'done' ? t('traffic.ready.done') : t('traffic.ready.running')}</b>
+          <small>{t('traffic.ready.detail', { lag: state.traffic.ready.lag_ms, tx: state.traffic.ready.longest_tx_ms, commits: state.traffic.ready.commits_per_sec })}</small>
+        </div>}
         <div className={'traffic-gate' + (failedBad ? ' is-bad' : '')}>
           <span>{t('traffic.gate.failed')}</span><b>{t('traffic.unit.count', { n: metrics.failed })}</b><small>{t('traffic.gate.failedAllow', { n: maxFailed })}</small>
         </div>

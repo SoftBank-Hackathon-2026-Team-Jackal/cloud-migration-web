@@ -5,7 +5,7 @@ import { readFileSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Ajv from 'ajv/dist/2020.js'
-import { dataProgressAt, reportFor, timelineFor, type ScriptedPhase } from '../../src/lib/migration/script.ts'
+import { DATA_VERIFY_TOTAL_MS, TRAFFIC_READY_EVENTS, dataProgressAt, dueDataVerify, reportFor, timelineFor, type ScriptedPhase } from '../../src/lib/migration/script.ts'
 import { TrafficSim } from '../../src/lib/migration/trafficSim.ts'
 import { startRequestFor, type Target } from '../../src/lib/migration/events.ts'
 
@@ -64,6 +64,15 @@ test('사람 검토·이미지 불일치 데모 대본도 스키마를 통과한
     }
   }
   assert.equal(reviews, 2, 'build.review 이벤트')
+})
+
+test('정합성 확인·전환 조건 확인 이벤트가 스키마를 통과한다', () => {
+  const verify = dueDataVerify(DATA_VERIFY_TOTAL_MS, 0)
+  assert.equal(verify.events.length, 4, 'data.verify 이벤트 수')
+  for (const event of verify.events) assertValid(validateEvent, stamp(event), 'data.verify')
+  for (const item of TRAFFIC_READY_EVENTS) assertValid(validateEvent, stamp({ type: 'traffic.ready', phase: 'traffic', status: 'running', data: item.data }), 'traffic.ready')
+  assert.equal(validateEvent(stamp({ type: 'data.verify', phase: 'data_copy', status: 'running', data: { name: 'unknown', state: 'done' } })), false, 'data.verify name')
+  assert.equal(validateEvent(stamp({ type: 'cutover.handover', phase: 'verification', status: 'running', data: { item: 'dns', state: 'paused' } })), false, 'handover state')
 })
 
 test('데이터 복제 진행 값(0~30초)이 스키마를 통과한다', () => {

@@ -1,6 +1,6 @@
 import { targetOfRequest, type BackendPhase, type DraftEvent, type MigrationEvent, type StartRequest, type Target } from './events'
 import type { EnterContext, MigrationProvider, ProviderHost } from './provider'
-import { DATA_TICK_MS, dataProgressAt, reportFor, timelineFor, type ScriptedPhase, type TimedDraft } from './script'
+import { DATA_TICK_MS, TRAFFIC_READY_EVENTS, dataProgressAt, dueDataVerify, reportFor, timelineFor, type ScriptedPhase, type TimedDraft } from './script'
 import { TrafficSim } from './trafficSim'
 import { aiFixCount, digestMismatchDemo, reviewDemo } from '../demoConfig'
 
@@ -83,9 +83,18 @@ export class MockProvider implements MigrationProvider {
       case 'data_copy': {
         // 복제 시작부터 250ms마다 그 시점의 진행 값을 내보낸다(화면이 열려 있는 동안 계속).
         const began = performance.now()
+        let readyAt = 0
+        let verifyCursor = 0
         const timer = window.setInterval(() => {
           const data = dataProgressAt((performance.now() - began) / 1000)
           this.emit({ type: 'data.progress', phase: 'data_copy', status: data.step === 'ready' ? 'done' : 'running', data })
+          // 복제가 준비되면 정합성 확인(행 수 → 체크섬)을 이어서 보낸다.
+          if (data.step === 'ready') {
+            if (!readyAt) readyAt = performance.now()
+            const due = dueDataVerify(performance.now() - readyAt, verifyCursor)
+            verifyCursor = due.cursor
+            for (const event of due.events) this.emit(event)
+          }
         }, DATA_TICK_MS)
         stop = () => window.clearInterval(timer)
         break
@@ -93,8 +102,10 @@ export class MockProvider implements MigrationProvider {
       case 'traffic': {
         const sim = new TrafficSim(data => this.emit({ type: 'traffic.snapshot', phase: 'traffic', status: data.phase === 'complete' ? 'done' : 'running', data }))
         this.traffic = sim
-        sim.start()
-        stop = () => { sim.stop(); if (this.traffic === sim) this.traffic = null }
+        // 먼저 전환 조건을 확인하고(전환 가능 시점), 확인이 끝나면 트래픽을 옮기기 시작한다.
+        const timers = TRAFFIC_READY_EVENTS.map(item => window.setTimeout(() => this.emit({ type: 'traffic.ready', phase: 'traffic', status: 'running', data: item.data }), item.after))
+        timers.push(window.setTimeout(() => sim.start(), TRAFFIC_READY_EVENTS[TRAFFIC_READY_EVENTS.length - 1].after))
+        stop = () => { timers.forEach(timer => window.clearTimeout(timer)); sim.stop(); if (this.traffic === sim) this.traffic = null }
         break
       }
       case 'verification':

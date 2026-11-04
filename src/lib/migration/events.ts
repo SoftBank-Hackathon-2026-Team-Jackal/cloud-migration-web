@@ -101,6 +101,20 @@ export type DataProgressData = {
   dump_percent: number
 }
 
+/**
+ * 아래 세 이벤트(data.verify, traffic.ready, cutover.handover)는 민서님 13단계 흐름의 하위 항목
+ * (데이터 정합성 확인, 전환 조건 확인, 최종 검증·운영권 인계)을 위한 프론트 [가정]이다. 백엔드 계약은 아직 없다.
+ * 필드는 소울님 PoC(poc/demo)가 내는 값(행 수·체크섬 비교, 전환 가능 시점)에 맞췄다.
+ */
+export type DataVerifyName = 'rows' | 'checksum'
+export type DataVerifyData = { name: DataVerifyName; state: 'running' | 'done' | 'failed'; source?: number; target?: number }
+
+/** 전환 조건 확인: 복제 지연·가장 긴 트랜잭션·초당 커밋을 보고 DB 전환이 가능한 시점인지 판단한다. */
+export type TrafficReadyData = { state: 'running' | 'done' | 'waiting'; lag_ms: number; longest_tx_ms: number; commits_per_sec: number }
+
+export type HandoverItem = 'dns' | 'origin' | 'access'
+export type HandoverData = { item: HandoverItem; state: 'running' | 'done' }
+
 export type TrafficPhase = 'applying' | 'observing' | 'gate' | 'complete' | 'rolledback'
 /** 트래픽 피드에 남길 기록. key로 화면이 자기 문구를 고른다. restart는 피드를 비우라는 뜻이다. */
 export type TrafficNote = { key: 'apply' | 'gatePass' | 'gateFail' | 'reached' | 'manual' | 'inject' | 'drained' | 'restart'; params?: Record<string, string | number> }
@@ -162,9 +176,12 @@ export type MigrationEvent =
   | Base<'provision.resource', ProvisionResourceData>
   | Base<'provision.check', ProvisionCheckData>
   | Base<'data.progress', DataProgressData>
+  | Base<'data.verify', DataVerifyData>
+  | Base<'traffic.ready', TrafficReadyData>
   | Base<'traffic.snapshot', TrafficSnapshotData>
   | Base<'cutover.step', CutoverStepData>
   | Base<'cutover.result', CutoverResultData>
+  | Base<'cutover.handover', HandoverData>
   | Base<'error', ErrorData>
 
 export type MigrationEventType = MigrationEvent['type']

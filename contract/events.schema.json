@@ -41,6 +41,12 @@
       "$ref": "#/$defs/event:data.progress"
     },
     {
+      "$ref": "#/$defs/event:data.verify"
+    },
+    {
+      "$ref": "#/$defs/event:traffic.ready"
+    },
+    {
       "$ref": "#/$defs/event:traffic.snapshot"
     },
     {
@@ -48,6 +54,9 @@
     },
     {
       "$ref": "#/$defs/event:cutover.result"
+    },
+    {
+      "$ref": "#/$defs/event:cutover.handover"
     },
     {
       "$ref": "#/$defs/event:error"
@@ -1233,6 +1242,12 @@
           "$ref": "#/$defs/event:data.progress"
         },
         {
+          "$ref": "#/$defs/event:data.verify"
+        },
+        {
+          "$ref": "#/$defs/event:traffic.ready"
+        },
+        {
           "$ref": "#/$defs/event:traffic.snapshot"
         },
         {
@@ -1240,6 +1255,9 @@
         },
         {
           "$ref": "#/$defs/event:cutover.result"
+        },
+        {
+          "$ref": "#/$defs/event:cutover.handover"
         },
         {
           "$ref": "#/$defs/event:error"
@@ -1460,6 +1478,211 @@
         },
         "data": {
           "$ref": "#/$defs/data:provision.check"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "phase",
+        "type",
+        "status",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "data:data.verify": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "enum": [
+            "rows",
+            "checksum"
+          ]
+        },
+        "state": {
+          "enum": [
+            "running",
+            "done",
+            "failed"
+          ]
+        },
+        "source": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "target": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "data:traffic.ready": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "enum": [
+            "running",
+            "done",
+            "waiting"
+          ]
+        },
+        "lag_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "longest_tx_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "commits_per_sec": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "state",
+        "lag_ms",
+        "longest_tx_ms",
+        "commits_per_sec"
+      ],
+      "additionalProperties": false
+    },
+    "data:cutover.handover": {
+      "type": "object",
+      "properties": {
+        "item": {
+          "enum": [
+            "dns",
+            "origin",
+            "access"
+          ]
+        },
+        "state": {
+          "enum": [
+            "running",
+            "done"
+          ]
+        }
+      },
+      "required": [
+        "item",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "event:data.verify": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "type": {
+          "const": "data.verify"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/data:data.verify"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "phase",
+        "type",
+        "status",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "event:traffic.ready": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "type": {
+          "const": "traffic.ready"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/data:traffic.ready"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "phase",
+        "type",
+        "status",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "event:cutover.handover": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "type": {
+          "const": "cutover.handover"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/data:cutover.handover"
         }
       },
       "required": [

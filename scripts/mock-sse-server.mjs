@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DATA_TICK_MS, PLAN_REVEAL_MS, REPORT_SECONDS, dataProgressAt, timelineEnd, timelineFor } from '../src/lib/migration/script.ts'
+import { DATA_TICK_MS, DATA_VERIFY_TOTAL_MS, PLAN_REVEAL_MS, REPORT_SECONDS, TRAFFIC_READY_EVENTS, dataProgressAt, dueDataVerify, timelineEnd, timelineFor } from '../src/lib/migration/script.ts'
 import { targetOfRequest } from '../src/lib/migration/events.ts'
 import { TrafficSim } from '../src/lib/migration/trafficSim.ts'
 
@@ -176,17 +176,31 @@ const phaseRunners = {
   async data_copy(record) {
     const began = Date.now()
     let reachedAt = 0
+    let verifyCursor = 0
     for (;;) {
       await wait(record, DATA_TICK_MS)
       const data = dataProgressAt((Date.now() - began) / 1000)
       emit(record, { type: 'data.progress', phase: 'data_copy', status: data.step === 'ready' ? 'done' : 'running', data })
       if (data.step === 'ready' && !reachedAt) reachedAt = Date.now()
-      // 준비 상태가 된 뒤에도 잠깐 더 흘려 보낸다(화면의 숫자가 계속 움직인다).
-      if (reachedAt && Date.now() - reachedAt > 2000) return
+      // 준비되면 정합성 확인(행 수 → 체크섬)을 이어서 보낸다.
+      if (reachedAt) {
+        const due = dueDataVerify(Date.now() - reachedAt, verifyCursor)
+        verifyCursor = due.cursor
+        for (const event of due.events) emit(record, event)
+      }
+      // 준비 상태가 된 뒤에도 정합성 확인이 끝날 때까지 흘려 보낸다(화면의 숫자가 계속 움직인다).
+      if (reachedAt && Date.now() - reachedAt > DATA_VERIFY_TOTAL_MS + 800) return
     }
   },
   async traffic(record) {
     const state = runtime(record.id)
+    // 먼저 전환 조건을 확인한다(전환 가능 시점).
+    let readyDone = 0
+    for (const item of TRAFFIC_READY_EVENTS) {
+      await wait(record, item.after - readyDone)
+      readyDone = item.after
+      emit(record, { type: 'traffic.ready', phase: 'traffic', status: 'running', data: item.data })
+    }
     await new Promise((resolve, reject) => {
       const sim = new TrafficSim(data => {
         emit(record, { type: 'traffic.snapshot', phase: 'traffic', status: data.phase === 'complete' ? 'done' : 'running', data })
