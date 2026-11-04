@@ -29,6 +29,9 @@
       "$ref": "#/$defs/event:plan.ready"
     },
     {
+      "$ref": "#/$defs/event:plan.preview"
+    },
+    {
       "$ref": "#/$defs/event:approval.required"
     },
     {
@@ -229,6 +232,9 @@
         },
         "evidence": {
           "type": "string"
+        },
+        "file": {
+          "type": "string"
         }
       },
       "required": [
@@ -254,10 +260,12 @@
         },
         "grade": {
           "enum": [
-            "direct",
-            "convert",
-            "none"
-          ]
+            "DIRECT",
+            "API_DIFF",
+            "PARTIAL",
+            "NONE"
+          ],
+          "description": "AV-008 매핑 등급 [가정: 이벤트 필드 이름]"
         },
         "before": {
           "type": "string"
@@ -270,6 +278,37 @@
         },
         "change": {
           "type": "string"
+        },
+        "action": {
+          "enum": [
+            "PROCEED",
+            "APPROVAL",
+            "BLOCK"
+          ]
+        },
+        "keep_source": {
+          "type": "boolean"
+        },
+        "verification": {
+          "enum": [
+            "UNVERIFIED",
+            "EVIDENCE_CHECKED",
+            "SANDBOX_VERIFIED"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "ingress",
+            "network",
+            "compute",
+            "proxy",
+            "database",
+            "cache",
+            "queue",
+            "storage",
+            "config",
+            "other"
+          ]
         }
       },
       "required": [
@@ -279,7 +318,10 @@
         "before",
         "after",
         "evidence",
-        "change"
+        "change",
+        "action",
+        "keep_source",
+        "verification"
       ],
       "additionalProperties": false
     },
@@ -358,6 +400,12 @@
           "type": "number",
           "minimum": 0,
           "maximum": 100
+        },
+        "name": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
         }
       },
       "required": [
@@ -442,11 +490,9 @@
           "additionalProperties": false
         },
         "step": {
-          "enum": [
-            10,
-            50,
-            100
-          ]
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
         },
         "gate": {
           "type": "object",
@@ -531,6 +577,16 @@
             ],
             "additionalProperties": false
           }
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "minItems": 1,
+          "description": "[가정] 전환 단계(대상 비율 %)"
         }
       },
       "required": [
@@ -568,14 +624,17 @@
       "type": "object",
       "properties": {
         "id": {
-          "enum": [
-            "fail",
-            "delay",
-            "loss"
-          ]
+          "type": "string",
+          "description": "fail·delay·loss는 화면 문구, 그 밖의 id는 label·value를 그대로 [가정]"
         },
         "value": {
           "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
         }
       },
       "required": [
@@ -1245,6 +1304,9 @@
           "$ref": "#/$defs/event:plan.ready"
         },
         {
+          "$ref": "#/$defs/event:plan.preview"
+        },
+        {
           "$ref": "#/$defs/event:approval.required"
         },
         {
@@ -1371,12 +1433,8 @@
       "type": "object",
       "properties": {
         "name": {
-          "enum": [
-            "pods_ready",
-            "db_connect",
-            "app_health",
-            "retest"
-          ]
+          "type": "string",
+          "description": "pods_ready·db_connect·app_health·retest는 화면 문구, 그 밖의 이름은 그대로 [가정]"
         },
         "state": {
           "enum": [
@@ -2141,6 +2199,301 @@
         },
         "data": {
           "$ref": "#/$defs/data:sandbox.done"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "phase",
+        "type",
+        "status",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "data:plan.preview": {
+      "type": "object",
+      "description": "PROV-014 계획 미리보기 [가정: 이벤트 이름·필드는 백엔드와 미정]. 비밀값 원문은 담지 않는다.",
+      "properties": {
+        "plan_id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string"
+            },
+            "platform": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "provider",
+            "platform",
+            "location"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "type": "string"
+            },
+            "platform": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "provider",
+            "platform",
+            "location"
+          ],
+          "additionalProperties": false
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "group": {
+                "enum": [
+                  "network",
+                  "compute",
+                  "data",
+                  "other"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "size": {
+                "type": "string"
+              },
+              "size_detail": {
+                "type": "string"
+              },
+              "change": {
+                "enum": [
+                  "CREATE",
+                  "PINNED",
+                  "KEEP_SOURCE"
+                ]
+              },
+              "kind": {
+                "enum": [
+                  "ingress",
+                  "network",
+                  "compute",
+                  "proxy",
+                  "database",
+                  "cache",
+                  "queue",
+                  "storage",
+                  "config",
+                  "other"
+                ]
+              },
+              "warning": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "group",
+              "name",
+              "detail",
+              "size",
+              "change"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "env_remap": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "secret": {
+                "type": "boolean"
+              },
+              "keep": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "key",
+              "from",
+              "to",
+              "secret"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "security_rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "port": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 65535
+              },
+              "protocol": {
+                "enum": [
+                  "TCP",
+                  "UDP",
+                  "ANY"
+                ]
+              },
+              "action": {
+                "enum": [
+                  "ALLOW",
+                  "DENY"
+                ]
+              }
+            },
+            "required": [
+              "from",
+              "to",
+              "port",
+              "protocol",
+              "action"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "validation": {
+          "type": "object",
+          "properties": {
+            "errors": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "resource": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "message"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "warnings": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "resource": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "message"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "errors",
+            "warnings"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "plan_id",
+        "revision",
+        "source",
+        "target",
+        "resources",
+        "env_remap",
+        "security_rules",
+        "validation"
+      ],
+      "additionalProperties": false
+    },
+    "event:plan.preview": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "type": {
+          "const": "plan.preview"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/data:plan.preview"
         }
       },
       "required": [

@@ -6,11 +6,20 @@
 import type { TrafficNote, TrafficPhase, TrafficSnapshotData } from './events'
 
 export const TRAFFIC_STEPS = [10, 50, 100] as const
+/** 지금 단계의 위치. 목록에 없는 값이면 그 값을 넘지 않는 가장 큰 단계로 본다. */
+export function stepIndexOf(steps: readonly number[], step: number | undefined): number {
+  if (step === undefined) return 0
+  const exact = steps.indexOf(step)
+  if (exact >= 0) return exact
+  let index = 0
+  steps.forEach((value, i) => { if (value <= step) index = i })
+  return index
+}
+
 /** 관찰 창 길이(초)와 게이트 기준 */
 export const OBSERVE_SECONDS = 4
 const MAX_FAILED = 0
 const MAX_P99_RATIO = 1.5
-const STEPS = TRAFFIC_STEPS
 
 export class TrafficSim {
   private emitSnapshot: (data: TrafficSnapshotData) => void
@@ -27,8 +36,12 @@ export class TrafficSim {
   private decision: TrafficSnapshotData['decision']
   private running = false
 
-  constructor(emit: (data: TrafficSnapshotData) => void) {
+  /** 전환 단계(대상 비율 %). 서버가 정한 단계(예: [50, 100])를 줄 수 있고, 없으면 10 · 50 · 100이다. */
+  private steps: number[]
+
+  constructor(emit: (data: TrafficSnapshotData) => void, steps: readonly number[] = TRAFFIC_STEPS) {
     this.emitSnapshot = emit
+    this.steps = steps.length > 0 ? [...steps] : [...TRAFFIC_STEPS]
   }
 
   /** 처음부터 시작한다. */
@@ -100,11 +113,12 @@ export class TrafficSim {
   }
 
   private emit(notes?: TrafficNote[]) {
-    const percent = STEPS[this.stepIndex]
+    const percent = this.steps[this.stepIndex]
     const data: TrafficSnapshotData = {
       phase: this.phase,
       weights: { origin: 100 - this.weightNew, target: this.weightNew },
       step: percent,
+      steps: [...this.steps],
       gate: {
         failed_requests: this.failed,
         max_failed_requests: MAX_FAILED,
@@ -122,7 +136,7 @@ export class TrafficSim {
 
   // 1. 가중치 적용
   private beginApplying() {
-    const percent = STEPS[this.stepIndex]
+    const percent = this.steps[this.stepIndex]
     this.after(250, () => {
       this.weightNew = percent
       this.emit([{ key: 'apply', params: { pct: percent, old: 100 - percent, new: percent } }])
@@ -162,7 +176,7 @@ export class TrafficSim {
 
   // 3. 게이트 판정
   private judge() {
-    const percent = STEPS[this.stepIndex]
+    const percent = this.steps[this.stepIndex]
     if (this.failed > MAX_FAILED || this.p99 > MAX_P99_RATIO) {
       this.injected = false
       this.weightNew = 0
@@ -172,7 +186,7 @@ export class TrafficSim {
       return
     }
     const pass: TrafficNote = { key: 'gatePass', params: { pct: percent, ratio: this.p99.toFixed(2) } }
-    if (this.stepIndex === STEPS.length - 1) {
+    if (this.stepIndex === this.steps.length - 1) {
       this.residual = { requests: 38, streams: 14 }
       this.phase = 'complete'
       this.decision = 'done'

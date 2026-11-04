@@ -93,9 +93,22 @@ export type SandboxDoneData = {
   digest: string | null
 }
 export type FixLine = { kind: 'del' | 'add'; text: string }
-export type BuildFixData = { id: string; check: string; lines: FixLine[]; why: string; evidence: string }
+/** 수정 하나. file은 고친 파일 경로 [가정] — 있으면 "변경 내용 전체 보기"가 파일별로 묶는다. */
+export type BuildFixData = { id: string; check: string; lines: FixLine[]; why: string; evidence: string; file?: string }
 
-export type Grade = 'direct' | 'convert' | 'none'
+/*
+ * 계획(매핑·미리보기) [가정: SSE 이벤트 이름·필드는 백엔드와 미정].
+ * 값의 이름은 백엔드 명세를 따른다: specs/analysis-verification AV-008(매핑 등급·처리·검증 상태),
+ * specs/provisioning PROV-014(Preview: 제공자·위치, 만들 리소스, 네트워크·보안 규칙, 검증 오류, Plan ID·Revision, 비밀값 없음).
+ */
+/** AV-008 매핑 등급: 그대로 대응 · API 차이 · 일부 대응 · 대응 없음 */
+export type Grade = 'DIRECT' | 'API_DIFF' | 'PARTIAL' | 'NONE'
+/** AV-008 처리: 진행 · 승인 필요 · 차단 */
+export type MappingAction = 'PROCEED' | 'APPROVAL' | 'BLOCK'
+/** 근거 수준: 확인 안 됨 · 근거 확인 · 샌드박스 검증 */
+export type VerificationState = 'UNVERIFIED' | 'EVIDENCE_CHECKED' | 'SANDBOX_VERIFIED'
+/** 구성도가 노드를 놓을 자리를 고르는 분류 [가정]. 없으면 화면이 id·문구로 짐작한다. */
+export type PlanNodeKind = 'ingress' | 'network' | 'compute' | 'proxy' | 'database' | 'cache' | 'queue' | 'storage' | 'config' | 'other'
 export type PlanStepData = {
   id: string
   group: 'infrastructure' | 'code'
@@ -104,6 +117,70 @@ export type PlanStepData = {
   after: string
   evidence: string
   change: string
+  action: MappingAction
+  /** AV-022 원본 유지: 이번 이전에서 옮기지 않고 원본을 그대로 쓴다(등급과 관계없이 원본 유지로 보인다). */
+  keep_source: boolean
+  verification: VerificationState
+  kind?: PlanNodeKind
+}
+
+/** 원본·대상 환경 이름(예: AWS · EKS · ap-northeast-2). 문구가 아니라 값이다. */
+export type PlanEnvironment = { provider: string; platform: string; location: string }
+export type PlanResourceGroup = 'network' | 'compute' | 'data' | 'other'
+/** 새로 만듦 · Digest 고정(검증한 이미지) · 원본 유지 */
+export type PlanResourceChange = 'CREATE' | 'PINNED' | 'KEEP_SOURCE'
+/** 만들 리소스 한 줄. name·detail이 비면 화면이 id로 자기 문구를 쓴다. size·size_detail은 값 그대로 보인다. */
+export type PlanResource = {
+  id: string
+  group: PlanResourceGroup
+  name: string
+  detail: string
+  size: string
+  size_detail?: string
+  change: PlanResourceChange
+  kind?: PlanNodeKind
+  /** 이 리소스에 걸린 경고(검증 경고와 같은 값이면 하나로 합쳐 보인다) */
+  warning?: string
+}
+/** 환경변수 재매핑. 비밀값은 원문 없이 참조(to)만 온다. */
+export type EnvRemap = { key: string; from: string; to: string; secret: boolean; keep?: boolean }
+/** 보안 규칙. from·to는 internet·lb·app·db 같은 역할 이름(모르는 값은 그대로 보인다). '*'는 그 외 전부. */
+export type SecurityRule = { from: string; to: string; port: number | null; protocol: 'TCP' | 'UDP' | 'ANY'; action: 'ALLOW' | 'DENY' }
+/** 검증 문제. message가 비면 화면이 id로 자기 문구를 쓴다. resource는 걸린 리소스 id. */
+export type PlanIssue = { id: string; resource?: string; message: string }
+export type PlanPreviewData = {
+  plan_id: string
+  revision: number
+  source: PlanEnvironment
+  target: PlanEnvironment
+  resources: PlanResource[]
+  env_remap: EnvRemap[]
+  security_rules: SecurityRule[]
+  validation: { errors: PlanIssue[]; warnings: PlanIssue[] }
+}
+
+const LEGACY_GRADE: Record<string, Grade> = { direct: 'DIRECT', convert: 'API_DIFF', partial: 'PARTIAL', none: 'NONE' }
+const GRADES: Grade[] = ['DIRECT', 'API_DIFF', 'PARTIAL', 'NONE']
+/**
+ * 서버가 보낸 계획 항목을 화면이 읽는 모양으로 맞춘다. 예전 등급(direct/convert/none)도 받고,
+ * 빠진 처리·원본 유지·검증 상태는 등급으로 채운다(대응 없음은 원본 유지 + 승인 필요).
+ */
+export function normalizePlanStep(raw: Omit<Partial<PlanStepData>, 'grade'> & { id: string; grade?: string }): PlanStepData {
+  const grade: Grade = GRADES.includes(raw.grade as Grade) ? raw.grade as Grade : LEGACY_GRADE[String(raw.grade ?? '').toLowerCase()] ?? 'PARTIAL'
+  const keep = raw.keep_source ?? grade === 'NONE'
+  return {
+    id: raw.id,
+    group: raw.group === 'code' ? 'code' : 'infrastructure',
+    grade,
+    before: raw.before ?? '',
+    after: raw.after ?? '',
+    evidence: raw.evidence ?? '',
+    change: raw.change ?? '',
+    action: raw.action ?? (grade === 'NONE' && !keep ? 'BLOCK' : grade === 'PARTIAL' ? 'APPROVAL' : 'PROCEED'),
+    keep_source: keep,
+    verification: raw.verification ?? 'UNVERIFIED',
+    ...(raw.kind ? { kind: raw.kind } : {}),
+  }
 }
 
 /** 계획 완료. 필드는 모두 선택이라 예전의 빈 객체도 유효하다. */
@@ -117,9 +194,11 @@ export type ApprovalRequiredData = {
   gate?: 'cutover'
 }
 
-export type ProvisionResourceData = { id: string; key: string; state: 'running' | 'done' | 'failed'; progress: number }
+/** 만든 리소스. name·detail이 오면 그대로 보이고, 없으면 화면이 key로 자기 문구를 쓴다(알려진 key만) [가정]. */
+export type ProvisionResourceData = { id: string; key: string; state: 'running' | 'done' | 'failed'; progress: number; name?: string; detail?: string }
 
-export type ProvisionCheckName = 'pods_ready' | 'db_connect' | 'app_health' | 'retest'
+/** 알려진 검사 이름. 그 밖의 이름도 받아 이름 그대로 보인다 [가정]. */
+export type ProvisionCheckName = 'pods_ready' | 'db_connect' | 'app_health' | 'retest' | (string & {})
 /** 준비 상태 검사. retest는 승인 뒤 같은 테스트 묶음을 다시 돌린 결과(passed/total). */
 export type ProvisionCheckData = { name: ProvisionCheckName; state: 'running' | 'done' | 'failed'; passed?: number; total?: number }
 
@@ -153,7 +232,10 @@ export type TrafficNote = { key: 'apply' | 'gatePass' | 'gateFail' | 'reached' |
 export type TrafficSnapshotData = {
   phase: TrafficPhase
   weights: { origin: number; target: number }
-  step: 10 | 50 | 100
+  /** 지금 단계의 대상 비율(%). steps가 오면 그 값 중 하나다. */
+  step: number
+  /** [가정] 전환 단계(대상 비율 %, 예: [50, 100]). 없으면 화면은 기본 단계(10 · 50 · 100)를 쓴다. */
+  steps?: number[]
   gate: {
     failed_requests: number
     max_failed_requests: number
@@ -168,7 +250,8 @@ export type TrafficSnapshotData = {
 
 /** state: running(진행 중) → done(완료) 이고 verify는 6단계가 끝난 뒤 측정 구간에 들어갔다는 표시다. */
 export type CutoverStepData = { n: 1 | 2 | 3 | 4 | 5 | 6; state: 'running' | 'done' | 'verify' }
-export type CutoverResultData = { id: 'fail' | 'delay' | 'loss'; value: string }
+/** 측정 결과. fail·delay·loss는 화면이 자기 문구를 쓰고, 그 밖의 id(duplicate, checksum 등)는 label·value를 그대로 보인다 [가정]. */
+export type CutoverResultData = { id: string; value: string; label?: string; ok?: boolean }
 
 export type ErrorData = { code: string; message: string; phase: BackendPhase | null; retryable: boolean }
 
@@ -209,6 +292,7 @@ export type MigrationEvent =
   | Base<'sandbox.attempt', SandboxAttemptData>
   | Base<'sandbox.done', SandboxDoneData>
   | Base<'plan.ready', PlanReadyData>
+  | Base<'plan.preview', PlanPreviewData>
   | Base<'approval.required', ApprovalRequiredData>
   | Base<'provision.resource', ProvisionResourceData>
   | Base<'provision.check', ProvisionCheckData>

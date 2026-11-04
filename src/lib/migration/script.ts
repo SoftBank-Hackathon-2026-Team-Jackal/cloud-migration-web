@@ -4,7 +4,7 @@
  * 대본의 시각(after)은 "그 단계 화면이 준비된 순간"부터 센 ms이다.
  * Node가 그대로 읽으므로 런타임 import가 없고, 타입 문법만 쓴다(enum·네임스페이스 금지).
  */
-import type { AnalysisFindingData, BuildErrorCode, BuildFixData, DataProgressData, DataVerifyData, DraftEvent, TrafficReadyData, FixLine, FlowPath, Grade, PlanStepData, ReportData, SandboxChecks, SandboxDoneData, SandboxEnvData, SandboxFailureClass, SandboxStep, SandboxTestsData, Target } from './events'
+import type { AnalysisFindingData, BuildErrorCode, BuildFixData, DataProgressData, DataVerifyData, DraftEvent, TrafficReadyData, EnvRemap, FixLine, FlowPath, Grade, PlanEnvironment, PlanPreviewData, PlanResource, PlanStepData, SecurityRule, ReportData, SandboxChecks, SandboxDoneData, SandboxEnvData, SandboxFailureClass, SandboxStep, SandboxTestsData, Target } from './events'
 import type { SandboxScenario } from '../demoConfig'
 
 /** events.ts의 pathOf와 같다(이 모듈은 런타임 import가 없어야 Node가 그대로 읽는다). */
@@ -69,11 +69,11 @@ function analysisTimeline(): TimedDraft[] {
 
 type FixId = 'db' | 'host' | 'port' | 'probe'
 // AI가 고치는 항목. 수정은 검증 항목 하나에 여러 개 붙을 수 있다(예: 상태 확인에서 서너 건).
-const FIX_POOL: Array<{ id: FixId; check: string; lines: FixLine[] }> = [
-  { id: 'db', check: 'db', lines: [{ kind: 'del', text: '- DB_HOST=postgres' }, { kind: 'add', text: '+ DB_HOST=postgresql.demo.svc.cluster.local' }] },
-  { id: 'host', check: 'health', lines: [{ kind: 'del', text: '- HOST=127.0.0.1' }, { kind: 'add', text: '+ HOST=0.0.0.0' }] },
-  { id: 'port', check: 'health', lines: [{ kind: 'add', text: '+ containerPort: 8080' }] },
-  { id: 'probe', check: 'health', lines: [{ kind: 'add', text: '+ readinessProbe: { httpGet: { path: /health, port: 8080 } }' }] },
+const FIX_POOL: Array<{ id: FixId; check: string; file: string; lines: FixLine[] }> = [
+  { id: 'db', check: 'db', file: '.env', lines: [{ kind: 'del', text: '- DB_HOST=postgres' }, { kind: 'add', text: '+ DB_HOST=postgresql.demo.svc.cluster.local' }] },
+  { id: 'host', check: 'health', file: '.env', lines: [{ kind: 'del', text: '- HOST=127.0.0.1' }, { kind: 'add', text: '+ HOST=0.0.0.0' }] },
+  { id: 'port', check: 'health', file: 'k8s/deployment.yaml', lines: [{ kind: 'add', text: '+ containerPort: 8080' }] },
+  { id: 'probe', check: 'health', file: 'k8s/deployment.yaml', lines: [{ kind: 'add', text: '+ readinessProbe: { httpGet: { path: /health, port: 8080 } }' }] },
 ]
 
 const FIX_GAP_MS = 1400 // 수정 하나를 고치는 데 걸리는 시간
@@ -107,7 +107,7 @@ function sandboxPlans(scenario: SandboxScenario): RunPlan[] {
 function buildTimeline(aiFixes: number, retried = false, scenario: SandboxScenario = 'spec'): TimedDraft[] {
   const plans = sandboxPlans(scenario)
   const fixing = plans.some(plan => plan.fail && (plan.fail.cls === 'SPEC' || plan.fail.cls === 'CODE'))
-  const fixes: BuildFixData[] = fixing ? FIX_POOL.slice(0, aiFixes).map(fix => ({ id: fix.id, check: fix.check, lines: fix.lines, why: '', evidence: '' })) : []
+  const fixes: BuildFixData[] = fixing ? FIX_POOL.slice(0, aiFixes).map(fix => ({ id: fix.id, check: fix.check, file: fix.file, lines: fix.lines, why: '', evidence: '' })) : []
   const items: TimedDraft[] = fixes.map(data => ({ after: 0, event: { type: 'build.fix', phase: 'build', status: 'running', data } }))
   const build = (after: number, attempt: number, digest: string, reused: boolean) => items.push({ after, event: { type: 'build.result', phase: 'build', status: 'running', data: { attempt, max_attempts: MAX_ATTEMPTS, status: 'SUCCEEDED', digest, image_uri: 'registry.example.com/demo/app@' + digest, reused, error_code: null } } })
   // 이미지 빌드(샌드박스 밖) → 임시 Namespace 준비 → 테스트 묶음 고정(Tester)
@@ -164,38 +164,107 @@ function reviewTimeline(): TimedDraft[] {
 
 // ---- 계획 ----
 
-const PLAN_STEPS: Array<{ id: string; group: 'infrastructure' | 'code' }> = [
-  { id: 'network', group: 'infrastructure' },
-  { id: 'compute', group: 'infrastructure' },
-  { id: 'database', group: 'infrastructure' },
-  { id: 'storage', group: 'infrastructure' },
-  { id: 'db-code', group: 'code' },
-  { id: 's3-code', group: 'code' },
+type PlanStepSeed = Pick<PlanStepData, 'id' | 'group' | 'kind' | 'verification'>
+const PLAN_STEPS: PlanStepSeed[] = [
+  { id: 'network', group: 'infrastructure', kind: 'ingress', verification: 'EVIDENCE_CHECKED' },
+  { id: 'compute', group: 'infrastructure', kind: 'compute', verification: 'SANDBOX_VERIFIED' },
+  { id: 'database', group: 'infrastructure', kind: 'database', verification: 'SANDBOX_VERIFIED' },
+  { id: 'storage', group: 'infrastructure', kind: 'storage', verification: 'UNVERIFIED' },
+  { id: 'db-code', group: 'code', kind: 'config', verification: 'SANDBOX_VERIFIED' },
+  { id: 's3-code', group: 'code', kind: 'config', verification: 'UNVERIFIED' },
 ]
+/** 이번 범위에서 옮기지 않고 원본을 그대로 쓰는 항목(AV-022) */
+const KEEP_SOURCE = new Set(['storage', 's3-code'])
 
-/** 매핑 등급(11/2 회의): 대상에 그대로 쓸 수 있으면 직접 대응, 대응물이 없으면 MVP에서 제외. 가운데 등급은 화면용 제안. */
+/** 매핑 등급(AV-008): 그대로 대응 · API 차이 · 일부 대응 · 대응 없음. 원본 유지 항목은 등급과 관계없이 원본 유지로 보인다. */
 export function gradeOf(id: string, target: Target): Grade {
   switch (id) {
-    case 'network': case 'db-code': return 'convert'
-    case 'storage': case 's3-code': return pathOf(target) === 'gcp' ? 'direct' : 'none'
-    default: return 'direct'
+    case 'network': return 'API_DIFF'
+    case 'db-code': return 'PARTIAL'
+    case 'storage': case 's3-code': return pathOf(target) === 'gcp' ? 'API_DIFF' : 'NONE'
+    default: return 'DIRECT'
+  }
+}
+
+// ---- 계획 미리보기(PROV-014) ----
+// 이름·설명은 비워 두고 화면이 id로 자기 문구를 쓴다. 크기·주소·키처럼 언어와 무관한 값만 담는다.
+type ResourceSeed = Omit<PlanResource, 'name' | 'detail'>
+const PREVIEW_RESOURCES: Record<FlowPath, ResourceSeed[]> = {
+  gcp: [
+    { id: 'vpc', group: 'network', kind: 'network', size: '10.20.0.0/20', size_detail: '1 subnet', change: 'CREATE' },
+    { id: 'lb', group: 'network', kind: 'ingress', size: 'HTTPS 443', size_detail: 'managed cert', change: 'CREATE' },
+    { id: 'cluster', group: 'compute', kind: 'compute', size: 'e2-standard-2 × 2', size_detail: '2 vCPU · 8 GiB', change: 'CREATE' },
+    { id: 'app', group: 'compute', kind: 'compute', size: 'replicas 2', size_detail: '0.5 vCPU · 512 MiB', change: 'PINNED' },
+    { id: 'db', group: 'data', kind: 'database', size: 'db-custom-2-7680', size_detail: '20 GiB SSD', change: 'CREATE' },
+    { id: 'secret', group: 'data', kind: 'config', size: '2 keys', change: 'CREATE' },
+    { id: 'storage', group: 'other', kind: 'storage', size: '—', change: 'KEEP_SOURCE' },
+  ],
+  onprem: [
+    { id: 'vpc', group: 'network', kind: 'network', size: '10.42.0.0/16', size_detail: 'pod CIDR', change: 'CREATE' },
+    { id: 'lb', group: 'network', kind: 'ingress', size: 'HTTPS 443', size_detail: 'relay tunnel', change: 'CREATE' },
+    { id: 'cluster', group: 'compute', kind: 'compute', size: '3 nodes', size_detail: '4 vCPU · 16 GiB', change: 'CREATE' },
+    { id: 'app', group: 'compute', kind: 'compute', size: 'replicas 2', size_detail: '0.5 vCPU · 512 MiB', change: 'PINNED' },
+    { id: 'db', group: 'data', kind: 'database', size: 'StatefulSet 1', size_detail: 'PV 20 GiB', change: 'CREATE' },
+    { id: 'secret', group: 'data', kind: 'config', size: '2 keys', change: 'CREATE' },
+    { id: 'storage', group: 'other', kind: 'storage', size: '—', change: 'KEEP_SOURCE' },
+  ],
+}
+const PREVIEW_ENV: Record<FlowPath, EnvRemap[]> = {
+  gcp: [
+    { key: 'DB_HOST', from: 'postgres', to: '10.20.0.5', secret: false },
+    { key: 'DB_PASSWORD', from: 'secret', to: 'sm://db-password', secret: true },
+    { key: 'S3_BUCKET', from: 'uploads-demo', to: 'uploads-demo', secret: false, keep: true },
+  ],
+  onprem: [
+    { key: 'DB_HOST', from: 'postgres', to: 'postgresql.app.svc', secret: false },
+    { key: 'DB_PASSWORD', from: 'secret', to: 'k8s://app/db-password', secret: true },
+    { key: 'S3_BUCKET', from: 'uploads-demo', to: 'uploads-demo', secret: false, keep: true },
+  ],
+}
+const PREVIEW_RULES: SecurityRule[] = [
+  { from: 'internet', to: 'lb', port: 443, protocol: 'TCP', action: 'ALLOW' },
+  { from: 'lb', to: 'app', port: 8080, protocol: 'TCP', action: 'ALLOW' },
+  { from: 'app', to: 'db', port: 5432, protocol: 'TCP', action: 'ALLOW' },
+  { from: '*', to: '*', port: null, protocol: 'ANY', action: 'DENY' },
+]
+const PREVIEW_TARGET: Record<FlowPath, PlanEnvironment> = {
+  gcp: { provider: 'GCP', platform: 'GKE', location: 'asia-northeast3' },
+  onprem: { provider: 'ON_PREM', platform: 'K3s', location: 'dc-1' },
+}
+export const PLAN_ID = 'pln-7f2c9a'
+
+export function planPreviewFor(target: Target, revision: number): PlanPreviewData {
+  const path = pathOf(target)
+  return {
+    plan_id: PLAN_ID,
+    revision,
+    source: { provider: 'AWS', platform: 'EKS', location: 'ap-northeast-2' },
+    target: PREVIEW_TARGET[path],
+    resources: PREVIEW_RESOURCES[path].map(resource => ({ ...resource, name: '', detail: '' })),
+    env_remap: PREVIEW_ENV[path],
+    security_rules: PREVIEW_RULES,
+    // 경고 하나: 대상 DB의 자동 백업 보존 기간이 원본보다 짧다(문구는 화면이 id로 찾는다).
+    validation: { errors: [], warnings: [{ id: 'db-backup', resource: 'db', message: '' }] },
   }
 }
 
 /** 계획 화면이 항목을 하나씩 드러내는 연출(화면이 쓴다): 첫 항목까지의 시간, 항목 간격, 전체 길이. 서버는 연출이 끝난 뒤 승인을 요청한다. */
 export const PLAN_FIRST_REVEAL_MS = 2550
 export const PLAN_REVEAL_GAP_MS = 720
-export const PLAN_STEP_COUNT = PLAN_STEPS.length
+/** 드러내는 줄 수: 매핑 항목과 만들 리소스 중 많은 쪽 */
+export const PLAN_STEP_COUNT = Math.max(PLAN_STEPS.length, PREVIEW_RESOURCES.gcp.length)
 export const PLAN_REVEAL_MS = PLAN_FIRST_REVEAL_MS + PLAN_STEP_COUNT * PLAN_REVEAL_GAP_MS + 850
 
 function planTimeline(target: Target, revision: number, mismatch: boolean): TimedDraft[] {
   // 문구(전·후·근거·변경)는 비워 두고 화면이 id로 자기 문구를 쓴다(GCP 대상일 때만 다른 문구 포함).
   const items: TimedDraft[] = PLAN_STEPS.map(step => {
-    const data: PlanStepData = { id: step.id, group: step.group, grade: gradeOf(step.id, target), before: '', after: '', evidence: '', change: '' }
+    const keep = KEEP_SOURCE.has(step.id)
+    const data: PlanStepData = { ...step, grade: gradeOf(step.id, target), before: '', after: '', evidence: '', change: '', action: 'PROCEED', keep_source: keep }
     return { after: 0, event: { type: 'plan.step', phase: 'planning', status: 'running', data } }
   })
+  items.push({ after: 0, event: { type: 'plan.preview', phase: 'planning', status: 'running', data: planPreviewFor(target, revision) } })
   const verified = mismatch ? OTHER_DIGEST : DEMO_DIGEST
-  items.push({ after: 0, event: { type: 'plan.ready', phase: 'planning', status: 'done', progress: 100, data: { plan_id: 'plan-demo', revision, template_version: TEMPLATE_VERSION, built_digest: DEMO_DIGEST, verified_digest: verified, manifest_digest: DEMO_MANIFEST_DIGEST, preview_digest: DEMO_PREVIEW_DIGEST } } })
+  items.push({ after: 0, event: { type: 'plan.ready', phase: 'planning', status: 'done', progress: 100, data: { plan_id: PLAN_ID, revision, template_version: TEMPLATE_VERSION, built_digest: DEMO_DIGEST, verified_digest: verified, manifest_digest: DEMO_MANIFEST_DIGEST, preview_digest: DEMO_PREVIEW_DIGEST } } })
   return items
 }
 
@@ -290,7 +359,7 @@ export function dataProgressAt(seconds: number): DataProgressData {
 export const CUTOVER_ENTER_MS = 2400
 const CUTOVER_STEP_MS = 1100
 const RESULT_AT = [600, 1500, 2400]
-const CUTOVER_RESULTS: Array<{ id: 'fail' | 'delay' | 'loss'; value: string }> = [
+const CUTOVER_RESULTS: Array<{ id: string; value: string }> = [
   { id: 'fail', value: '' }, { id: 'delay', value: '' }, { id: 'loss', value: '' },
 ]
 

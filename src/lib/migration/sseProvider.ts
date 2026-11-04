@@ -1,4 +1,4 @@
-import { startRequestFor, type BackendPhase, type ErrorData, type MigrationEvent, type PlanReadyData, type StartRequest } from './events.ts'
+import { normalizePlanStep, startRequestFor, type BackendPhase, type ErrorData, type MigrationEvent, type PlanReadyData, type StartRequest } from './events.ts'
 import type { EnterContext, MigrationProvider, ProviderHost } from './provider'
 import type { ReportData } from './events'
 import type { SseStartMode } from './config'
@@ -253,7 +253,38 @@ export class SseProvider implements MigrationProvider {
     let event: MigrationEvent
     try { event = JSON.parse(data.join('\n')) as MigrationEvent } catch { return }
     if (id) this.lastId = id
+    event = normalizeEvent(event)
     if (event.type === 'plan.ready') this.plan = event.data
+    if (event.type === 'snapshot') {
+      for (const item of event.data.events) if (item.type === 'plan.ready') this.plan = item.data
+    }
     this.host.dispatch({ type: 'event', event })
+  }
+}
+
+/**
+ * 서버 값을 화면이 읽는 모양으로 맞춘다 [가정: 백엔드 계약 미정].
+ * - plan.step: 예전 등급(direct/convert/none)과 빠진 처리·원본 유지·검증 상태를 채운다.
+ * - plan.preview: 빠진 목록은 빈 목록으로.
+ * - snapshot 안의 이벤트도 같은 규칙으로.
+ */
+export function normalizeEvent(event: MigrationEvent): MigrationEvent {
+  switch (event.type) {
+    case 'plan.step':
+      return { ...event, data: normalizePlanStep(event.data) }
+    case 'plan.preview': {
+      const data = event.data
+      return { ...event, data: {
+        ...data,
+        resources: data.resources ?? [],
+        env_remap: data.env_remap ?? [],
+        security_rules: data.security_rules ?? [],
+        validation: { errors: data.validation?.errors ?? [], warnings: data.validation?.warnings ?? [] },
+      } }
+    }
+    case 'snapshot':
+      return { ...event, data: { ...event.data, events: (event.data.events ?? []).map(normalizeEvent) } }
+    default:
+      return event
   }
 }

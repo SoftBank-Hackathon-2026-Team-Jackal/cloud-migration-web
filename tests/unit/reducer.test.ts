@@ -48,7 +48,7 @@ test('검증 항목은 id별 최신 상태와 마지막 이벤트를 가진다',
 test('수정 목록과 계획 단계, 구축 리소스는 id로 upsert 된다', () => {
   seq = 0
   const fix: DraftEvent = { type: 'build.fix', phase: 'build', status: 'running', data: { id: 'db', check: 'db', lines: [{ kind: 'add', text: '+ x' }], why: '', evidence: '' } }
-  const step: DraftEvent = { type: 'plan.step', phase: 'planning', status: 'running', data: { id: 'network', group: 'infrastructure', grade: 'convert', before: '', after: '', evidence: '', change: '' } }
+  const step: DraftEvent = { type: 'plan.step', phase: 'planning', status: 'running', data: { id: 'network', group: 'infrastructure', grade: 'API_DIFF', before: '', after: '', evidence: '', change: '', action: 'PROCEED', keep_source: false, verification: 'UNVERIFIED' } }
   const resource: DraftEvent = { type: 'provision.resource', phase: 'provisioning', status: 'running', data: { id: 'gcp-network', key: 'network', state: 'done', progress: 17 } }
   const state = run(initialState, ev(fix), ev(fix), ev(step), ev(resource), ev({ type: 'plan.ready', phase: 'planning', status: 'done', data: {} }))
   assert.equal(state.build.fixes.length, 1)
@@ -195,7 +195,7 @@ test('plan.ready는 계획 버전·Digest를 담고, 빈 객체는 이전 값을
 
 test('계획 수정으로 revision이 올라가면 같은 id의 단계는 덮어쓰고 새 버전이 반영된다', () => {
   seq = 0
-  const step: DraftEvent = { type: 'plan.step', phase: 'planning', status: 'running', data: { id: 'network', group: 'infrastructure', grade: 'convert', before: '', after: '', evidence: '', change: '' } }
+  const step: DraftEvent = { type: 'plan.step', phase: 'planning', status: 'running', data: { id: 'network', group: 'infrastructure', grade: 'API_DIFF', before: '', after: '', evidence: '', change: '', action: 'PROCEED', keep_source: false, verification: 'UNVERIFIED' } }
   const ready = (revision: number): DraftEvent => ({ type: 'plan.ready', phase: 'planning', status: 'done', data: { revision } })
   let state = run(initialState, ev(step), ev(ready(1)))
   state = run(state, ev(step), ev(ready(2)))

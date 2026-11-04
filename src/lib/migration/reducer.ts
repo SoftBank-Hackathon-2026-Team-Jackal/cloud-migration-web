@@ -3,7 +3,7 @@
  * 같은 id의 이벤트는 덮어쓰므로(upsert) 재접속·단계 재전송으로 같은 이벤트가 다시 와도 결과가 같다.
  */
 import type {
-  AnalysisFindingData, ApprovalRequiredData, DataVerifyData, HandoverData, TrafficReadyData, BackendPhase, BuildCheckData, BuildFixData, BuildResultData, BuildReviewData, PlanReadyData, ProvisionCheckData, CutoverResultData,
+  AnalysisFindingData, ApprovalRequiredData, DataVerifyData, HandoverData, TrafficReadyData, BackendPhase, BuildCheckData, BuildFixData, BuildResultData, BuildReviewData, PlanPreviewData, PlanReadyData, ProvisionCheckData, CutoverResultData,
   DataProgressData, ErrorData, MigrationEvent, MigrationStatus, PlanStepData, ProvisionResourceData,
   ReportData, TrafficNote, TrafficSnapshotData,
   SandboxAttemptData, SandboxDoneData, SandboxEnvData, SandboxStep, SandboxStepData, SandboxTestsData,
@@ -26,7 +26,8 @@ export type MigrationState = {
   build: { checks: Record<string, BuildCheckData>; lastCheck: BuildCheckData | null; fixes: BuildFixData[]; attempt: number | null; result: BuildResultData | null; review: BuildReviewData | null }
   /** 샌드박스 검증 루프: steps[트랙 순번][단계], attempts는 판정이 끝난 트랙들 */
   sandbox: { env: SandboxEnvData | null; steps: Record<number, Partial<Record<SandboxStep, SandboxStepData['state']>>>; tests: SandboxTestsData | null; attempts: SandboxAttemptData[]; done: SandboxDoneData | null }
-  plan: { steps: PlanStepData[]; ready: boolean; meta: PlanReadyData | null }
+  /** preview: 계획 미리보기(만들 리소스·재매핑·보안 규칙·검증). 없으면 화면은 매핑 항목만 보인다. */
+  plan: { steps: PlanStepData[]; ready: boolean; meta: PlanReadyData | null; preview: PlanPreviewData | null }
   approval: { required: boolean; excluded: string[]; rollbackPolicy: string; cutoverRequired: boolean }
   provision: { resources: ProvisionResourceData[]; checks: ProvisionCheckData[] }
   data: { current: DataProgressData | null; lagHistory: number[]; verify: DataVerifyData[] }
@@ -45,7 +46,7 @@ export const initialState: MigrationState = {
   analysis: { findings: [], done: false },
   build: { checks: {}, lastCheck: null, fixes: [], attempt: null, result: null, review: null },
   sandbox: { env: null, steps: {}, tests: null, attempts: [], done: null },
-  plan: { steps: [], ready: false, meta: null },
+  plan: { steps: [], ready: false, meta: null, preview: null },
   approval: { required: false, excluded: [], rollbackPolicy: '', cutoverRequired: false },
   provision: { resources: [], checks: [] },
   data: { current: null, lagHistory: [], verify: [] },
@@ -129,6 +130,8 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
       return { ...next, build: { ...next.build, fixes: upsert(next.build.fixes, event.data) } }
     case 'plan.step':
       return { ...next, plan: { ...next.plan, steps: upsert(next.plan.steps, event.data) } }
+    case 'plan.preview':
+      return { ...next, plan: { ...next.plan, preview: event.data } }
     case 'plan.ready':
       return { ...next, plan: { ...next.plan, ready: true, meta: Object.keys(event.data).length > 0 ? event.data : next.plan.meta } }
     case 'approval.required': {
@@ -168,8 +171,9 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
     }
     case 'cutover.result': {
       const results = upsert(next.cutover.results, event.data)
-      // 결과가 3개(실패·지연·유실) 모두 모이면 이전 완료
-      return { ...next, cutover: { ...next.cutover, results }, status: results.length >= 3 ? 'done' : next.status }
+      // 서버가 마지막 결과를 done으로 보내면 이전 완료. 예전 방식(실패·지연·유실 3개가 모두 모임)도 완료로 본다.
+      const legacyDone = ['fail', 'delay', 'loss'].every(id => results.some(result => result.id === id))
+      return { ...next, cutover: { ...next.cutover, results }, status: event.status === 'done' || legacyDone ? 'done' : next.status }
     }
     case 'cutover.handover': {
       const handover = next.cutover.handover.slice()
