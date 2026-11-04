@@ -28,6 +28,8 @@ export const DEMO_DIGEST = 'sha256:9f2c4a7e1b3d58a06c7f94e2d1a8b35c0e6f7a91b2c3d
 const OTHER_DIGEST = 'sha256:41d0b7c9e8a2f6531a0c9b8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f'
 export const DEMO_IMAGE_URI = 'registry.example.com/demo/app@' + DEMO_DIGEST
 export const TEMPLATE_VERSION = 'k8s-basic-1.4.0'
+export const DEMO_MANIFEST_DIGEST = '3b1f0c9d7a5e4286b0d1c3f5a79e2468b1d3f5a79c0e2468ace13579bdf02468'
+export const DEMO_PREVIEW_DIGEST = '7e5c3a19b7d5f3e1c9a7b5d3f1e9c7a5b3d1f9e7c5a3b1d9f7e5c3a1b9d7f5e3'
 
 // ---- 분석 ----
 
@@ -153,7 +155,7 @@ function planTimeline(target: Target, revision: number, mismatch: boolean): Time
     return { after: 0, event: { type: 'plan.step', phase: 'planning', status: 'running', data } }
   })
   const verified = mismatch ? OTHER_DIGEST : DEMO_DIGEST
-  items.push({ after: 0, event: { type: 'plan.ready', phase: 'planning', status: 'done', progress: 100, data: { plan_id: 'plan-demo', revision, template_version: TEMPLATE_VERSION, built_digest: DEMO_DIGEST, verified_digest: verified } } })
+  items.push({ after: 0, event: { type: 'plan.ready', phase: 'planning', status: 'done', progress: 100, data: { plan_id: 'plan-demo', revision, template_version: TEMPLATE_VERSION, built_digest: DEMO_DIGEST, verified_digest: verified, manifest_digest: DEMO_MANIFEST_DIGEST, preview_digest: DEMO_PREVIEW_DIGEST } } })
   return items
 }
 

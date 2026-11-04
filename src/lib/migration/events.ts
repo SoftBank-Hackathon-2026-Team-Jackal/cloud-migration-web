@@ -75,7 +75,8 @@ export type PlanStepData = {
 }
 
 /** 계획 완료. 필드는 모두 선택이라 예전의 빈 객체도 유효하다. */
-export type PlanReadyData = { plan_id?: string; revision?: number; template_version?: string; built_digest?: string; verified_digest?: string }
+/** manifest_digest·preview_digest는 백엔드 승인 API(ApprovalRequest)가 요구하는 값이다(sha256 16진수 64자). 승인 때 그대로 되돌려 보낸다. */
+export type PlanReadyData = { plan_id?: string; revision?: number; template_version?: string; built_digest?: string; verified_digest?: string; manifest_digest?: string; preview_digest?: string }
 
 export type ApprovalRequiredData = {
   excluded: string[]

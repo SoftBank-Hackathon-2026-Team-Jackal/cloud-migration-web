@@ -289,6 +289,29 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, { ok: true })
   }
 
+  // 백엔드 승인 API(openapi): POST /provisioning/plans/{plan_id}/revisions/{revision}/approvals
+  // 본문 {decision, scope, manifest_digest, preview_digest}. 목업은 승인을 기다리는 이전 하나에 적용한다.
+  const approvals = path.match(/^\/provisioning\/plans\/([^/]+)\/revisions\/(\d+)\/approvals$/)
+  if (req.method === 'POST' && approvals) {
+    const body = await readBody(req)
+    // 목업의 plan_id는 모두 같으므로, 승인을 기다리는 가장 최근 이전을 고른다.
+    const record = [...migrations.values()].reverse().find(item => item.status === 'waiting' && item.pending === 'approval')
+    if (!record) return send(res, 404, { error: 'PLAN_NOT_FOUND' })
+    if (Number(approvals[2]) !== record.revision) return send(res, 409, { error: 'STALE_REVISION', revision: record.revision })
+    const hex64 = /^[a-f0-9]{64}$/
+    if (!['APPROVE', 'REJECT'].includes(body.decision) || !['INFRASTRUCTURE', 'WORKLOADS', 'FULL'].includes(body.scope) || !hex64.test(String(body.manifest_digest)) || !hex64.test(String(body.preview_digest))) return send(res, 422, { error: 'VALIDATION_ERROR' })
+    if (body.decision === 'REJECT') {
+      // 거절: 목업은 계획 버전을 올려 계획 단계부터 다시 보낸다(실제 백엔드의 재계획 방식은 아직 미정).
+      cancelRun(record)
+      record.revision += 1
+      record.approved.plan = false
+      record.status = 'running'
+      void run(record, 'planning')
+      return send(res, 200, { decision: 'REJECT', revision: approvals[2] })
+    }
+    return approve(record, 'plan') ? send(res, 200, { decision: 'APPROVE', revision: approvals[2] }) : send(res, 409, { error: 'ALREADY_DECIDED' })
+  }
+
   const match = path.match(/^\/migrations\/([^/]+)(\/.*)?$/)
   const record = match ? migrations.get(match[1]) : undefined
   if (!match) return send(res, 404, { error: 'not_found' })

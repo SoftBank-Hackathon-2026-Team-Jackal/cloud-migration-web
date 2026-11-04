@@ -33,6 +33,15 @@ npm run mock:server                                   # http://127.0.0.1:8000 (P
 NEXT_PUBLIC_API_MODE=sse npm run dev                  # 다른 터미널
 ```
 
+## 백엔드 계약 상태 (SSE 모드)
+백엔드 `docs/contracts/openapi.yaml` 기준이다. 확정되지 않은 호출은 코드(`sseProvider.ts`)에 [가정]으로 적혀 있다.
+
+| 호출 | 상태 |
+| --- | --- |
+| `POST /migrations`, `GET /migrations/{id}`, `GET …/events`, `POST …/cancel` | 학습용 뼈대로 존재 (SSE 이벤트 이름·형식은 미정) |
+| `POST /provisioning/plans/{plan_id}/revisions/{revision}/approvals` | 확정 (승인·거절, Bearer 승인자 인증) |
+| 계획 수정(`REJECT` 뒤 재계획), 사람 검토 재시도, 두 번째 승인, 트래픽 롤백·재시도 | 가정 (백엔드 미정) |
+
 ## 테스트
 
 ```bash
