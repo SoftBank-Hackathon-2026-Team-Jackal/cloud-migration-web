@@ -177,6 +177,8 @@ export default function FlowApp() {
   function beginVoiceMigration() {
     if (stage !== 'intro' || voiceStarting.current) return
     voiceStarting.current = true
+    listenMode.current = false
+    setForceListen(false)
     setShowPrompt(false)
     setTarget('gcp') // 복제본의 로컬 데모 프로필: AWS EKS → GCP GKE
     voice.speak(voiceClips.start, {
@@ -194,6 +196,13 @@ export default function FlowApp() {
     if (message) voice.speak(message)
   }, [stage, voice.speak])
 
+  // 구체의 '듣는 중' 모양: "네." 뒤부터 시작 명령을 받을 때까지(마이크가 없어도 유지). 발표자는 L 키로 켜고 끌 수 있다.
+  const listenMode = useRef(false)
+  const [forceListen, setForceListen] = useState(false)
+  useEffect(() => {
+    listenMode.current = forceListen || (stage === 'intro' && started && !voice.speaking && !voiceStarting.current)
+  }, [forceListen, stage, started, voice.speaking])
+
   const reportAnalysisComplete = useCallback(() => voice.speak(voiceClips.analysis_done), [voice.speak])
   const reportSandboxComplete = useCallback(() => voice.speak(voiceClips.sandbox_done), [voice.speak])
   const reportProvisioningComplete = useCallback(() => voice.speak(voiceClips.provisioning_ready), [voice.speak])
@@ -208,11 +217,22 @@ export default function FlowApp() {
     if (isStage(wanted)) jump(wanted, false)
   }, [jump])
 
+  const presenterKeys = useRef({ stage, listen: () => {}, speakTest: () => {} })
+  presenterKeys.current = {
+    stage,
+    listen: () => { if (!started) { voice.armAudio(); setStarted(true) } setForceListen(current => !current) },
+    // 시작 안내 문구를 파동과 함께 재생만 한다(분석 화면으로 넘어가지 않음).
+    speakTest: () => { voice.armAudio(); if (!started) setStarted(true); setForceListen(false); voice.speak(voiceClips.start, { ripple: true }) },
+  }
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const tag = (event.target as HTMLElement | null)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
       if (event.key === 'd' || event.key === 'D') setDemoPanel(current => !current)
+      // 발표자 단축키(첫 화면): 현장에서 마이크·인식이 안 될 때 구체 반응을 직접 보여 준다.
+      if (presenterKeys.current.stage !== 'intro') return
+      if (event.key === 'l' || event.key === 'L') presenterKeys.current.listen()
+      if (event.key === 's' || event.key === 'S') presenterKeys.current.speakTest()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -253,7 +273,7 @@ export default function FlowApp() {
   }, [stage])
 
   return <main className={'experience' + (dissolving ? ' is-dissolving' : '')} aria-label={t('flow.aria')}>
-    <ParticleField morphToSphere={started} analysisMode={exited} voiceLevel={voice.voiceLevel} voiceActive={voice.voiceActive}
+    <ParticleField morphToSphere={started} analysisMode={exited} voiceLevel={voice.voiceLevel} voiceActive={voice.voiceActive} micLevel={voice.micLevel} listenMode={listenMode}
       onStart={wake} onSphereFormed={() => setSphereFormed(true)} />
     {stage === 'intro' && showPrompt && <section className="prompt-overlay" aria-label={t('prompt.aria')}>
       <ParticlePrompt key={lang} onComplete={() => setTextReady(true)} />

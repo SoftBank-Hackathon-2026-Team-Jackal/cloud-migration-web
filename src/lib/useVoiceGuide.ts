@@ -61,6 +61,10 @@ export function useVoiceGuide({ started, active, ask = false, onWake, onStart, o
   const finishRef = useRef<(() => void) | null>(null)
   const voiceLevel = useRef(0)
   const voiceActive = useRef(false)
+  // 사용자가 말하는 크기(0~1): 구체의 '듣는 중' 반응에 쓴다. 음성 인식과 별도로 마이크 음량만 읽는다.
+  const micLevel = useRef(0)
+  const micStreamRef = useRef<MediaStream | null>(null)
+  const micFrameRef = useRef(0)
   const speakRef = useRef<((text: string) => void) | null>(null)
 
   useEffect(() => { startedRef.current = started }, [started])
@@ -73,6 +77,10 @@ export function useVoiceGuide({ started, active, ask = false, onWake, onStart, o
       setMicEnabled(false)
       window.clearTimeout(restartTimer.current)
       recognitionRef.current?.stop()
+      window.cancelAnimationFrame(micFrameRef.current)
+      micStreamRef.current?.getTracks().forEach(track => track.stop())
+      micStreamRef.current = null
+      micLevel.current = 0
     }
   }, [active])
 
@@ -83,6 +91,8 @@ export function useVoiceGuide({ started, active, ask = false, onWake, onStart, o
       micRef.current = false
       window.clearTimeout(restartTimer.current)
       window.cancelAnimationFrame(frameRef.current)
+      window.cancelAnimationFrame(micFrameRef.current)
+      micStreamRef.current?.getTracks().forEach(track => track.stop())
       recognitionRef.current?.stop()
       if (audioRef.current) {
         audioRef.current.onended = null
@@ -216,10 +226,45 @@ export function useVoiceGuide({ started, active, ask = false, onWake, onStart, o
     synth.speak(utterance)
   }, [listen, stopAudio, stopListening])
 
+  const stopMicMeter = useCallback(() => {
+    window.cancelAnimationFrame(micFrameRef.current)
+    micStreamRef.current?.getTracks().forEach(track => track.stop())
+    micStreamRef.current = null
+    micLevel.current = 0
+  }, [])
+
+  // 시연장 소음에 구체가 계속 떨리지 않도록 작은 소리는 버리고(게이트) 큰 소리는 상한을 둔다.
+  // 자칼이 말하는 동안에는 스피커 소리가 마이크로 들어오므로 0으로 둔다.
+  const startMicMeter = useCallback(() => {
+    if (micStreamRef.current || !navigator.mediaDevices?.getUserMedia) return
+    void navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }).then(stream => {
+      if (!micRef.current) { stream.getTracks().forEach(track => track.stop()); return }
+      const context = contextRef.current
+      if (!context) { stream.getTracks().forEach(track => track.stop()); return }
+      micStreamRef.current = stream
+      const analyser = context.createAnalyser()
+      analyser.fftSize = 512
+      context.createMediaStreamSource(stream).connect(analyser)
+      const samples = new Uint8Array(analyser.fftSize)
+      const GATE = .1
+      const measure = () => {
+        analyser.getByteTimeDomainData(samples)
+        let energy = 0
+        for (const value of samples) { const sample = (value - 128) / 128; energy += sample * sample }
+        const raw = Math.min(1, Math.sqrt(energy / samples.length) * 7)
+        const gated = speakingRef.current ? 0 : Math.max(0, (raw - GATE) / (1 - GATE))
+        micLevel.current += (Math.min(.9, gated) - micLevel.current) * (gated > micLevel.current ? .35 : .08)
+        micFrameRef.current = window.requestAnimationFrame(measure)
+      }
+      measure()
+    }).catch(() => { /* 음량 없이도 '듣는 중' 모양은 유지된다 */ })
+  }, [])
+
   const toggleMic = useCallback(() => {
     if (micRef.current) {
       micRef.current = false
       setMicEnabled(false)
+      stopMicMeter()
       stopListening()
       setError('')
       return
@@ -273,7 +318,8 @@ export function useVoiceGuide({ started, active, ask = false, onWake, onStart, o
     setMicEnabled(true)
     setError('')
     listen()
-  }, [armAudio, listen, stopListening])
+    startMicMeter()
+  }, [armAudio, listen, stopListening, startMicMeter, stopMicMeter])
 
   // 이전 방문에서 권한을 허용했다면 첫 화면부터 호출어를 듣는다.
   // 최초 권한 요청은 브라우저의 사용자 동작 제한 때문에 화면 버튼으로 시작한다.
@@ -299,5 +345,5 @@ export function useVoiceGuide({ started, active, ask = false, onWake, onStart, o
     } else armAudio()
   }, [armAudio, stopAudio])
 
-  return { micEnabled, recognitionSupported, soundEnabled, speaking, heard, message, error, speak, speakText, toggleMic, toggleSound, armAudio, voiceLevel, voiceActive }
+  return { micEnabled, recognitionSupported, soundEnabled, speaking, heard, message, error, speak, speakText, toggleMic, toggleSound, armAudio, voiceLevel, voiceActive, micLevel }
 }
