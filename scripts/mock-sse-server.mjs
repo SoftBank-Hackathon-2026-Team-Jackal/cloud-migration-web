@@ -32,7 +32,7 @@ const CORS = {
   'Access-Control-Expose-Headers': 'Content-Type',
 }
 
-/** @typedef {{ id: string, target: 'aws'|'gcp'|'onprem', status: string, phase: string, seq: number, history: any[], approved: { plan: boolean, cutover: boolean, review: boolean }, aiFixes: number, revision: number, review: boolean, retried: boolean }} Record */
+/** @typedef {{ id: string, target: 'gcp'|'onprem', status: string, phase: string, seq: number, history: any[], approved: { plan: boolean, cutover: boolean, review: boolean }, aiFixes: number, revision: number, review: boolean, retried: boolean }} Record */
 /** 실행 중인 상태(저장하지 않는 것): 연결된 클라이언트, 대기 중인 타이머, 트래픽 시뮬레이터 */
 const live = new Map()
 /** @type {Map<string, Record>} */

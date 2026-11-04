@@ -656,7 +656,6 @@ export const en: Record<MsgKey, string> = {
   "cancel.title": "The migration was cancelled",
   "cancel.lead": "This migration was cancelled and will not continue. You can go back to the start and begin again.",
   "cancel.home": "Back to start",
-  "target.aws": "AWS",
   "setup.destRegion": "Target region",
   "setup.agentId": "Agent ID",
   "setup.agentIdPh": "e.g. agent-seoul-01",

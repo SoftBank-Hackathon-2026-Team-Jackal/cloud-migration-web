@@ -6,7 +6,7 @@
  */
 import type { AnalysisFindingData, BuildErrorCode, BuildFixData, DataProgressData, DraftEvent, FixLine, FlowPath, Grade, PlanStepData, ReportData, Target } from './events'
 
-/** events.ts의 pathOf와 같다(이 모듈은 런타임 import가 없어야 Node가 그대로 읽는다). AWS 대상은 GCP와 같은 경로. */
+/** events.ts의 pathOf와 같다(이 모듈은 런타임 import가 없어야 Node가 그대로 읽는다). */
 const pathOf = (target: Target): FlowPath => (target === 'onprem' ? 'onprem' : 'gcp')
 
 export type TimedDraft = { after: number; event: DraftEvent }

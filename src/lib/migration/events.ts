@@ -3,9 +3,9 @@
  * 이 파일은 타입만 담는다(런타임 import 없음): 목업 서버와 단위 테스트가 Node에서 그대로 읽는다.
  */
 
-export type Target = 'aws' | 'gcp' | 'onprem'
+export type Target = 'gcp' | 'onprem'
 
-/** 화면 흐름(구성도·구축 대본)이 쓰는 경로. 정해 둔 기본값: AWS 대상은 클라우드(GCP와 같은) 경로를 쓴다. */
+/** 화면 흐름(구성도·구축 대본)이 쓰는 경로. 원본은 AWS이고 대상은 GCP·온프레미스다. */
 /** 이미지 Digest 앞 12자리(sha256: 제외) */
 export function shortDigest(digest: string | null | undefined): string {
   return digest ? digest.replace(/^sha256:/, '').slice(0, 12) : ''
@@ -172,11 +172,10 @@ export type DraftEvent = MigrationEvent extends infer E ? E extends MigrationEve
 
 export type ProviderName = 'AWS' | 'GCP' | 'ON_PREM'
 export const PROFILE_OF: Record<Target, { provider: ProviderName; profile: string }> = {
-  aws: { provider: 'AWS', profile: 'aws-ec2-basic' },
   gcp: { provider: 'GCP', profile: 'gcp-vm-basic' },
   onprem: { provider: 'ON_PREM', profile: 'onprem-k3s-basic' },
 }
-export const DEFAULT_REGION: Partial<Record<Target, string>> = { aws: 'ap-northeast-2', gcp: 'asia-northeast3' }
+export const DEFAULT_REGION: Partial<Record<Target, string>> = { gcp: 'asia-northeast3' }
 
 /**
  * 이전 시작 요청. 설정 화면의 나머지 입력(액세스 키, 저장소 주소)은 계속 보내지 않는다.
@@ -197,12 +196,12 @@ export function startRequestFor(target: Target, options: { region?: string; agen
   return request
 }
 
-/** 시작 요청에서 대상(aws·gcp·onprem)을 읽는다. 예전 형식({target:'gcp'})도 받아 준다. */
+/** 시작 요청에서 대상(gcp·onprem)을 읽는다. 예전 형식({target:'gcp'})도 받아 준다. */
 export function targetOfRequest(request: { target: unknown }): Target {
   const raw = request.target
-  if (raw === 'aws' || raw === 'gcp' || raw === 'onprem') return raw
+  if (raw === 'gcp' || raw === 'onprem') return raw
   const provider = typeof raw === 'object' && raw ? (raw as { provider?: string }).provider : undefined
-  return provider === 'AWS' ? 'aws' : provider === 'ON_PREM' ? 'onprem' : 'gcp'
+  return provider === 'ON_PREM' ? 'onprem' : 'gcp'
 }
 
 /** 리포트(GET /migrations/{id}/report). 단계별 소요 시간과 AI 수정 개수. */

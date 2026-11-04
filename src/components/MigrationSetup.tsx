@@ -7,8 +7,7 @@ import { DEFAULT_REGION, startRequestFor, type StartRequest, type Target } from 
 type Props = { target: Target; onTarget: (target: Target) => void; onNext: (request: StartRequest) => void }
 
 // 대상 리전 선택지(클라우드 대상). 첫 항목이 기본값이다.
-const REGIONS: Record<'aws' | 'gcp', string[]> = {
-  aws: ['ap-northeast-2', 'ap-northeast-1', 'us-east-1'],
+const REGIONS: Record<'gcp', string[]> = {
   gcp: ['asia-northeast3', 'asia-northeast1', 'us-central1'],
 }
 
@@ -73,9 +72,9 @@ export default function MigrationSetup({ target, onTarget, onNext }: Props) {
         <div className="migration-field">
           <span className="migration-label">{t('setup.target')}</span>
           <div className="migration-segment" role="radiogroup" aria-label={t('setup.targetAria')}>
-            {(['aws', 'gcp', 'onprem'] as const).map(value => <button key={value} type="button"
+            {(['gcp', 'onprem'] as const).map(value => <button key={value} type="button"
               role="radio" aria-checked={target === value} className={target === value ? 'is-selected' : ''}
-              onClick={() => onTarget(value)}>{t(value === 'onprem' ? 'target.onprem.short' : value === 'aws' ? 'target.aws' : 'target.gcp')}</button>)}
+              onClick={() => onTarget(value)}>{t(value === 'gcp' ? 'target.gcp' : 'target.onprem.short')}</button>)}
           </div>
         </div>
         {target === 'onprem'

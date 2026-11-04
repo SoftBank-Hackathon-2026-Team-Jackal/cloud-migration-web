@@ -16,13 +16,13 @@ test('Digest는 sha256: 뒤 12자리로 줄인다', () => {
 })
 
 test('시작 요청: provider·profile은 대상에서 정하고 리전/Agent ID는 대상에 맞는 것만 담는다', () => {
-  assert.deepEqual(startRequestFor('aws'), { target: { provider: 'AWS', profile: 'aws-ec2-basic', region: 'ap-northeast-2' } })
+  assert.deepEqual(startRequestFor('gcp'), { target: { provider: 'GCP', profile: 'gcp-vm-basic', region: 'asia-northeast3' } })
   assert.deepEqual(startRequestFor('gcp', { region: 'us-central1', envFileRef: 'local:.env' }), { target: { provider: 'GCP', profile: 'gcp-vm-basic', region: 'us-central1' }, env_file_ref: 'local:.env' })
   assert.deepEqual(startRequestFor('onprem', { agentId: 'agent-1', region: 'ignored' }), { target: { provider: 'ON_PREM', profile: 'onprem-k3s-basic', agent_id: 'agent-1' } })
 })
 
 test('시작 요청에서 대상 읽기: 새 형식과 예전 형식 모두', () => {
-  assert.equal(targetOfRequest(startRequestFor('aws')), 'aws')
+  assert.equal(targetOfRequest(startRequestFor('gcp')), 'gcp')
   assert.equal(targetOfRequest(startRequestFor('onprem')), 'onprem')
   assert.equal(targetOfRequest({ target: 'gcp' }), 'gcp')
   assert.equal(targetOfRequest({} as { target: unknown }), 'gcp')

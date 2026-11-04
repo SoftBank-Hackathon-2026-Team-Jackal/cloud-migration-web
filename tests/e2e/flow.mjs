@@ -46,9 +46,9 @@ try {
   }
   await press('.prompt-yes')
   note('소개 → 설정')
-  // 설정 화면: 대상을 AWS로 고르면 대상 리전 선택이 나온다(기본 ap-northeast-2).
+  // 설정 화면: 대상을 GCP로 고르면 대상 리전 선택이 나온다(기본 ap-northeast-2).
   await page.locator('[role=radio]').first().click()
-  check(await page.locator('select[name=destRegion]').inputValue() === 'ap-northeast-2', 'AWS 선택 시 대상 리전 기본값 ap-northeast-2')
+  check(await page.locator('select[name=destRegion]').inputValue() === 'asia-northeast3', 'GCP 선택 시 대상 리전 기본값 asia-northeast3')
   await press('.migration-next')
 
   await press('.analysis-next-area button')

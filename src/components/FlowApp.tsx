@@ -35,7 +35,7 @@ export default function FlowApp() {
   const [sphereFormed, setSphereFormed] = useState(false)
   const [showPrompt, setShowPrompt] = useState(false)
   const [textReady, setTextReady] = useState(false)
-  // 설정 화면에서 고른 대상(aws·gcp·onprem). 단계 화면은 경로(gcp·onprem)만 쓴다: AWS 대상은 GCP와 같은 클라우드 경로.
+  // 설정 화면에서 고른 대상(gcp·onprem).
   const [choice, setTarget] = useState<SetupTarget>('onprem')
   const target = pathOf(choice)
   const [demoPanel, setDemoPanel] = useState(false)
@@ -107,7 +107,7 @@ export default function FlowApp() {
     const params = new URLSearchParams(window.location.search)
     const wanted = params.get('stage')
     const wantedTarget = params.get('target')
-    if (wantedTarget === 'aws' || wantedTarget === 'gcp' || wantedTarget === 'onprem') setTarget(wantedTarget)
+    if (wantedTarget === 'gcp' || wantedTarget === 'onprem') setTarget(wantedTarget)
     if (params.get('demo') === '1') setDemoPanel(true)
     if (isStage(wanted)) jump(wanted, false)
   }, [jump])

@@ -656,7 +656,6 @@ export const ja: Record<MsgKey, string> = {
   "cancel.title": "移行がキャンセルされました",
   "cancel.lead": "この移行はキャンセルされ、これ以上進みません。最初に戻って、やり直せます。",
   "cancel.home": "最初へ",
-  "target.aws": "AWS",
   "setup.destRegion": "移行先リージョン",
   "setup.agentId": "Agent ID",
   "setup.agentIdPh": "例: agent-seoul-01",
