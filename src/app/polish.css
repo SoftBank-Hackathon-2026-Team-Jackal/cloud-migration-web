@@ -94,3 +94,10 @@
 .flow-chart-scale{position:absolute;top:8px;right:12px;color:var(--text-muted);font-size:11px;font-variant-numeric:tabular-nums}
 .flow-chart-scale.is-zero{top:auto;bottom:8px}
 .flow-chart-dot{position:absolute;width:7px;height:7px;margin:-3.5px 0 0 -3.5px;border-radius:50%;background:#111;box-shadow:0 0 0 3px rgba(17,17,17,.1);transition:left .6s var(--ease-out),top .6s var(--ease-out)}
+
+/* 두 번째 승인(DB 전환): 첫 번째 승인과 같은 '결정 + 구성도' 구성으로 맞춤 */
+.cutover-approval{width:min(900px,100%)}
+.cutover-approval .approval-diagram{justify-content:center}
+.cutover-approval .approval-diagram-body{justify-content:center}
+.cutover-approval .approval-diagram-body>.arch{flex:0 0 auto;width:100%;max-width:420px;height:auto;max-height:260px;margin:0 auto}
+.cutover-approval .approval-diagram{contain:none}

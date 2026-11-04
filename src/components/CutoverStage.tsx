@@ -46,7 +46,8 @@ function CutoverBody({ ready, target, phase, setPhase, onRestart, onComplete }: 
 
   if (phase === 'approve') {
     return <><div className="flow-center">
-      <div className="approval-panel approval-inline">
+      <div className="approval-panel approval-wide cutover-approval">
+        <div className="approval-main">
         <small className="approval-step">{t('cutover.approve.step')} <span>DEMO</span></small>
         <h2>{t('cutover.approve.title')}</h2>
         <p className="approval-lead">{t('cutover.approve.lead', { target: targetName })}</p>
@@ -62,6 +63,15 @@ function CutoverBody({ ready, target, phase, setPhase, onRestart, onComplete }: 
         <div className="approval-actions">
           <button type="button" className="flow-primary" disabled={!checked} onClick={() => runTransition(() => { provider.approveCutover(); setPhase('running') })}>{t('cutover.approve.go')} <span aria-hidden="true">→</span></button>
         </div>
+        </div>
+        {/* 첫 번째 승인과 같은 구성: 왼쪽 결정, 오른쪽 구성도. 전환 전(0단계) 모습을 보여 준다. */}
+        <aside className="approval-diagram" aria-label={t('cut.aria')}>
+          <div className="approval-diagram-head"><strong>{t('cut.aria')}</strong></div>
+          <div className="approval-diagram-body">
+            <CutoverDiagram steps={0} />
+            <small className="approval-diagram-note">AWS → {targetName}</small>
+          </div>
+        </aside>
       </div>
     </div><ArriveMorph key="cut-approve" /></>
   }
