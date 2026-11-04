@@ -20,6 +20,12 @@
       "$ref": "#/$defs/event:plan.step"
     },
     {
+      "$ref": "#/$defs/event:build.result"
+    },
+    {
+      "$ref": "#/$defs/event:build.review"
+    },
+    {
       "$ref": "#/$defs/event:plan.ready"
     },
     {
@@ -27,6 +33,9 @@
     },
     {
       "$ref": "#/$defs/event:provision.resource"
+    },
+    {
+      "$ref": "#/$defs/event:provision.check"
     },
     {
       "$ref": "#/$defs/event:data.progress"
@@ -148,6 +157,10 @@
         "fixed": {
           "type": "integer",
           "minimum": 0
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
         }
       },
       "required": [
@@ -248,7 +261,32 @@
     },
     "data:plan.ready": {
       "type": "object",
-      "properties": {},
+      "properties": {
+        "plan_id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "template_version": {
+          "type": "string"
+        },
+        "built_digest": {
+          "type": "string"
+        },
+        "verified_digest": {
+          "type": "string"
+        },
+        "manifest_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "preview_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
       "required": [],
       "additionalProperties": false
     },
@@ -1174,6 +1212,12 @@
           "$ref": "#/$defs/event:plan.step"
         },
         {
+          "$ref": "#/$defs/event:build.result"
+        },
+        {
+          "$ref": "#/$defs/event:build.review"
+        },
+        {
           "$ref": "#/$defs/event:plan.ready"
         },
         {
@@ -1181,6 +1225,9 @@
         },
         {
           "$ref": "#/$defs/event:provision.resource"
+        },
+        {
+          "$ref": "#/$defs/event:provision.check"
         },
         {
           "$ref": "#/$defs/event:data.progress"
@@ -1198,6 +1245,232 @@
           "$ref": "#/$defs/event:error"
         }
       ]
+    },
+    "data:build.result": {
+      "type": "object",
+      "properties": {
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "status": {
+          "enum": [
+            "SUCCEEDED",
+            "FAILED"
+          ]
+        },
+        "digest": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "image_uri": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reused": {
+          "type": "boolean"
+        },
+        "error_code": {
+          "enum": [
+            "SOURCE_NOT_FOUND",
+            "DOCKERFILE_MISSING",
+            "BUILD_FAILED",
+            "PUSH_FAILED",
+            "TIMEOUT",
+            null
+          ]
+        }
+      },
+      "required": [
+        "attempt",
+        "max_attempts",
+        "status",
+        "digest",
+        "image_uri",
+        "reused",
+        "error_code"
+      ],
+      "additionalProperties": false
+    },
+    "data:build.review": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "enum": [
+            "max_attempts"
+          ]
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "reason",
+        "attempts"
+      ],
+      "additionalProperties": false
+    },
+    "data:provision.check": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "enum": [
+            "pods_ready",
+            "db_connect",
+            "app_health",
+            "retest"
+          ]
+        },
+        "state": {
+          "enum": [
+            "running",
+            "done",
+            "failed"
+          ]
+        },
+        "passed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "event:build.result": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "type": {
+          "const": "build.result"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/data:build.result"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "phase",
+        "type",
+        "status",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "event:build.review": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "type": {
+          "const": "build.review"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/data:build.review"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "phase",
+        "type",
+        "status",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "event:provision.check": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "type": {
+          "const": "provision.check"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/data:provision.check"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "phase",
+        "type",
+        "status",
+        "data"
+      ],
+      "additionalProperties": false
     }
   }
 }

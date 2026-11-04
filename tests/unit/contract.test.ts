@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import Ajv from 'ajv/dist/2020.js'
 import { dataProgressAt, reportFor, timelineFor, type ScriptedPhase } from '../../src/lib/migration/script.ts'
 import { TrafficSim } from '../../src/lib/migration/trafficSim.ts'
-import type { Target } from '../../src/lib/migration/events.ts'
+import { startRequestFor, type Target } from '../../src/lib/migration/events.ts'
 
 const read = (path: string) => JSON.parse(readFileSync(new URL('../../' + path, import.meta.url), 'utf8'))
 const eventsSchema = read('contract/events.schema.json')
@@ -51,6 +51,21 @@ test('목업 대본의 모든 이벤트가 스키마를 통과한다(target × a
   assert.ok(count > 300, '검증한 이벤트 수: ' + count)
 })
 
+test('사람 검토·이미지 불일치 데모 대본도 스키마를 통과한다', () => {
+  let reviews = 0
+  for (const target of ['gcp', 'onprem'] as Target[]) {
+    for (const event of [
+      ...timelineFor('build', { target, aiFixes: 1, review: true }),
+      ...timelineFor('build', { target, aiFixes: 1, retried: true }),
+      ...timelineFor('planning', { target, aiFixes: 1, digestMismatch: true }),
+    ]) {
+      assertValid(validateEvent, stamp(event.event), 'demo/' + target + '/' + event.event.type)
+      if (event.event.type === 'build.review') reviews++
+    }
+  }
+  assert.equal(reviews, 2, 'build.review 이벤트')
+})
+
 test('데이터 복제 진행 값(0~30초)이 스키마를 통과한다', () => {
   for (let tick = 0; tick <= 120; tick++) {
     const data = dataProgressAt(tick / 4)
@@ -73,10 +88,15 @@ test('트래픽 시뮬레이터의 스냅샷(적용·장애 주입·롤백·재�
 })
 
 test('REST 요청·응답 형식', () => {
-  assertValid(validateRest('StartRequest'), { target: 'gcp' }, 'StartRequest')
+  for (const target of ['gcp', 'onprem'] as const) assertValid(validateRest('StartRequest'), { project_id: 'demo', source_provider: 'AWS', target_provider: startRequestFor(target).target.provider, ...startRequestFor(target, { envFileRef: 'local:.env' }) }, 'StartRequest ' + target)
   assertValid(validateRest('Report'), reportFor(2), 'Report')
   assert.equal(validateRest('StartRequest')({ target: 'aws' }), false)
-  assert.equal(validateRest('StartRequest')({ target: 'gcp', password: 'x' }), false)
+  assert.equal(validateRest('StartRequest')({ target: { provider: 'AWS', profile: 'aws-ec2-basic' } }), false, 'AWS는 대상이 아니다')
+  assert.equal(validateRest('StartRequest')({ ...startRequestFor('gcp'), password: 'x' }), false)
+  assertValid(validateRest('StartResponse'), { workflow_id: 'wf-1', run_id: 'run-1', mode: 'scaffold' }, 'StartResponse(백엔드)')
+  const digest = 'a'.repeat(64)
+  assertValid(validateRest('ApprovalRequest'), { decision: 'APPROVE', scope: 'FULL', manifest_digest: digest, preview_digest: digest }, 'ApprovalRequest')
+  assert.equal(validateRest('ApprovalRequest')({ decision: 'APPROVE', scope: 'FULL', manifest_digest: 'x', preview_digest: digest }), false, 'digest 형식')
   assert.equal(validateRest('Report')({ stages: [{ id: 'a' }], ai_fixes: 1 }), false)
 })
 
@@ -117,7 +137,7 @@ test('목업 서버가 SSE로 보내는 이벤트(snapshot 포함)가 스키마�
   const controller = new AbortController()
   try {
     await waitForServer(port)
-    const created = await fetch(base + '/migrations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target: 'gcp' }) })
+    const created = await fetch(base + '/migrations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project_id: 'demo', source_provider: 'AWS', target_provider: 'GCP', ...startRequestFor('gcp') }) })
     assert.equal(created.status, 201)
     const { id } = await created.json() as { id: string }
     assertValid(validateRest('StartResponse'), { id, status: 'running' }, 'StartResponse')
@@ -145,14 +165,14 @@ test('목업 서버가 SSE로 보내는 이벤트(snapshot 포함)가 스키마�
           approved = true
           assert.equal((await fetch(`${base}/migrations/${id}/approve`, { method: 'POST' })).status, 200)
         }
-        if (approved && seen.filter(type => type === 'provision.resource').length >= 2 && !cancelled) {
+        if (approved && seen.includes('provision.check') && !cancelled) {
           cancelled = true
           await fetch(`${base}/migrations/${id}/cancel`, { method: 'POST' })
         }
         if (cancelled && event.type === 'error') break outer
       }
     }
-    for (const type of ['snapshot', 'analysis.finding', 'analysis.done', 'build.check', 'build.fix', 'plan.step', 'plan.ready', 'approval.required', 'provision.resource', 'error']) {
+    for (const type of ['snapshot', 'analysis.finding', 'analysis.done', 'build.check', 'build.fix', 'build.result', 'plan.step', 'plan.ready', 'approval.required', 'provision.resource', 'provision.check', 'error']) {
       assert.ok(seen.includes(type), type + ' 이벤트를 받지 못했습니다')
     }
     const report = await (await fetch(`${base}/migrations/${id}/report`)).json()

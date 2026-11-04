@@ -6,11 +6,51 @@
     "StartRequest": {
       "type": "object",
       "properties": {
-        "target": {
+        "project_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_provider": {
           "enum": [
-            "gcp",
-            "onprem"
+            "AWS"
           ]
+        },
+        "target_provider": {
+          "enum": [
+            "GCP",
+            "ON_PREM"
+          ]
+        },
+        "target": {
+          "type": "object",
+          "properties": {
+            "provider": {
+              "enum": [
+                "GCP",
+                "ON_PREM"
+              ]
+            },
+            "profile": {
+              "type": "string"
+            },
+            "region": {
+              "type": "string"
+            },
+            "agent_id": {
+              "type": "string"
+            },
+            "credential_ref": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "provider",
+            "profile"
+          ],
+          "additionalProperties": false
+        },
+        "env_file_ref": {
+          "type": "string"
         }
       },
       "required": [
@@ -24,13 +64,40 @@
         "id": {
           "type": "string"
         },
+        "workflow_id": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
         "status": {
+          "type": "string"
+        },
+        "mode": {
           "type": "string"
         }
       },
-      "required": [
-        "id",
-        "status"
+      "anyOf": [
+        {
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ]
+        },
+        {
+          "properties": {
+            "workflow_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "workflow_id"
+          ]
+        }
       ],
       "additionalProperties": false
     },
@@ -70,6 +137,39 @@
     },
     "Snapshot": {
       "$ref": "events.schema.json#/$defs/snapshotData"
+    },
+    "ApprovalRequest": {
+      "type": "object",
+      "properties": {
+        "decision": {
+          "enum": [
+            "APPROVE",
+            "REJECT"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "INFRASTRUCTURE",
+            "WORKLOADS",
+            "FULL"
+          ]
+        },
+        "manifest_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "preview_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "decision",
+        "scope",
+        "manifest_digest",
+        "preview_digest"
+      ],
+      "additionalProperties": false
     }
   }
 }
