@@ -1,6 +1,7 @@
-import { startRequestFor, type BackendPhase, type ErrorData, type MigrationEvent, type PlanReadyData, type StartRequest } from './events'
+import { startRequestFor, type BackendPhase, type ErrorData, type MigrationEvent, type PlanReadyData, type StartRequest } from './events.ts'
 import type { EnterContext, MigrationProvider, ProviderHost } from './provider'
 import type { ReportData } from './events'
+import type { SseStartMode } from './config'
 
 type Options = {
   baseUrl: string
@@ -9,7 +10,13 @@ type Options = {
    * 인증 방식이 정해지면 이 한 곳만 채우면 된다.
    */
   getHeaders?: () => Record<string, string> | Promise<Record<string, string>>
+  /** 시작 방식(config.ts의 sseStartMode). 기본 wait: 백엔드가 source를 받기 전까지 POST /migrations를 부르지 않는다. */
+  startMode?: SseStartMode
 }
+
+/** 이전을 시작하지 않고 멈춘 이유(StatusPanel이 실패가 아니라 대기 안내로 보여 준다). */
+export const BACKEND_PENDING = 'backend_pending'
+export const SOURCE_REQUIRED = 'source_required'
 
 // 백엔드 시작 요청의 project_id. 프로젝트 개념이 정해지기 전까지 고정값을 쓴다.
 const PROJECT_ID = 'demo'
@@ -72,12 +79,25 @@ export class SseProvider implements MigrationProvider {
     return typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('review') === '1' ? '?review=1' : ''
   }
 
+  private get startMode(): SseStartMode {
+    return this.options.startMode ?? 'wait'
+  }
+
+  /** 시작하지 않고 대기 안내를 띄운다(분석이 시작된 것처럼 보이지 않게). */
+  private hold(code: typeof BACKEND_PENDING | typeof SOURCE_REQUIRED) {
+    this.fail({ code, message: '', phase: null, retryable: false })
+  }
+
   start(request: StartRequest) {
     this.closeStream()
     this.migrationId = null
     this.lastId = ''
     this.plan = null
+    this.starting = null
     this.host.dispatch({ type: 'reset' })
+    // [#60 전] 백엔드 /migrations는 source를 아직 받지 않는다: 부르지 않는다.
+    if (this.startMode === 'wait') { this.hold(BACKEND_PENDING); return }
+    if (this.startMode === 'source' && !request.source) { this.hold(SOURCE_REQUIRED); return }
     this.starting = (async () => {
       try {
         const response = await fetch(this.options.baseUrl + '/migrations' + this.demoQuery(), {
@@ -101,8 +121,12 @@ export class SseProvider implements MigrationProvider {
   }
 
   enter(_phase: BackendPhase, context: EnterContext): () => void {
-    // 설정 화면을 거치지 않고 주소로 단계를 연 경우에는 기본 요청으로 이전을 하나 시작한다.
-    if (!this.migrationId && !this.starting) this.start(startRequestFor(context.target))
+    // 설정 화면을 거치지 않고 주소로 단계를 연 경우: 저장소(source)가 없으므로 시작하지 않고 대기 안내를 띄운다.
+    // 목업 SSE 서버 시험(legacy)만 예전처럼 기본 요청으로 이전을 하나 시작한다.
+    if (!this.migrationId && !this.starting) {
+      if (this.startMode === 'legacy') this.start(startRequestFor(context.target))
+      else this.hold(this.startMode === 'wait' ? BACKEND_PENDING : SOURCE_REQUIRED)
+    }
     return () => {}
   }
 

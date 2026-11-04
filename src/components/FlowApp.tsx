@@ -20,6 +20,7 @@ import { ConnectionToast, StatusPanel } from './MigrationStatus'
 import { ArriveMorph, DISSOLVE_MS, TransitionLayer } from './ScreenFx'
 import { useI18n, type MsgKey } from '../lib/i18n'
 import { useMigration } from '../lib/migration/MigrationProvider'
+import { requiresSource } from '../lib/migration/config'
 import { captureScreen, fx, recentHandoff, registerTransition } from '../lib/particleHandoff'
 import { isStage, STAGE_ORDER, type Stage } from '../lib/stages'
 import { pathOf, type Target as SetupTarget } from '../lib/migration/events'
@@ -48,7 +49,9 @@ type ChatMessage = { id: number; role: 'user' | 'agent'; text: string; tag?: 're
 
 export default function FlowApp() {
   const { t, lang } = useI18n()
-  const { provider, state: migrationState } = useMigration()
+  const { provider, state: migrationState, mode } = useMigration()
+  // SSE 모드(목업 서버 시험 제외)는 고른 저장소 없이 이전을 시작하지 않는다: 음성 시작도 설정 화면으로 보낸다.
+  const needsSource = requiresSource(mode)
   const [stage, setStage] = useState<Stage>('intro')
   const [started, setStarted] = useState(false)
   const [sphereFormed, setSphereFormed] = useState(false)
@@ -176,6 +179,7 @@ export default function FlowApp() {
 
   function beginVoiceMigration() {
     if (stage !== 'intro' || voiceStarting.current) return
+    if (needsSource) { go('setup'); return }
     voiceStarting.current = true
     listenMode.current = false
     setForceListen(false)
@@ -187,11 +191,15 @@ export default function FlowApp() {
     })
   }
 
+  // 설정 화면에서 시작 요청을 보냈는지(SSE에서 주소로 바로 연 단계와 구분한다)
+  const startRequested = useRef(false)
   useEffect(() => {
     const previous = previousStage.current
     previousStage.current = stage
     if (previous === 'intro' && stage !== 'intro') setChatOpen(false)
     if (stage === 'intro' || previous === stage) return
+    // 저장소 없이 단계를 연 SSE 화면은 시작되지 않았으므로 "시작했다"는 안내를 읽지 않는다.
+    if (needsSource && stage !== 'setup' && !startRequested.current) return
     const message = REPORT[stage]
     if (message) voice.speak(message)
   }, [stage, voice.speak])
@@ -284,7 +292,7 @@ export default function FlowApp() {
           onClick={() => go('setup')}>{t('agent.setup')}</button>}
       </div>
     </section>}
-    {stage === 'setup' && <MigrationSetup target={choice} onTarget={setTarget} onNext={request => { provider.start(request); go('analysis') }} />}
+    {stage === 'setup' && <MigrationSetup target={choice} onTarget={setTarget} onNext={request => { startRequested.current = true; provider.start(request); go('analysis') }} />}
     {stage === 'setup' && <ArriveMorph key={'setup' + round} />}
     {stage === 'analysis' && <AnalysisStage key={round} target={target} onComplete={reportAnalysisComplete} onAdvance={() => go('rehearsal')} />}
     {stage === 'rehearsal' && <RehearsalStage key={round} target={target} onComplete={reportSandboxComplete} onNext={next('planning')} />}
@@ -298,7 +306,7 @@ export default function FlowApp() {
     {stage === 'cutover' && <CutoverStage key={round + target} target={target}
       onComplete={() => voice.speak(voiceClips.migration_done)}
       onRestart={() => jump('intro')} />}
-    <StatusPanel stage={stage} onHome={() => jump('intro')} />
+    <StatusPanel stage={stage} onHome={() => jump('intro')} onSetup={() => jump('setup')} />
     <TransitionLayer />
     {backTo && !dissolving && <BackButton onBack={goBack} />}
     <div className={'flow-toast' + (notice ? ' is-on' : '')} role="status" aria-hidden={!notice}>{t('nav.noBack')}</div>

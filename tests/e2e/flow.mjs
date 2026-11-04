@@ -4,7 +4,8 @@
  * 목업 모드와 SSE 모드에서 같은 흐름이 끝까지 돈다.
  *
  *   BASE_URL=http://127.0.0.1:3000 node tests/e2e/flow.mjs          # 이미 떠 있는 앱(npm run dev / start)
- *   NEXT_PUBLIC_API_MODE=sse 로 만든 앱 + npm run mock:server 를 띄우고 같은 명령을 실행하면 SSE 모드를 시험한다.
+ *   NEXT_PUBLIC_API_MODE=sse NEXT_PUBLIC_SSE_START=legacy 로 만든 앱 + npm run mock:server 를 띄우고 같은 명령을 실행하면 SSE 모드를 시험한다.
+ *   (legacy가 아니면 SSE 모드는 저장소를 고르기 전에는 시작하지 않는다: tests/e2e/github.mjs 참고)
  *
  * playwright가 필요하다(저장소 의존성에는 넣지 않았다): 전역 설치(NODE_PATH) 또는 `npm i --no-save playwright`.
  */

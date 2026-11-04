@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useContext, useEffect, useMemo, useReducer, useState, type ReactNode } from 'react'
-import { apiBase, apiMode, type ApiMode } from './config'
+import { apiBase, apiMode, sseStartMode, type ApiMode } from './config'
 import type { BackendPhase, Target } from './events'
 import { initialState, reducer, type MigrationState } from './reducer'
 import { reportFor } from './script'
@@ -27,7 +27,7 @@ export function MigrationProvider({ children, mode = apiMode() }: { children: Re
     // 목업은 리포트의 값(소요 시간·AI 수정 개수)을 처음부터 알고 있다.
     mode === 'mock' ? { ...initialState, report: reportFor(aiFixCount()) } : initialState)
   const [provider] = useState<Provider>(() => mode === 'sse'
-    ? new SseProvider({ dispatch }, { baseUrl: apiBase() })
+    ? new SseProvider({ dispatch }, { baseUrl: apiBase(), startMode: sseStartMode() })
     : new MockProvider({ dispatch }))
   useEffect(() => () => provider.dispose(), [provider])
   const value = useMemo(() => ({ state, mode, provider }), [state, mode, provider])

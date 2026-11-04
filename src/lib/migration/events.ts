@@ -233,20 +233,37 @@ export const PROFILE_OF: Record<Target, { provider: ProviderName; profile: strin
 export const DEFAULT_REGION: Partial<Record<Target, string>> = { gcp: 'asia-northeast3' }
 
 /**
- * 이전 시작 요청. 설정 화면의 나머지 입력(액세스 키, 저장소 주소)은 계속 보내지 않는다.
- * env_file_ref는 .env 파일의 내용이 아니라 참조 문자열만 담는다.
+ * 이전할 소스 저장소. 화면이 고른 공개 GitHub 저장소를 서버(/api/github/source)가 다시 조회해
+ * 기본 브랜치의 커밋 SHA를 고정한 값이다. GitHub 토큰이나 소스 코드는 담지 않는다.
+ */
+export type StartSource = {
+  kind: 'GITHUB_PUBLIC'
+  repository_id: number
+  full_name: string
+  commit_sha: string
+}
+
+/**
+ * 이전 시작 요청. 설정 화면의 나머지 입력(액세스 키)은 계속 보내지 않는다.
+ * env_file_ref는 .env 파일의 내용이 아니라 참조 문자열만 담는다(아직 실제 업로드 참조가 없어 화면은 보내지 않는다).
  */
 export type StartRequest = {
   target: { provider: ProviderName; profile: string; region?: string; agent_id?: string; credential_ref?: string }
+  source?: StartSource
   env_file_ref?: string
 }
 
 /** 설정 화면의 선택으로 시작 요청을 만든다(profile은 provider에서 정한다). */
-export function startRequestFor(target: Target, options: { region?: string; agentId?: string; envFileRef?: string } = {}): StartRequest {
+export function startRequestFor(target: Target, options: { region?: string; agentId?: string; envFileRef?: string; source?: StartSource } = {}): StartRequest {
   const { provider, profile } = PROFILE_OF[target]
   const request: StartRequest = { target: { provider, profile } }
   if (target === 'onprem') { if (options.agentId) request.target.agent_id = options.agentId }
   else request.target.region = options.region || DEFAULT_REGION[target]
+  if (options.source) {
+    // 허용한 필드만 옮긴다(default_branch 같은 화면용 값이 섞여 들어가지 않게).
+    const { repository_id, full_name, commit_sha } = options.source
+    request.source = { kind: 'GITHUB_PUBLIC', repository_id, full_name, commit_sha }
+  }
   if (options.envFileRef) request.env_file_ref = options.envFileRef
   return request
 }
