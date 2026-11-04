@@ -3,7 +3,7 @@
  * 같은 id의 이벤트는 덮어쓰므로(upsert) 재접속·단계 재전송으로 같은 이벤트가 다시 와도 결과가 같다.
  */
 import type {
-  AnalysisFindingData, ApprovalRequiredData, BackendPhase, BuildCheckData, BuildFixData, CutoverResultData,
+  AnalysisFindingData, ApprovalRequiredData, BackendPhase, BuildCheckData, BuildFixData, BuildResultData, BuildReviewData, PlanReadyData, ProvisionCheckData, CutoverResultData,
   DataProgressData, ErrorData, MigrationEvent, MigrationStatus, PlanStepData, ProvisionResourceData,
   ReportData, TrafficNote, TrafficSnapshotData,
 } from './events'
@@ -21,10 +21,11 @@ export type MigrationState = {
   connection: 'connected' | 'reconnecting'
   lastSeq: number
   analysis: { findings: AnalysisFindingData[]; done: boolean }
-  build: { checks: Record<string, BuildCheckData>; lastCheck: BuildCheckData | null; fixes: BuildFixData[] }
-  plan: { steps: PlanStepData[]; ready: boolean }
+  /** attempt: 지금 몇 번째 시도인지(build.check·build.result에서). review: 사람 검토 대기 */
+  build: { checks: Record<string, BuildCheckData>; lastCheck: BuildCheckData | null; fixes: BuildFixData[]; attempt: number | null; result: BuildResultData | null; review: BuildReviewData | null }
+  plan: { steps: PlanStepData[]; ready: boolean; meta: PlanReadyData | null }
   approval: { required: boolean; excluded: string[]; rollbackPolicy: string; cutoverRequired: boolean }
-  provision: { resources: ProvisionResourceData[] }
+  provision: { resources: ProvisionResourceData[]; checks: ProvisionCheckData[] }
   data: { current: DataProgressData | null; lagHistory: number[] }
   traffic: { snapshot: TrafficSnapshotData | null; logs: TrafficLogEntry[]; logCounter: number }
   cutover: { doneSteps: number; verifying: boolean; results: CutoverResultData[] }
@@ -39,10 +40,10 @@ export const initialState: MigrationState = {
   connection: 'connected',
   lastSeq: 0,
   analysis: { findings: [], done: false },
-  build: { checks: {}, lastCheck: null, fixes: [] },
-  plan: { steps: [], ready: false },
+  build: { checks: {}, lastCheck: null, fixes: [], attempt: null, result: null, review: null },
+  plan: { steps: [], ready: false, meta: null },
   approval: { required: false, excluded: [], rollbackPolicy: '', cutoverRequired: false },
-  provision: { resources: [] },
+  provision: { resources: [], checks: [] },
   data: { current: null, lagHistory: [] },
   traffic: { snapshot: null, logs: [], logCounter: 0 },
   cutover: { doneSteps: 0, verifying: false, results: [] },
@@ -102,13 +103,18 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
     case 'analysis.done':
       return { ...next, analysis: { ...next.analysis, done: true } }
     case 'build.check':
-      return { ...next, build: { ...next.build, checks: { ...next.build.checks, [event.data.id]: event.data }, lastCheck: event.data } }
+      return { ...next, build: { ...next.build, checks: { ...next.build.checks, [event.data.id]: event.data }, lastCheck: event.data, attempt: event.data.attempt ?? next.build.attempt } }
+    case 'build.result':
+      // 새 시도의 결과가 오면 사람 검토 대기는 끝난 것이다(수정 후 재시도).
+      return { ...next, build: { ...next.build, result: event.data, attempt: event.data.attempt, review: null } }
+    case 'build.review':
+      return { ...next, status: 'waiting', build: { ...next.build, review: event.data } }
     case 'build.fix':
       return { ...next, build: { ...next.build, fixes: upsert(next.build.fixes, event.data) } }
     case 'plan.step':
       return { ...next, plan: { ...next.plan, steps: upsert(next.plan.steps, event.data) } }
     case 'plan.ready':
-      return { ...next, plan: { ...next.plan, ready: true } }
+      return { ...next, plan: { ...next.plan, ready: true, meta: Object.keys(event.data).length > 0 ? event.data : next.plan.meta } }
     case 'approval.required': {
       const data: ApprovalRequiredData = event.data
       const approval = data.gate === 'cutover'
@@ -117,7 +123,13 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
       return { ...next, status: 'waiting', approval }
     }
     case 'provision.resource':
-      return { ...next, provision: { resources: upsert(next.provision.resources, event.data) } }
+      return { ...next, provision: { ...next.provision, resources: upsert(next.provision.resources, event.data) } }
+    case 'provision.check': {
+      const checks = next.provision.checks.slice()
+      const index = checks.findIndex(item => item.name === event.data.name)
+      if (index < 0) checks.push(event.data); else checks[index] = event.data
+      return { ...next, provision: { ...next.provision, checks } }
+    }
     case 'data.progress': {
       const lag = event.data.lag_ms
       const lagHistory = lag === null ? next.data.lagHistory : [...next.data.lagHistory.slice(-(LAG_HISTORY_POINTS - 1)), lag]

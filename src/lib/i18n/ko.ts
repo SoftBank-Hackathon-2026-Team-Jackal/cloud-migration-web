@@ -654,6 +654,10 @@ export const ko = {
   "cancel.title": "이전이 취소되었어요",
   "cancel.lead": "이 이전 작업은 취소되어 더 진행되지 않습니다. 처음으로 돌아가 새로 시작할 수 있어요.",
   "cancel.home": "처음으로",
+  "target.aws": "AWS",
+  "setup.destRegion": "대상 리전",
+  "setup.agentId": "Agent ID",
+  "setup.agentIdPh": "예: agent-seoul-01",
 } as const
 
 export type MsgKey = keyof typeof ko

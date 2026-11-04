@@ -16,6 +16,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DATA_TICK_MS, PLAN_REVEAL_MS, REPORT_SECONDS, dataProgressAt, timelineEnd, timelineFor } from '../src/lib/migration/script.ts'
+import { targetOfRequest } from '../src/lib/migration/events.ts'
 import { TrafficSim } from '../src/lib/migration/trafficSim.ts'
 
 const PORT = Number(process.env.PORT || 8000)
@@ -31,7 +32,7 @@ const CORS = {
   'Access-Control-Expose-Headers': 'Content-Type',
 }
 
-/** @typedef {{ id: string, target: 'gcp'|'onprem', status: string, phase: string, seq: number, history: any[], approved: { plan: boolean, cutover: boolean }, aiFixes: number }} Record */
+/** @typedef {{ id: string, target: 'aws'|'gcp'|'onprem', status: string, phase: string, seq: number, history: any[], approved: { plan: boolean, cutover: boolean, review: boolean }, aiFixes: number, revision: number, review: boolean, retried: boolean }} Record */
 /** 실행 중인 상태(저장하지 않는 것): 연결된 클라이언트, 대기 중인 타이머, 트래픽 시뮬레이터 */
 const live = new Map()
 /** @type {Map<string, Record>} */
@@ -148,6 +149,14 @@ const phaseRunners = {
     await play(record, items)
   },
   async build(record) {
+    // 데모(?review=1): 처음 빌드는 3번 실패하고 사람 검토를 기다린다. POST …/sandbox/retry 뒤에는 이전 빌드를 재사용해 성공한다.
+    if (record.review && !record.approved.review) {
+      await play(record, timelineFor('build', { ...context(record), review: true }))
+      record.status = 'waiting'
+      await waitApproval(record, 'review')
+      record.status = 'running'
+      record.retried = true
+    }
     await play(record, timelineFor('build', context(record)))
   },
   async planning(record) {
@@ -201,7 +210,7 @@ const phaseRunners = {
 }
 
 function context(record) {
-  return { target: record.target, aiFixes: record.aiFixes }
+  return { target: record.target, aiFixes: record.aiFixes, revision: record.revision, retried: record.retried }
 }
 
 async function run(record, from) {
@@ -264,8 +273,9 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && path === '/migrations') {
     const body = await readBody(req)
     const record = {
-      id: 'm-' + randomUUID().slice(0, 8), target: body.target === 'gcp' ? 'gcp' : 'onprem', status: 'running', phase: 'analysis',
-      seq: 0, history: [], approved: { plan: false, cutover: false }, aiFixes: Number(body.ai_fixes) >= 1 && Number(body.ai_fixes) <= 4 ? Number(body.ai_fixes) : 1, pending: 'analysis',
+      id: 'm-' + randomUUID().slice(0, 8), target: targetOfRequest(body), status: 'running', phase: 'analysis',
+      revision: 1, review: url.searchParams.get('review') === '1', retried: false,
+      seq: 0, history: [], approved: { plan: false, cutover: false, review: false }, aiFixes: Number(body.ai_fixes) >= 1 && Number(body.ai_fixes) <= 4 ? Number(body.ai_fixes) : 1, pending: 'analysis',
     }
     migrations.set(record.id, record)
     save()
@@ -291,6 +301,9 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'POST' && sub === '/approve') {
     const gate = url.searchParams.get('gate') === 'cutover' ? 'cutover' : 'plan'
+    // 승인 본문에 revision이 있으면 지금 계획 버전과 같아야 한다(계획이 수정된 뒤의 옛 승인을 막는다).
+    const body = await readBody(req)
+    if (gate === 'plan' && body.revision !== undefined && Number(body.revision) !== record.revision) return send(res, 409, { error: 'stale_revision', revision: record.revision })
     return approve(record, gate) ? send(res, 200, { ok: true }) : send(res, 409, { error: 'not_waiting_for_approval' })
   }
   if (req.method === 'POST' && sub === '/cancel') {
@@ -299,6 +312,20 @@ const server = http.createServer(async (req, res) => {
     record.status = 'cancelled'
     emit(record, { type: 'error', phase: record.phase, status: 'failed', data: { code: 'cancelled', message: '', phase: record.phase, retryable: false } })
     return send(res, 200, { ok: true })
+  }
+  // 계획 수정 요청: 계획 버전을 올리고 계획 단계부터 다시 보낸다(승인은 다시 받는다).
+  if (req.method === 'POST' && sub === '/plan/revise') {
+    if (record.status !== 'waiting' || record.pending !== 'approval') return send(res, 409, { error: 'not_waiting_for_approval' })
+    cancelRun(record)
+    record.revision += 1
+    record.approved.plan = false
+    record.status = 'running'
+    void run(record, 'planning')
+    return send(res, 200, { revision: record.revision })
+  }
+  // 사람 검토 뒤 샌드박스 재시도
+  if (req.method === 'POST' && sub === '/sandbox/retry') {
+    return approve(record, 'review') ? send(res, 200, { ok: true }) : send(res, 409, { error: 'not_waiting_for_review' })
   }
   if (req.method === 'POST' && sub === '/traffic/rollback') { runtime(record.id).sim?.rollback(); return send(res, 200, { ok: true }) }
   if (req.method === 'POST' && sub === '/traffic/retry') { runtime(record.id).sim?.retry(); return send(res, 200, { ok: true }) }

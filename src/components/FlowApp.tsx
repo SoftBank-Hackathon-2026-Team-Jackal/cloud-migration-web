@@ -21,7 +21,8 @@ import { ArriveMorph, DISSOLVE_MS, TransitionLayer } from './ScreenFx'
 import { useI18n } from '../lib/i18n'
 import { useMigration } from '../lib/migration/MigrationProvider'
 import { captureScreen, fx, recentHandoff, registerTransition } from '../lib/particleHandoff'
-import { isStage, STAGE_ORDER, type Stage, type Target } from '../lib/stages'
+import { isStage, STAGE_ORDER, type Stage } from '../lib/stages'
+import { pathOf, type Target as SetupTarget } from '../lib/migration/events'
 
 // 실제 환경을 바꾸기 전(입력~승인)까지만 이전 단계로 돌아갈 수 있다. 승인 이후는 되돌림이 아니라 롤백 정책을 따른다.
 const BACK: Partial<Record<Stage, Stage>> = { setup: 'intro', analysis: 'setup', rehearsal: 'analysis', planning: 'rehearsal', approval: 'planning' }
@@ -34,7 +35,9 @@ export default function FlowApp() {
   const [sphereFormed, setSphereFormed] = useState(false)
   const [showPrompt, setShowPrompt] = useState(false)
   const [textReady, setTextReady] = useState(false)
-  const [target, setTarget] = useState<Target>('onprem')
+  // 설정 화면에서 고른 대상(aws·gcp·onprem). 단계 화면은 경로(gcp·onprem)만 쓴다: AWS 대상은 GCP와 같은 클라우드 경로.
+  const [choice, setTarget] = useState<SetupTarget>('onprem')
+  const target = pathOf(choice)
   const [demoPanel, setDemoPanel] = useState(false)
   // 단계 화면을 처음부터 다시 그리기 위한 값(다시 보기·단계 이동에 쓴다)
   const [round, setRound] = useState(0)
@@ -104,7 +107,7 @@ export default function FlowApp() {
     const params = new URLSearchParams(window.location.search)
     const wanted = params.get('stage')
     const wantedTarget = params.get('target')
-    if (wantedTarget === 'gcp' || wantedTarget === 'onprem') setTarget(wantedTarget)
+    if (wantedTarget === 'aws' || wantedTarget === 'gcp' || wantedTarget === 'onprem') setTarget(wantedTarget)
     if (params.get('demo') === '1') setDemoPanel(true)
     if (isStage(wanted)) jump(wanted, false)
   }, [jump])
@@ -163,7 +166,7 @@ export default function FlowApp() {
           onClick={() => go('setup')}>{t('prompt.yes')}</button>}
       </div>
     </section>}
-    {stage === 'setup' && <MigrationSetup target={target} onTarget={setTarget} onNext={() => { provider.start({ target }); go('analysis') }} />}
+    {stage === 'setup' && <MigrationSetup target={choice} onTarget={setTarget} onNext={request => { provider.start(request); go('analysis') }} />}
     {stage === 'setup' && <ArriveMorph key={'setup' + round} />}
     {stage === 'analysis' && <AnalysisStage key={round} target={target} onAdvance={() => go('rehearsal')} />}
     {stage === 'rehearsal' && <RehearsalStage key={round} target={target} onNext={next('planning')} />}

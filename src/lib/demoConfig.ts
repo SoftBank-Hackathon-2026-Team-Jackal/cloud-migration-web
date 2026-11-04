@@ -8,3 +8,18 @@ export function aiFixCount(): number {
   const value = Number(new URLSearchParams(window.location.search).get('aifix'))
   return Number.isInteger(value) && value >= 1 && value <= 4 ? value : 1
 }
+
+function flag(name: string, value: string) {
+  if (typeof window === 'undefined') return false
+  return new URLSearchParams(window.location.search).get(name) === value
+}
+
+/** 시연용 ?review=1: 샌드박스 루프가 3회 실패해 사람 검토 대기 화면이 나온다. */
+export function reviewDemo(): boolean {
+  return flag('review', '1')
+}
+
+/** 시연용 ?digest=mismatch: 검증한 이미지가 빌드한 이미지와 달라 승인이 막힌다. */
+export function digestMismatchDemo(): boolean {
+  return flag('digest', 'mismatch')
+}

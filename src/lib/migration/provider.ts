@@ -19,8 +19,12 @@ export interface MigrationProvider {
    * 반환한 함수는 화면을 떠날 때 부른다(목업은 타이머를 멈추고 그 단계 값을 비운다).
    */
   enter(phase: BackendPhase, context: EnterContext): () => void
-  /** 계획 승인 */
-  approve(): void
+  /** 계획 승인. revision은 승인하는 계획의 버전(서버가 다른 버전이면 거절한다). */
+  approve(revision?: number): void
+  /** 계획 수정 요청: 계획 단계를 revision + 1로 다시 받는다. */
+  revisePlan(): void
+  /** 사람 검토 뒤 샌드박스 재시도 */
+  retrySandbox(): void
   /** 두 번째 승인(DB 전환) */
   approveCutover(): void
   cancel(): void

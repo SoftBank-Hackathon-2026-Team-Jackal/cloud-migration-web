@@ -149,3 +149,77 @@ test('연결 상태는 reset 후에도 유지된다', () => {
   assert.equal(state.connection, 'reconnecting')
   assert.equal(state.migrationId, 'm')
 })
+
+// ---- 흐름 계약 v2: 빌드 결과·사람 검토·계획 버전·프로비저닝 검사 ----
+
+const buildResult = (attempt: number, status: 'SUCCEEDED' | 'FAILED', extra: Partial<{ digest: string | null; reused: boolean; error_code: 'BUILD_FAILED' | null }> = {}): DraftEvent => ({
+  type: 'build.result', phase: 'build', status: 'running',
+  data: { attempt, max_attempts: 3, status, digest: status === 'SUCCEEDED' ? 'sha256:abc' : null, image_uri: null, reused: false, error_code: status === 'FAILED' ? 'BUILD_FAILED' : null, ...extra },
+})
+
+test('빌드 결과는 시도 횟수와 최신 결과를 남기고, 실패해도 단계 실패가 아니다', () => {
+  seq = 0
+  const state = run(initialState, ev(buildResult(1, 'FAILED')), ev(buildResult(2, 'SUCCEEDED', { reused: true })))
+  assert.equal(state.build.attempt, 2)
+  assert.equal(state.build.result?.status, 'SUCCEEDED')
+  assert.equal(state.build.result?.reused, true)
+  assert.equal(state.status, 'running')
+  assert.deepEqual(state.failures, {})
+})
+
+test('build.check의 attempt가 시도 횟수에 반영된다', () => {
+  seq = 0
+  const state = run(initialState, ev({ type: 'build.check', phase: 'build', status: 'running', data: { id: 'build', state: 'running', attempt: 2 } }))
+  assert.equal(state.build.attempt, 2)
+})
+
+test('사람 검토 대기: build.review는 waiting 상태가 되고 새 빌드 결과가 오면 풀린다', () => {
+  seq = 0
+  let state = run(initialState, ev(buildResult(3, 'FAILED')), ev({ type: 'build.review', phase: 'build', status: 'waiting', data: { reason: 'max_attempts', attempts: 3 } }))
+  assert.equal(state.status, 'waiting')
+  assert.deepEqual(state.build.review, { reason: 'max_attempts', attempts: 3 })
+  state = run(state, ev(buildResult(1, 'SUCCEEDED')))
+  assert.equal(state.build.review, null)
+  assert.equal(state.status, 'running')
+})
+
+test('plan.ready는 계획 버전·Digest를 담고, 빈 객체는 이전 값을 지우지 않는다', () => {
+  seq = 0
+  const ready = (revision: number): DraftEvent => ({ type: 'plan.ready', phase: 'planning', status: 'done', data: { plan_id: 'p', revision, template_version: 't1', built_digest: 'sha256:a', verified_digest: 'sha256:a' } })
+  let state = run(initialState, ev(ready(1)))
+  assert.equal(state.plan.meta?.revision, 1)
+  state = run(state, ev({ type: 'plan.ready', phase: 'planning', status: 'done', data: {} }))
+  assert.equal(state.plan.ready, true)
+  assert.equal(state.plan.meta?.template_version, 't1')
+})
+
+test('계획 수정으로 revision이 올라가면 같은 id의 단계는 덮어쓰고 새 버전이 반영된다', () => {
+  seq = 0
+  const step: DraftEvent = { type: 'plan.step', phase: 'planning', status: 'running', data: { id: 'network', group: 'infrastructure', grade: 'convert', before: '', after: '', evidence: '', change: '' } }
+  const ready = (revision: number): DraftEvent => ({ type: 'plan.ready', phase: 'planning', status: 'done', data: { revision } })
+  let state = run(initialState, ev(step), ev(ready(1)))
+  state = run(state, ev(step), ev(ready(2)))
+  assert.equal(state.plan.steps.length, 1)
+  assert.equal(state.plan.meta?.revision, 2)
+})
+
+test('프로비저닝 검사는 이름별로 덮어쓰고 같은 seq 중복은 무시한다', () => {
+  seq = 0
+  const check = (state: 'running' | 'done', extra: object = {}): DraftEvent => ({ type: 'provision.check', phase: 'provisioning', status: 'running', data: { name: 'retest', state, ...extra } })
+  const first = ev(check('running'))
+  let state = run(initialState, first, ev(check('done', { passed: 12, total: 12 })))
+  assert.equal(state.provision.checks.length, 1)
+  assert.equal(state.provision.checks[0].passed, 12)
+  const before = state
+  state = reducer(state, { type: 'event', event: first })
+  assert.equal(state, before)
+})
+
+test('단계 초기화는 새 필드(시도·검토·검사)도 비운다', () => {
+  seq = 0
+  let state = run(initialState, ev(buildResult(1, 'FAILED')), ev({ type: 'provision.check', phase: 'provisioning', status: 'running', data: { name: 'pods_ready', state: 'done' } }))
+  state = reducer(reducer(state, { type: 'resetPhase', phase: 'build' }), { type: 'resetPhase', phase: 'provisioning' })
+  assert.equal(state.build.attempt, null)
+  assert.equal(state.build.result, null)
+  assert.equal(state.provision.checks.length, 0)
+})

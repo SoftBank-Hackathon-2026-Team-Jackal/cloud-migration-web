@@ -1,4 +1,4 @@
-import type { BackendPhase, ErrorData, MigrationEvent, StartRequest } from './events'
+import { startRequestFor, type BackendPhase, type ErrorData, type MigrationEvent, type StartRequest } from './events'
 import type { EnterContext, MigrationProvider, ProviderHost } from './provider'
 import type { ReportData } from './events'
 
@@ -47,16 +47,25 @@ export class SseProvider implements MigrationProvider {
     this.host.dispatch({ type: 'fail', error })
   }
 
-  private async post(path: string): Promise<boolean> {
+  private async post(path: string, body?: object): Promise<boolean> {
     if (!this.migrationId) return false
     try {
-      const response = await fetch(this.options.baseUrl + '/migrations/' + this.migrationId + path, { method: 'POST', headers: await this.headers() })
+      const response = await fetch(this.options.baseUrl + '/migrations/' + this.migrationId + path, {
+        method: 'POST',
+        headers: await this.headers(body ? { 'Content-Type': 'application/json' } : {}),
+        body: body ? JSON.stringify(body) : undefined,
+      })
       if (!response.ok) throw new Error('HTTP ' + response.status)
       return true
     } catch (error) {
       this.fail({ code: 'request_failed', message: error instanceof Error ? error.message : String(error), phase: null, retryable: true })
       return false
     }
+  }
+
+  /** 시연용 쿼리(?review=1)를 목업 서버에 넘긴다. 실제 백엔드는 무시한다. */
+  private demoQuery() {
+    return typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('review') === '1' ? '?review=1' : ''
   }
 
   start(request: StartRequest) {
@@ -66,7 +75,7 @@ export class SseProvider implements MigrationProvider {
     this.host.dispatch({ type: 'reset' })
     this.starting = (async () => {
       try {
-        const response = await fetch(this.options.baseUrl + '/migrations', {
+        const response = await fetch(this.options.baseUrl + '/migrations' + this.demoQuery(), {
           method: 'POST',
           headers: await this.headers({ 'Content-Type': 'application/json' }),
           body: JSON.stringify(request),
@@ -84,11 +93,13 @@ export class SseProvider implements MigrationProvider {
 
   enter(_phase: BackendPhase, context: EnterContext): () => void {
     // 설정 화면을 거치지 않고 주소로 단계를 연 경우에는 기본 요청으로 이전을 하나 시작한다.
-    if (!this.migrationId && !this.starting) this.start({ target: context.target })
+    if (!this.migrationId && !this.starting) this.start(startRequestFor(context.target))
     return () => {}
   }
 
-  approve() { void this.post('/approve') }
+  approve(revision?: number) { void this.post('/approve', revision === undefined ? undefined : { revision }) }
+  revisePlan() { void this.post('/plan/revise') }
+  retrySandbox() { void this.post('/sandbox/retry') }
   approveCutover() { void this.post('/approve?gate=cutover') }
   cancel() { void this.post('/cancel') }
   rollbackTraffic() { void this.post('/traffic/rollback') }

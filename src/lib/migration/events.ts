@@ -3,7 +3,13 @@
  * 이 파일은 타입만 담는다(런타임 import 없음): 목업 서버와 단위 테스트가 Node에서 그대로 읽는다.
  */
 
-export type Target = 'gcp' | 'onprem'
+export type Target = 'aws' | 'gcp' | 'onprem'
+
+/** 화면 흐름(구성도·구축 대본)이 쓰는 경로. 정해 둔 기본값: AWS 대상은 클라우드(GCP와 같은) 경로를 쓴다. */
+export type FlowPath = 'gcp' | 'onprem'
+export function pathOf(target: Target): FlowPath {
+  return target === 'onprem' ? 'onprem' : 'gcp'
+}
 
 /** 백엔드 워크플로우의 phase 이름 */
 export type BackendPhase =
@@ -34,7 +40,21 @@ export type AnalysisFindingData = {
 }
 
 export type CheckState = 'running' | 'failed' | 'fixing' | 'recheck' | 'done'
-export type BuildCheckData = { id: string; state: CheckState; fixed?: number }
+export type BuildCheckData = { id: string; state: CheckState; fixed?: number; attempt?: number }
+
+export type BuildErrorCode = 'SOURCE_NOT_FOUND' | 'DOCKERFILE_MISSING' | 'BUILD_FAILED' | 'PUSH_FAILED' | 'TIMEOUT'
+/** 이미지 빌드 결과(시도마다 하나). 실패해도 시도가 남아 있으면 status는 running이다(단계 실패가 아니다). */
+export type BuildResultData = {
+  attempt: number
+  max_attempts: number
+  status: 'SUCCEEDED' | 'FAILED'
+  digest: string | null
+  image_uri: string | null
+  reused: boolean
+  error_code: BuildErrorCode | null
+}
+/** 샌드박스 루프가 최대 시도를 넘어 사람 검토를 기다린다(status: waiting). */
+export type BuildReviewData = { reason: 'max_attempts'; attempts: number }
 export type FixLine = { kind: 'del' | 'add'; text: string }
 export type BuildFixData = { id: string; check: string; lines: FixLine[]; why: string; evidence: string }
 
@@ -49,6 +69,9 @@ export type PlanStepData = {
   change: string
 }
 
+/** 계획 완료. 필드는 모두 선택이라 예전의 빈 객체도 유효하다. */
+export type PlanReadyData = { plan_id?: string; revision?: number; template_version?: string; built_digest?: string; verified_digest?: string }
+
 export type ApprovalRequiredData = {
   excluded: string[]
   rollback_policy: string
@@ -57,6 +80,10 @@ export type ApprovalRequiredData = {
 }
 
 export type ProvisionResourceData = { id: string; key: string; state: 'running' | 'done' | 'failed'; progress: number }
+
+export type ProvisionCheckName = 'pods_ready' | 'db_connect' | 'app_health' | 'retest'
+/** 준비 상태 검사. retest는 승인 뒤 같은 테스트 묶음을 다시 돌린 결과(passed/total). */
+export type ProvisionCheckData = { name: ProvisionCheckName; state: 'running' | 'done' | 'failed'; passed?: number; total?: number }
 
 export type DataStep = 'connect' | 'dump' | 'cdc' | 'ready'
 export type DataProgressData = {
@@ -122,9 +149,12 @@ export type MigrationEvent =
   | Base<'build.check', BuildCheckData>
   | Base<'build.fix', BuildFixData>
   | Base<'plan.step', PlanStepData>
-  | Base<'plan.ready', Record<string, never>>
+  | Base<'build.result', BuildResultData>
+  | Base<'build.review', BuildReviewData>
+  | Base<'plan.ready', PlanReadyData>
   | Base<'approval.required', ApprovalRequiredData>
   | Base<'provision.resource', ProvisionResourceData>
+  | Base<'provision.check', ProvisionCheckData>
   | Base<'data.progress', DataProgressData>
   | Base<'traffic.snapshot', TrafficSnapshotData>
   | Base<'cutover.step', CutoverStepData>
@@ -135,8 +165,40 @@ export type MigrationEventType = MigrationEvent['type']
 /** 대본·서버가 만드는 이벤트(seq·at은 내보낼 때 붙인다) */
 export type DraftEvent = MigrationEvent extends infer E ? E extends MigrationEvent ? Omit<E, 'seq' | 'at'> : never : never
 
-/** 이전 시작 요청. 설정 화면의 나머지 입력(자격 증명 등)은 전달 방식이 정해질 때까지 보내지 않는다. */
-export type StartRequest = { target: Target }
+export type ProviderName = 'AWS' | 'GCP' | 'ON_PREM'
+export const PROFILE_OF: Record<Target, { provider: ProviderName; profile: string }> = {
+  aws: { provider: 'AWS', profile: 'aws-ec2-basic' },
+  gcp: { provider: 'GCP', profile: 'gcp-vm-basic' },
+  onprem: { provider: 'ON_PREM', profile: 'onprem-k3s-basic' },
+}
+export const DEFAULT_REGION: Partial<Record<Target, string>> = { aws: 'ap-northeast-2', gcp: 'asia-northeast3' }
+
+/**
+ * 이전 시작 요청. 설정 화면의 나머지 입력(액세스 키, 저장소 주소)은 계속 보내지 않는다.
+ * env_file_ref는 .env 파일의 내용이 아니라 참조 문자열만 담는다.
+ */
+export type StartRequest = {
+  target: { provider: ProviderName; profile: string; region?: string; agent_id?: string; credential_ref?: string }
+  env_file_ref?: string
+}
+
+/** 설정 화면의 선택으로 시작 요청을 만든다(profile은 provider에서 정한다). */
+export function startRequestFor(target: Target, options: { region?: string; agentId?: string; envFileRef?: string } = {}): StartRequest {
+  const { provider, profile } = PROFILE_OF[target]
+  const request: StartRequest = { target: { provider, profile } }
+  if (target === 'onprem') { if (options.agentId) request.target.agent_id = options.agentId }
+  else request.target.region = options.region || DEFAULT_REGION[target]
+  if (options.envFileRef) request.env_file_ref = options.envFileRef
+  return request
+}
+
+/** 시작 요청에서 대상(aws·gcp·onprem)을 읽는다. 예전 형식({target:'gcp'})도 받아 준다. */
+export function targetOfRequest(request: { target: unknown }): Target {
+  const raw = request.target
+  if (raw === 'aws' || raw === 'gcp' || raw === 'onprem') return raw
+  const provider = typeof raw === 'object' && raw ? (raw as { provider?: string }).provider : undefined
+  return provider === 'AWS' ? 'aws' : provider === 'ON_PREM' ? 'onprem' : 'gcp'
+}
 
 /** 리포트(GET /migrations/{id}/report). 단계별 소요 시간과 AI 수정 개수. */
 export type ReportData = {
