@@ -28,13 +28,14 @@ import { useVoiceGuide } from '../lib/useVoiceGuide'
 import { buildAgentFacts } from '../lib/agent/context'
 import { askAgent } from '../lib/agent/ask'
 import voiceClips from '../lib/voiceClips.json'
+import { isStartCommand, targetFromUtterance } from '../lib/agent/intent'
 
 // 실제 환경을 바꾸기 전(입력~승인)까지만 이전 단계로 돌아갈 수 있다. 승인 이후는 되돌림이 아니라 롤백 정책을 따른다.
 const BACK: Partial<Record<Stage, Stage>> = { setup: 'intro', analysis: 'setup', rehearsal: 'analysis', planning: 'rehearsal', approval: 'planning' }
 
 // 이 복제본의 보고 문구는 화면의 데모 단계 전환에만 바인딩한다. 실제 백엔드 결과로 해석하지 않는다.
+// 설정 화면은 첫 화면에서 자칼이 의도를 되짚으며 들어가므로 따로 안내하지 않는다.
 const REPORT: Partial<Record<Stage, string>> = {
-  setup: voiceClips.setup,
   analysis: voiceClips.analysis_start,
   rehearsal: voiceClips.sandbox_start,
   planning: voiceClips.planning_start,
@@ -133,7 +134,9 @@ export default function FlowApp() {
     active: true,
     ask: stage !== 'intro',
     onWake: () => wake(),
-    onStart: () => beginVoiceMigration(),
+    onStart: () => handleIntent(''),
+    onIntent: text => handleIntent(text),
+    onCommand: text => voiceCommand.current(text),
     onAsk: question => askHandler.current(question),
     onSay: (text, meta) => pushChat('agent', text, meta.kind === 'answer' ? meta.source ?? 'local' : 'report'),
     onHeard: text => pushChat('user', text),
@@ -170,25 +173,72 @@ export default function FlowApp() {
     voice.speakText(answer, currentLang, source)
   }
 
+  // 자칼의 말: 미리 녹음한 한국어 문구는 녹음 파일로, 대상·개수가 들어간 문장과 다른 언어는 음성 합성으로 읽는다.
+  const say = (text: string, options?: { ripple?: boolean; onEnd?: () => void }) => voice.speak(text, { ...options, lang })
+  /**
+   * 말이 끝나면 다음 화면으로 넘어간다. 다른 말이 끼어들어 끊기거나 음성 합성이 끝 신호를 주지 않아도
+   * 화면이 멈추지 않도록 상한 시간 뒤에는 넘어간다(한 번만).
+   */
+  const sayThen = (text: string, next: () => void) => {
+    let done = false
+    const proceed = () => { if (!done) { done = true; window.clearTimeout(timer); next() } }
+    const timer = window.setTimeout(proceed, 2500 + text.length * 120)
+    say(text, { ripple: true, onEnd: proceed })
+  }
+
+  // 첫 화면 대화: 호출 → 의도 → (대상이 모호하면 되묻기) → 되짚기 → 설정 화면
+  const [askingTarget, setAskingTarget] = useState(false)
   function wake() {
     if (stage !== 'intro' || started) return
     voice.armAudio()
     setStarted(true)
-    voice.speak(voiceClips.wake) // 호출 응답 중에는 파동을 만들지 않는다.
+    say(t('open.jackal.listening')) // 호출 응답 중에는 파동을 만들지 않는다.
   }
 
-  function beginVoiceMigration() {
+  function handleIntent(text: string) {
     if (stage !== 'intro' || voiceStarting.current) return
-    if (needsSource) { go('setup'); return }
+    if (!started) { voice.armAudio(); setStarted(true) }
+    const chosen = targetFromUtterance(text)
+    if (chosen) { confirmTarget(chosen); return }
+    setAskingTarget(true)
+    say(t('open.jackal.askTarget'))
+  }
+
+  function confirmTarget(chosen: SetupTarget) {
+    if (stage !== 'intro' || voiceStarting.current) return
     voiceStarting.current = true
     listenMode.current = false
     setForceListen(false)
+    setAskingTarget(false)
     setShowPrompt(false)
-    setTarget('gcp') // 복제본의 로컬 데모 프로필: AWS EKS → GCP GKE
-    voice.speak(voiceClips.start, {
-      ripple: true,
-      onEnd: () => jump('analysis'),
-    })
+    setTarget(chosen)
+    sayThen(t('open.jackal.confirm', {
+      source: t('open.source', { region: t('region.ap-northeast-2') }),
+      target: t(chosen === 'onprem' ? 'open.target.onprem' : 'open.target.gcp'),
+      targetEnv: t(chosen === 'onprem' ? 'open.targetEnv.onprem' : 'open.targetEnv.gcp'),
+    }), () => go('setup'))
+  }
+
+  /** 버튼·단축키로 말한 것처럼 의도를 넣는다(채팅 기록에도 남긴다). */
+  function sayIntent(text: string) {
+    pushChat('user', text)
+    handleIntent(text)
+  }
+
+  // 설정 화면의 시작: 음성("좋아, 시작하자")·버튼·S 키가 모두 여기로 온다.
+  const setupStart = useRef<(() => void) | null>(null)
+  const kickoff = useRef(false)
+  const voiceCommand = useRef<(text: string) => boolean>(() => false)
+  voiceCommand.current = text => {
+    if (stage !== 'setup' || !isStartCommand(text)) return false
+    setupStart.current?.()
+    return true
+  }
+  function startFromSetup(request: Parameters<typeof provider.start>[0]) {
+    startRequested.current = true
+    provider.start(request)
+    kickoff.current = true
+    sayThen(t('open.jackal.kickoff'), () => go('analysis'))
   }
 
   // 설정 화면에서 시작 요청을 보냈는지(SSE에서 주소로 바로 연 단계와 구분한다)
@@ -200,6 +250,8 @@ export default function FlowApp() {
     if (stage === 'intro' || previous === stage) return
     // 저장소 없이 단계를 연 SSE 화면은 시작되지 않았으므로 "시작했다"는 안내를 읽지 않는다.
     if (needsSource && stage !== 'setup' && !startRequested.current) return
+    // 설정 화면에서 "원본 분석부터 시작할게요."라고 말하고 넘어왔으면 분석 안내를 겹쳐 읽지 않는다.
+    if (stage === 'analysis' && kickoff.current) { kickoff.current = false; return }
     const message = REPORT[stage]
     if (message) voice.speak(message)
   }, [stage, voice.speak])
@@ -225,12 +277,14 @@ export default function FlowApp() {
     if (isStage(wanted)) jump(wanted, false)
   }, [jump])
 
-  const presenterKeys = useRef({ stage, listen: () => {}, speakTest: () => {} })
+  const presenterKeys = useRef({ stage, listen: () => {}, intent: () => {}, pick: (_: SetupTarget) => {} })
   presenterKeys.current = {
     stage,
-    listen: () => { if (!started) { voice.armAudio(); setStarted(true) } setForceListen(current => !current) },
-    // 시작 안내 문구를 파동과 함께 재생만 한다(분석 화면으로 넘어가지 않음).
-    speakTest: () => { voice.armAudio(); if (!started) setStarted(true); setForceListen(false); voice.speak(voiceClips.start, { ripple: true }) },
+    // L: 처음에는 "헤이 자칼"(호출), 그 뒤에는 '듣는 중' 모양을 켜고 끈다.
+    listen: () => { if (!started) wake(); else setForceListen(current => !current) },
+    // I: 예시 의도를 말한 것처럼 넣는다. O·G: 대상을 바로 고른다.
+    intent: () => sayIntent(t('open.sample')),
+    pick: chosen => { if (started) sayIntent(t(chosen === 'onprem' ? 'open.target.onprem' : 'open.target.gcp')) },
   }
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -239,8 +293,12 @@ export default function FlowApp() {
       if (event.key === 'd' || event.key === 'D') setDemoPanel(current => !current)
       // 발표자 단축키(첫 화면): 현장에서 마이크·인식이 안 될 때 구체 반응을 직접 보여 준다.
       if (presenterKeys.current.stage !== 'intro') return
-      if (event.key === 'l' || event.key === 'L') presenterKeys.current.listen()
-      if (event.key === 's' || event.key === 'S') presenterKeys.current.speakTest()
+      if (event.metaKey || event.ctrlKey || event.altKey) return
+      const key = event.key.toLowerCase()
+      if (key === 'l') presenterKeys.current.listen()
+      if (key === 'i') presenterKeys.current.intent()
+      if (key === 'o') presenterKeys.current.pick('onprem')
+      if (key === 'g') presenterKeys.current.pick('gcp')
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -286,13 +344,17 @@ export default function FlowApp() {
     {stage === 'intro' && showPrompt && <section className="prompt-overlay" aria-label={t('prompt.aria')}>
       <ParticlePrompt key={lang} onComplete={() => setTextReady(true)} />
       <div className="prompt-action">
-        {textReady && <button type="button" className="prompt-yes"
-          onClick={() => beginVoiceMigration()}>마이그레이션 시작</button>}
+        {textReady && !askingTarget && <button type="button" className="prompt-yes prompt-intent" aria-label={t('open.sampleAria')}
+          onClick={() => sayIntent(t('open.sample'))}>“{t('open.sample')}” <kbd>I</kbd></button>}
+        {textReady && askingTarget && <div className="prompt-targets" role="group" aria-label={t('open.pickAria')}>
+          <button type="button" className="prompt-yes prompt-target" onClick={() => sayIntent(t('open.target.onprem'))}>{t('open.target.onprem')} <kbd>O</kbd></button>
+          <button type="button" className="prompt-yes prompt-target" onClick={() => sayIntent(t('open.target.gcp'))}>{t('open.target.gcp')} <kbd>G</kbd></button>
+        </div>}
         {textReady && <button type="button" className="prompt-yes prompt-setup"
-          onClick={() => go('setup')}>{t('agent.setup')}</button>}
+          onClick={() => go('setup')}>{t('open.direct')}</button>}
       </div>
     </section>}
-    {stage === 'setup' && <MigrationSetup target={choice} onTarget={setTarget} onNext={request => { startRequested.current = true; provider.start(request); go('analysis') }} />}
+    {stage === 'setup' && <MigrationSetup target={choice} onTarget={setTarget} onNext={startFromSetup} onSay={text => { if (!kickoff.current) say(text) }} startRef={setupStart} />}
     {stage === 'setup' && <ArriveMorph key={'setup' + round} />}
     {stage === 'analysis' && <AnalysisStage key={round} target={target} onComplete={reportAnalysisComplete} onAdvance={() => go('rehearsal')} />}
     {stage === 'rehearsal' && <RehearsalStage key={round} target={target} onComplete={reportSandboxComplete} onNext={next('planning')} />}
@@ -326,7 +388,7 @@ export default function FlowApp() {
         </header>
         {stage === 'intro' && <p className="jv-profile">{t('agent.profile')}</p>}
         <div className="jv-log" role="log" aria-live="polite" ref={logRef}>
-          {chat.length === 0 && <p className="jv-empty">{started ? t('prompt.question') : '“헤이 자칼”'} · {t('agent.empty')}</p>}
+          {chat.length === 0 && <p className="jv-empty">{started ? t('prompt.question') : t('open.chatHint')} · {t('agent.empty')}</p>}
           {chat.map(message => <div key={message.id} className={'jv-msg is-' + message.role}>
             <p>{message.text}</p>
             {message.role === 'agent' && message.tag && <small data-msg-tag={message.tag} {...(message.tag === 'model' || message.tag === 'local' ? { 'data-agent-source': message.tag } : {})}>{message.tag === 'model' ? t('agent.sourceModel') : message.tag === 'local' ? t('agent.sourceLocal') : t('agent.sourceReport')}</small>}
@@ -335,11 +397,21 @@ export default function FlowApp() {
         </div>
         {voice.error && <small className="jv-error">{voice.error}</small>}
         {stage === 'intro' && <div className="jv-chips">
-          <button type="button" onClick={wake}>헤이 자칼</button>
-          {started && <button type="button" onClick={() => beginVoiceMigration()}>마이그레이션 시작하자</button>}
+          {!started && <button type="button" onClick={wake}>{t('open.wake')}</button>}
+          {started && <button type="button" onClick={() => sayIntent(t('open.sample'))}>{t('open.sample')}</button>}
         </div>}
-        {stage !== 'intro' && <form className="jv-form" onSubmit={event => { event.preventDefault(); const text = question.trim(); if (text && !asking) { setQuestion(''); pushChat('user', text); void askHandler.current(text) } }}>
-          <input value={question} onChange={event => setQuestion(event.target.value)} placeholder={t('agent.placeholder')} aria-label={t('agent.label')} maxLength={200} />
+        {(stage !== 'intro' || started) && <form className="jv-form" onSubmit={event => {
+          event.preventDefault()
+          const text = question.trim()
+          if (!text || asking) return
+          setQuestion('')
+          // 첫 화면에서는 적은 말을 이전 의도로 받는다. 설정 화면의 "시작하자"는 시작 명령으로 받는다.
+          if (stage === 'intro') { sayIntent(text); return }
+          if (voiceCommand.current(text)) { pushChat('user', text); return }
+          pushChat('user', text)
+          void askHandler.current(text)
+        }}>
+          <input value={question} onChange={event => setQuestion(event.target.value)} placeholder={t(stage === 'intro' ? 'open.intentPh' : 'agent.placeholder')} aria-label={t(stage === 'intro' ? 'open.intentLabel' : 'agent.label')} maxLength={200} />
           <button type="submit" disabled={asking || !question.trim()}>{t('agent.send')}</button>
         </form>}
       </section>}

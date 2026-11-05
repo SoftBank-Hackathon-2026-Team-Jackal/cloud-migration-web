@@ -6,6 +6,7 @@ import './polish.css'
 import './plan.css'
 import './provision.css'
 import './approval.css'
+import './setup.css'
 import { I18nProvider } from '../lib/i18n'
 
 export const metadata: Metadata = {
