@@ -10,11 +10,9 @@
 .flow-footer,.analysis-next-area{margin-bottom:var(--chrome-b)}
 .flow-toast{bottom:calc(24px + var(--chrome-b))}
 
-/* 자칼 위젯: 화면 가운데 오른쪽(본문 영역) → 언어 전환 바로 아래 빈 모서리 */
+/* Jackal 위젯: 화면 가운데 오른쪽(본문 영역) → 언어 전환 바로 아래 빈 모서리 */
 .jv{top:52px;transform:none;flex-direction:column-reverse}
 .jv-panel{max-height:min(430px,calc(100dvh - 140px))}
-.jv-head{flex-wrap:wrap;row-gap:6px}
-.jv-head>span,.jv-head-actions button{white-space:nowrap}
 
 @media(max-width:620px){
   :root{--chrome-b:50px}
