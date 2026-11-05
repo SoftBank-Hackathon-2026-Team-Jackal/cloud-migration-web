@@ -21,7 +21,7 @@ test('인식이 잘못 붙인 앞말이 있어도 호출어를 찾는다', () =>
 })
 
 test('음성 인식이 다르게 받아 적은 호출어도 찾는다', () => {
-  for (const heard of ['에이 자칼', '헤이 자 칼', '해이 잭칼', '헤이 자카', '하이 자칼', 'hey jakal', 'Hey, Jackal!', 'ヘー ジャカル', 'ハイ ジャッカー']) {
+  for (const heard of ['페이 자칼', '패이 자칼', '케이 자칼', '에이 자칼', '헤이 자 칼', '해이 잭칼', '헤이 자카', '하이 자칼', 'hey jakal', 'Hey, Jackal!', 'ヘー ジャカル', 'ハイ ジャッカー']) {
     assert.equal(parseWake(heard).woke, true, heard)
   }
   assert.equal(parseWake('에이 자칼 다음으로').rest, '다음으로')
