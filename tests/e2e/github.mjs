@@ -40,6 +40,14 @@ const repos = Array.from({ length: 25 }, (_, index) => {
     description: hidden ? 'secret stuff' : 'demo repository ' + index, html_url: 'https://github.com/octo/x' + index, updated_at: '2026-10-01T00:00:00Z',
     private: hidden, visibility: hidden ? 'private' : 'public', owner: { login: 'octo' }, permissions: { admin: true } }
 })
+const TREE = [['package.json', 'blob'], ['Dockerfile', 'blob'], ['k8s', 'tree'], ['k8s/deploy.yaml', 'blob'], ['src', 'tree'], ['src/index.js', 'blob'], ['.env.example', 'blob']]
+const FILES = {
+  'package.json': JSON.stringify({ dependencies: { pg: '^8' } }),
+  Dockerfile: 'FROM node:20\n',
+  'k8s/deploy.yaml': 'kind: Deployment\n',
+  'src/index.js': 'SOURCE_MARKER_DO_NOT_READ',
+  '.env.example': 'PORT=ENV_VALUE_MARKER\nDATABASE_URL=ENV_VALUE_MARKER\n',
+}
 const githubCalls = []
 const github = createServer((req, res) => {
   const url = new URL(req.url, 'http://x')
@@ -58,6 +66,10 @@ const github = createServer((req, res) => {
   const byId = url.pathname.match(/^\/repositories\/(\d+)$/)
   if (byId) { const found = repos.find(item => item.id === Number(byId[1])); return found ? json(200, found) : json(404, {}) }
   if (/^\/repos\/octo\/[^/]+\/commits\/[^/]+$/.test(url.pathname)) { res.writeHead(200); return res.end(SHA) }
+  // 저장소 구성 읽기(/api/github/scan): 트리와 구성 파일. 소스 파일(src/index.js)은 읽히면 안 된다.
+  if (url.pathname === '/repos/octo/needle-service/git/trees/' + SHA) return json(200, { tree: TREE.map(([path, type]) => ({ path, type, size: 40 })) })
+  const content = url.pathname.match(/^\/repos\/octo\/needle-service\/contents\/(.+)$/)
+  if (content && FILES[decodeURIComponent(content[1])] !== undefined) { res.writeHead(200); return res.end(FILES[decodeURIComponent(content[1])]) }
   json(404, { message: 'Not Found' })
 })
 await new Promise(resolve => github.listen(0, '127.0.0.1', resolve))
@@ -83,7 +95,7 @@ const sessionCookie = async accessToken => ({
 let browser
 try {
   await waitFor(BASE + '/api/auth/providers')
-  browser = await chromium.launch()
+  browser = await chromium.launch(process.env.PW_CHANNEL ? { channel: process.env.PW_CHANNEL } : {})
 
   async function open(token) {
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 } })
@@ -168,6 +180,11 @@ try {
     const pinned = await page.textContent('.repo-pinned')
     check(pinned.includes('octo/needle-service') && pinned.includes('trunk') && pinned.includes(SHA.slice(0, 7)), '기본 브랜치 커밋 SHA로 고정됐다')
     check(bodies.every(body => !body.includes(GOOD_TOKEN)), '/api 응답 어디에도 토큰이 없다')
+    // 고른 저장소의 구성만 읽어 파일 목록과 탐지 결과를 보여 준다(소스 원문·.env 예시 값은 화면으로 오지 않는다).
+    await page.waitForSelector('.rimp[data-complete=true]', { timeout: 15000 })
+    check(await page.locator('.rimp-det.is-on').count() >= 4, '가져오기: 런타임·Dockerfile·K8s·PostgreSQL 탐지가 켜진다 (' + await page.locator('.rimp-det.is-on').count() + ')')
+    check(!githubCalls.some(call => call.path.includes('src/index.js')), '가져오기: 소스 파일은 읽지 않는다')
+    check(bodies.every(body => !body.includes('ENV_VALUE_MARKER') && !body.includes('SOURCE_MARKER')), '가져오기: /api 응답에 .env 예시 값·소스 원문이 없다')
     check(!(await page.locator('.migration-next').isDisabled()), '저장소를 고르면 "다음"이 열린다')
 
     const posts = []

@@ -1,167 +1,207 @@
 'use client'
 
-import { useRef, useState } from 'react'
-import { useT } from '../lib/i18n'
-import { DEFAULT_REGION, startRequestFor, type StartRequest, type Target } from '../lib/migration/events'
-import { requiresSource, sseStartMode } from '../lib/migration/config'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useI18n, type Translate } from '../lib/i18n'
+import { startRequestFor, type StartRequest, type Target } from '../lib/migration/events'
+import { apiBase, requiresSource, sseStartMode } from '../lib/migration/config'
 import { useMigration } from '../lib/migration/MigrationProvider'
 import type { PinnedSource } from '../lib/github/repos'
+import type { Detection, RepoScan } from '../lib/github/scan'
+import { loadEnvironments, secondsSince, type RegisteredEnvironments } from '../lib/setup/registry'
+import { crossCheck } from '../lib/setup/envFile'
+import { DEMO_REPO, DEMO_SCAN } from '../lib/setup/demoRepo'
 import RepoPicker from './RepoPicker'
+import RepoImport from './RepoImport'
+import EnvDrop, { type EnvResult } from './EnvDrop'
 
-type Props = { target: Target; onTarget: (target: Target) => void; onNext: (request: StartRequest) => void }
-
-// 대상 리전 선택지(클라우드 대상). 첫 항목이 기본값이다.
-const REGIONS: Record<'gcp', string[]> = {
-  gcp: ['asia-northeast3', 'asia-northeast1', 'us-central1'],
+type Props = {
+  target: Target
+  onTarget: (target: Target) => void
+  onNext: (request: StartRequest) => void
+  /** 자칼이 말할 문구(가져오기 완료·.env 확인) */
+  onSay?: (text: string) => void
+  /** 음성("좋아, 시작하자")·단축키로 시작할 수 있게 부모에게 시작 함수를 넘긴다 */
+  startRef?: { current: (() => void) | null }
 }
 
-type EnvFile = { name: string; size: number; modified: number }
+/** 자칼이 읽어 줄 "찾았어요: …" 목록 */
+export function foundList(t: Translate, detections: Detection[]): string {
+  const parts = detections.flatMap(detection => {
+    if (detection.kind === 'runtime') return [t('open.found.runtime', { name: detection.name })]
+    if (detection.kind === 'dockerfile') return [t('open.found.dockerfile')]
+    if (detection.kind === 'k8s') return [t('open.found.k8s', { count: detection.count })]
+    if (detection.kind === 'postgres') return [t('open.found.postgres')]
+    return []
+  })
+  return parts.length ? parts.join(t('open.found.sep')) : t('open.found.none')
+}
 
-export default function MigrationSetup({ target, onTarget, onNext }: Props) {
-  const t = useT()
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  // .env는 파일 이름만 들고 있고 내용은 읽지도 저장하지도 보내지도 않는다.
-  const [files, setFiles] = useState<EnvFile[]>([])
-  const [regions, setRegions] = useState<Partial<Record<Target, string>>>({})
-  const [agentId, setAgentId] = useState('')
-  const [dragging, setDragging] = useState(false)
-  // 고른 공개 저장소(서버가 기본 브랜치 커밋 SHA를 고정한 값)
-  const [source, setSource] = useState<PinnedSource | null>(null)
-  // SSE 모드에서 백엔드가 source를 아직 못 받을 때(#60 전) "다음"을 누르면 시작하지 않고 대기 안내를 보여 준다.
-  const [pending, setPending] = useState(false)
+function useHeartbeat(iso: string | undefined) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+  return iso ? secondsSince(iso, now) : 0
+}
+
+/** 플랫폼에 등록된 원본·대상(읽기 전용). 대상 카드만 고를 수 있다. */
+function Environments({ env, target, onTarget }: { env: RegisteredEnvironments; target: Target; onTarget: (target: Target) => void }) {
+  const { t, tOr } = useI18n()
+  const seconds = useHeartbeat(env.targets.onprem.last_heartbeat_at)
+  const regionName = (id: string) => tOr('region.' + id, id)
+  const onprem = env.targets.onprem
+  const gcp = env.targets.gcp
+  return <div className="senv" aria-label={t('setup2.registryAria')} role="group">
+    <div className="senv-card">
+      <div className="senv-k">{t('setup2.source')}<span className="senv-chip"><i />{t('setup2.connected')}</span></div>
+      <strong>{t('setup2.srcTitle', { account: env.source.account_id })}</strong>
+      <span>{t('setup2.srcDetail', { region: env.source.region, regionName: regionName(env.source.region), cluster: env.source.cluster.name })}</span>
+    </div>
+    <span className="senv-arrow" aria-hidden="true">→</span>
+    <div className="senv-card is-selected" data-target={target}>
+      <div className="senv-k">{t('setup2.dest')}
+        {target === 'onprem'
+          ? <span className={'senv-chip is-live' + (onprem.status === 'online' ? '' : ' is-off')}><i />{t(onprem.status === 'online' ? 'setup2.online' : 'setup2.offline', { s: seconds })}</span>
+          : <span className="senv-chip"><i />{t('setup2.connected')}</span>}
+      </div>
+      <strong>{t(target === 'onprem' ? 'setup2.onpremTitle' : 'setup2.gcpTitle')}</strong>
+      <span className="senv-detail">{target === 'onprem'
+        ? t('setup2.onpremDetail', { agent: onprem.agent_id, profile: onprem.profile })
+        : t('setup2.gcpDetail', { project: gcp.project_id, region: gcp.region, regionName: regionName(gcp.region), profile: gcp.profile })}</span>
+      <div className="migration-segment senv-switch" role="radiogroup" aria-label={t('setup.targetAria')}>
+        {(['gcp', 'onprem'] as const).map(value => <button key={value} type="button"
+          role="radio" aria-checked={target === value} className={target === value ? 'is-selected' : ''}
+          onClick={() => onTarget(value)}>{t(value === 'gcp' ? 'target.gcp' : 'target.onprem.short')}</button>)}
+      </div>
+    </div>
+  </div>
+}
+
+export default function MigrationSetup({ target, onTarget, onNext, onSay, startRef }: Props) {
+  const { t } = useI18n()
   const { mode } = useMigration()
   const needsSource = requiresSource(mode)
   const backendWaiting = mode === 'sse' && sseStartMode() === 'wait'
+  const [env, setEnv] = useState<RegisteredEnvironments | null | 'loading'>('loading')
+  // 고른 공개 저장소(서버가 기본 브랜치 커밋 SHA를 고정한 값) 또는 목업 모드의 시연용 저장소
+  const [source, setSource] = useState<PinnedSource | null>(null)
+  const [demo, setDemo] = useState(false)
+  const [scan, setScan] = useState<RepoScan | null>(null)
+  const [envFile, setEnvFile] = useState<EnvResult | null>(null)
+  // SSE 모드에서 백엔드가 source를 아직 못 받을 때(#60 전) 시작하지 않고 대기 안내를 보여 준다.
+  const [pending, setPending] = useState(false)
+  const exampleRef = useRef<(() => void) | null>(null)
+  const sayRef = useRef(onSay)
+  sayRef.current = onSay
+
+  // 등록 정보(에이전트 하트비트 포함)는 10초마다 다시 읽는다.
+  useEffect(() => {
+    const controller = new AbortController()
+    const load = () => void loadEnvironments(mode, apiBase(), controller.signal).then(found => {
+      if (!controller.signal.aborted) setEnv(current => found ?? (current === 'loading' ? null : current))
+    })
+    load()
+    const timer = window.setInterval(load, 10000)
+    return () => { controller.abort(); window.clearInterval(timer) }
+  }, [mode])
+
   const blocked = needsSource && !source
-  const chooseSource = (next: PinnedSource | null) => { setSource(next); setPending(false) }
+  const chooseSource = (next: PinnedSource | null) => { setSource(next); setScan(null); setPending(false) }
+  const useDemo = useCallback(() => { if (!needsSource) { setDemo(true); setScan(null) } }, [needsSource])
+  const expected = useMemo(() => scan?.env_keys ?? [], [scan])
+
+  const onScanned = useCallback((result: RepoScan | null) => {
+    setScan(result)
+    if (result) sayRef.current?.(t('open.jackal.imported', { found: foundList(t, result.detections) }))
+  }, [t])
+
+  const onEnvFile = (next: EnvResult | null) => {
+    setEnvFile(next)
+    if (!next) return
+    const check = expected.length ? crossCheck(next.keys, expected) : null
+    if (!check) sayRef.current?.(t('open.jackal.envKeys', { count: next.keys.length }))
+    else if (check.missing.length) sayRef.current?.(t('open.jackal.envMissing', { expected: check.expected, present: check.present.length, missing: check.missing.length }))
+    else sayRef.current?.(t('open.jackal.envComplete', { expected: check.expected }))
+  }
+
   const submit = () => {
     if (blocked) return
     if (backendWaiting) { setPending(true); return }
+    const registered = env && env !== 'loading' ? env : null
     onNext(startRequestFor(target, {
-      region: regions[target], agentId: agentId.trim() || undefined,
+      region: registered?.targets.gcp.region, agentId: registered?.targets.onprem.agent_id,
+      // 시연용 저장소는 싣지 않는다. .env는 키 이름만 알고 있어 백엔드가 쓸 수 있는 업로드 참조가 아니다: 보내지 않는다.
       source: source ?? undefined,
-      // .env는 파일 이름만 알고 있어 'local:<이름>'은 백엔드가 쓸 수 있는 업로드 참조가 아니다: 보내지 않는다.
     }))
   }
+  const submitRef = useRef(submit)
+  submitRef.current = submit
+  useEffect(() => {
+    if (!startRef) return
+    startRef.current = () => submitRef.current()
+    return () => { startRef.current = null }
+  }, [startRef])
 
-  const addFiles = (incoming: FileList | File[]) => {
-    setFiles(current => {
-      const next = [...current]
-      for (const file of Array.from(incoming)) {
-        if (!next.some(item => item.name === file.name && item.size === file.size && item.modified === file.lastModified)) {
-          next.push({ name: file.name, size: file.size, modified: file.lastModified })
-        }
-      }
-      return next
-    })
-  }
+  // 발표자 단축키(설정 화면): E 예시 .env, R 데모 저장소, S 시작
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const tag = (event.target as HTMLElement | null)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || event.metaKey || event.ctrlKey || event.altKey) return
+      const key = event.key.toLowerCase()
+      if (key === 'e') exampleRef.current?.()
+      if (key === 'r') useDemo()
+      if (key === 's') submitRef.current()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [useDemo])
 
-  return <section className="migration-setup" aria-label={t('setup.aria')}>
-    <div className="migration-form-panel" onPaste={event => {
-      if (event.clipboardData.files.length) {
-        event.preventDefault()
-        addFiles(event.clipboardData.files)
-      }
-    }}>
-      <div className="migration-heading">
-        <h2 className="migration-title" aria-level={1}>{t('setup.title')}</h2>
-        <p>{t('setup.subtitle')}</p>
+  const hasRepo = Boolean(source) || demo
+  const ready = !blocked && hasRepo && Boolean(envFile)
+  return <section className="migration-setup setup2" aria-label={t('setup.aria')}>
+    <div className="migration-form-panel setup2-panel">
+      <div className="migration-heading setup2-heading">
+        <div>
+          <h2 className="migration-title" aria-level={1}>{t('setup2.title')}</h2>
+          <p>{t('setup2.subtitle')}</p>
+        </div>
+        <span className="senv-chip is-quiet"><i />{t('setup2.registry')}</span>
       </div>
-      <div className="migration-fields">
-        <div className="migration-key-row">
-          <label className="migration-field">
-            <span className="migration-label">{t('setup.ak')}</span>
-            <input className="migration-input" type="text" name="accessKeyId" autoComplete="off" placeholder="AKIA..." />
-          </label>
-          <label className="migration-field">
-            <span className="migration-label">{t('setup.sk')}</span>
-            <input className="migration-input" type="password" name="secretAccessKey" autoComplete="new-password" placeholder={t('setup.skPh')} />
-          </label>
-        </div>
-        <label className="migration-field">
-          <span className="migration-label">{t('setup.st')}</span>
-          <input className="migration-input" type="password" name="sessionToken" autoComplete="new-password" placeholder={t('setup.stPh')} />
-        </label>
-        <label className="migration-field">
-          <span className="migration-label">{t('setup.region')}</span>
-          <input className="migration-input" type="text" name="region" autoComplete="off" placeholder={t('setup.regionPh')} />
-        </label>
-        <p className="migration-hint">{t('setup.hint')}</p>
-        <div className="migration-field">
-          <span className="migration-label">{t('setup.repo')}</span>
-          <RepoPicker value={source} onChange={chooseSource} returnTo={'/?stage=setup&target=' + target} />
-        </div>
-        <div className="migration-field">
-          <span className="migration-label">{t('setup.target')}</span>
-          <div className="migration-segment" role="radiogroup" aria-label={t('setup.targetAria')}>
-            {(['gcp', 'onprem'] as const).map(value => <button key={value} type="button"
-              role="radio" aria-checked={target === value} className={target === value ? 'is-selected' : ''}
-              onClick={() => onTarget(value)}>{t(value === 'gcp' ? 'target.gcp' : 'target.onprem.short')}</button>)}
-          </div>
-        </div>
-        {target === 'onprem'
-          ? <label className="migration-field">
-              <span className="migration-label">{t('setup.agentId')}</span>
-              <input className="migration-input" type="text" name="agentId" autoComplete="off" placeholder={t('setup.agentIdPh')}
-                value={agentId} onChange={event => setAgentId(event.target.value)} />
-            </label>
-          : <label className="migration-field">
-              <span className="migration-label">{t('setup.destRegion')}</span>
-              <select className="migration-input" name="destRegion" value={regions[target] ?? DEFAULT_REGION[target]}
-                onChange={event => setRegions(current => ({ ...current, [target]: event.target.value }))}>
-                {REGIONS[target].map(region => <option key={region} value={region}>{region}</option>)}
-              </select>
-            </label>}
-        <div className="migration-field">
-          <span className="migration-label">{t('setup.env')}</span>
-          <input ref={fileInputRef} className="migration-file-input" type="file" multiple
-            aria-label={t('setup.envPick')}
-            onChange={event => {
-              if (event.target.files) addFiles(event.target.files)
-              event.target.value = ''
-            }} />
-          <div className={'migration-upload' + (dragging ? ' is-dragging' : '')}
-            role="button" tabIndex={0} aria-label={t('setup.envAttach')}
-            onClick={() => fileInputRef.current?.click()}
-            onKeyDown={event => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault()
-                fileInputRef.current?.click()
-              }
-            }}
-            onDragOver={event => { event.preventDefault(); setDragging(true) }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={event => {
-              event.preventDefault()
-              setDragging(false)
-              addFiles(event.dataTransfer.files)
-            }}>
-            <span className="migration-upload-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4 16.5v2A1.5 1.5 0 005.5 20h13a1.5 1.5 0 001.5-1.5v-2" />
-              </svg>
-            </span>
-            <strong>{t('setup.uploadTitle')}</strong>
-            <span>{t('setup.uploadSub')}</span>
-          </div>
-          {files.length > 0 && <ul className="migration-file-list">
-            {files.map((file, index) => <li key={file.name + file.modified + index}>
-              <span className="migration-file-name">{file.name}</span>
-              <button type="button" aria-label={t('setup.remove', { name: file.name })} onClick={() => setFiles(current => current.filter((_, itemIndex) => itemIndex !== index))}>×</button>
-            </li>)}
-          </ul>}
-        </div>
+      {env === 'loading' && <p className="setup2-note" role="status">{t('setup2.loading')}</p>}
+      {env === null && <p className="setup2-note is-alert" role="alert">{t('setup2.unavailable')}</p>}
+      {env && env !== 'loading' && <Environments env={env} target={target} onTarget={onTarget} />}
+      <div className="setup2-main">
+        <section className={'setup2-card' + (!scan ? ' is-focus' : '')} aria-label={t('setup2.code')}>
+          <h3>{t('setup2.code')}<small>{t('setup2.codeHint')}</small></h3>
+          {!demo && <RepoPicker value={source} onChange={chooseSource} returnTo={'/?stage=setup&target=' + target} />}
+          {!demo && !source && !needsSource && <button type="button" className="envd-btn setup2-demo" onClick={useDemo}>{t('setup2.demoRepo')} <kbd>R</kbd></button>}
+          {demo && <div className="repo-pinned" role="status">
+            <div className="repo-pinned-text">
+              <strong>{DEMO_REPO.full_name}</strong>
+              <span>{t('setup.repoPinned', { branch: DEMO_REPO.default_branch, sha: DEMO_REPO.commit_sha.slice(0, 7) })} · {t('setup2.demoNote')}</span>
+            </div>
+            <button type="button" className="repo-link" onClick={() => { setDemo(false); setScan(null) }}>{t('setup2.change')}</button>
+          </div>}
+          {demo && <RepoImport key="demo" scan={DEMO_SCAN} onDone={onScanned} />}
+          {source && <RepoImport key={source.commit_sha} scan={{ full_name: source.full_name, commit_sha: source.commit_sha }} onDone={onScanned} />}
+        </section>
+        <section className={'setup2-card' + (scan && !envFile ? ' is-focus' : '')} aria-label={t('setup2.env')}>
+          <h3>{t('setup2.env')}<small>.env</small></h3>
+          <EnvDrop expected={expected} value={envFile} onChange={onEnvFile} exampleRef={exampleRef} />
+        </section>
       </div>
       {pending && source && <div className="repo-pending" role="alert">
         <strong>{t('pending.step')}</strong>
         <span>{t('pending.lead')}</span>
         <span>{t('pending.repo', { name: source.full_name, sha: source.commit_sha.slice(0, 7) })}</span>
       </div>}
-      <div className="migration-footer">
-        {blocked && <span className="migration-hint repo-footer-note">{t('setup.repoRequired')}</span>}
-        {!needsSource && !source && <span className="migration-hint repo-footer-note">{t('setup.repoDemoNote')}</span>}
+      <div className="migration-footer setup2-footer">
+        <span className={'migration-hint repo-footer-note' + (ready ? ' is-ready' : '')}>
+          {blocked ? t('setup.repoRequired') : ready ? t('setup2.ready') : t('setup2.waiting')}
+        </span>
         <button className="migration-next" type="button" disabled={blocked} aria-disabled={blocked} onClick={submit}>
-          {t('setup.next')} <span aria-hidden="true">→</span>
+          {t('setup2.start')} <kbd>S</kbd>
         </button>
       </div>
     </div>

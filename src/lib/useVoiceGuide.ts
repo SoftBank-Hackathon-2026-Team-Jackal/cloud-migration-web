@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import voiceClips from './voiceClips.json'
+import { RECORDED_CLIPS } from './voiceRecorded'
 
 type RecognitionResult = { results: ArrayLike<ArrayLike<{ transcript: string }>> }
 type RecognitionError = { error: string }
@@ -22,15 +23,20 @@ type SpeechWindow = Window & {
 }
 
 const normalize = (value: string) => value.toLowerCase().replace(/[\s.,!?~·]/g, '')
-const clipByText = new Map(Object.entries(voiceClips).map(([id, text]) => [text, id]))
+const recorded = new Set(RECORDED_CLIPS)
+const clipByText = new Map(Object.entries(voiceClips).filter(([id]) => recorded.has(id)).map(([id, text]) => [text, id]))
 
-export function useVoiceGuide({ started, active, ask = false, onWake, onStart, onAsk, onSay, onHeard }: {
+export function useVoiceGuide({ started, active, ask = false, onWake, onStart, onIntent, onCommand, onAsk, onSay, onHeard }: {
   started: boolean
   active: boolean
   /** 시연이 시작된 뒤(첫 화면이 아닐 때): "헤이 자칼, …" 질문을 onAsk로 보낸다. */
   ask?: boolean
   onWake: () => void
   onStart: () => void
+  /** 호출 뒤 첫 화면에서 들은 말(이전 의도). 있으면 onStart 대신 이쪽으로 보낸다. */
+  onIntent?: (utterance: string) => void
+  /** 시연 중 호출어 없이 받는 명령(예: 설정 화면의 "좋아, 시작하자"). 처리했으면 true. */
+  onCommand?: (utterance: string) => boolean
   onAsk?: (question: string) => void
   /** 에이전트가 말한 모든 문구(미리 녹음한 보고·즉석 답변): 채팅 기록용 */
   onSay?: (text: string, meta: { kind: 'report' | 'answer'; source?: 'model' | 'local' }) => void
@@ -50,7 +56,7 @@ export function useVoiceGuide({ started, active, ask = false, onWake, onStart, o
   const activeRef = useRef(active)
   const speakingRef = useRef(false)
   const soundRef = useRef(true)
-  const callbacksRef = useRef({ onWake, onStart, onAsk, onSay, onHeard })
+  const callbacksRef = useRef({ onWake, onStart, onIntent, onCommand, onAsk, onSay, onHeard })
   const askRef = useRef(ask)
   const askUntil = useRef(0)
   const restartTimer = useRef(0)
@@ -68,7 +74,7 @@ export function useVoiceGuide({ started, active, ask = false, onWake, onStart, o
   const speakRef = useRef<((text: string) => void) | null>(null)
 
   useEffect(() => { startedRef.current = started }, [started])
-  useEffect(() => { callbacksRef.current = { onWake, onStart, onAsk, onSay, onHeard } }, [onWake, onStart, onAsk, onSay, onHeard])
+  useEffect(() => { callbacksRef.current = { onWake, onStart, onIntent, onCommand, onAsk, onSay, onHeard } }, [onWake, onStart, onIntent, onCommand, onAsk, onSay, onHeard])
   useEffect(() => { askRef.current = ask }, [ask])
   useEffect(() => {
     activeRef.current = active
@@ -133,6 +139,7 @@ export function useVoiceGuide({ started, active, ask = false, onWake, onStart, o
 
   const stopAudio = useCallback(() => {
     window.cancelAnimationFrame(frameRef.current)
+    if (finishRef.current && typeof window !== 'undefined') window.speechSynthesis?.cancel()
     voiceActive.current = false
     voiceLevel.current = 0
     if (audioRef.current) {
@@ -146,7 +153,43 @@ export function useVoiceGuide({ started, active, ask = false, onWake, onStart, o
     setSpeaking(false)
   }, [])
 
-  const speak = useCallback((text: string, options?: { ripple?: boolean; onEnd?: () => void }) => {
+  // 녹음 파일이 없는 문구(대상·개수가 들어가는 문장, 다른 언어)는 브라우저 음성 합성으로 읽는다.
+  // 합성 음성은 분석기에 연결할 수 없어서, 말하는 동안 구체가 숨 쉬듯 움직이도록 음량을 흉내 낸다.
+  const synthesize = useCallback((text: string, language: 'ko' | 'en' | 'ja', options?: { ripple?: boolean; onEnd?: () => void }) => {
+    const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined
+    if (!synth) { options?.onEnd?.(); window.setTimeout(listen, 150); return }
+    synth.cancel()
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.lang = { ko: 'ko-KR', en: 'en-US', ja: 'ja-JP' }[language]
+    speakingRef.current = true
+    setSpeaking(true)
+    voiceActive.current = Boolean(options?.ripple)
+    const startedAt = performance.now()
+    const pulse = () => {
+      const time = (performance.now() - startedAt) / 1000
+      voiceLevel.current += ((.32 + .22 * Math.abs(Math.sin(time * 7.3)) * Math.abs(Math.sin(time * 2.1))) - voiceLevel.current) * .25
+      frameRef.current = window.requestAnimationFrame(pulse)
+    }
+    pulse()
+    let finished = false
+    const finish = () => {
+      // 다른 문구가 끼어들어 끊긴 경우(stopAudio가 바꿔 놓음)에는 이 문구의 onEnd를 부르지 않는다.
+      if (finished || finishRef.current !== finish) { finished = true; return }
+      finished = true
+      synth.cancel()
+      stopAudio()
+      options?.onEnd?.()
+      window.setTimeout(listen, 180)
+    }
+    finishRef.current = finish
+    utterance.onend = finish
+    utterance.onerror = finish
+    // 일부 브라우저는 합성 음성이 없으면 onend를 부르지 않는다: 글자 수로 넉넉히 잡은 시간 뒤에 끝낸다.
+    window.setTimeout(finish, 1500 + text.length * 140)
+    synth.speak(utterance)
+  }, [listen, stopAudio])
+
+  const speak = useCallback((text: string, options?: { ripple?: boolean; onEnd?: () => void; lang?: 'ko' | 'en' | 'ja' }) => {
     setMessage(text)
     callbacksRef.current.onSay?.(text, { kind: 'report' })
     stopListening()
@@ -158,12 +201,7 @@ export function useVoiceGuide({ started, active, ask = false, onWake, onStart, o
       return
     }
     const clip = clipByText.get(text)
-    if (!clip) {
-      setError('이 안내 문구의 음성 파일을 찾지 못했습니다.')
-      options?.onEnd?.()
-      window.setTimeout(listen, 150)
-      return
-    }
+    if (!clip) { synthesize(text, options?.lang ?? 'ko', options); return }
 
     armAudio()
     const audio = audioRef.current
@@ -182,7 +220,14 @@ export function useVoiceGuide({ started, active, ask = false, onWake, onStart, o
     }
     finishRef.current = finish
     audio.onended = finish
-    audio.onerror = () => { setError('음성 파일을 재생하지 못했습니다.'); finish() }
+    // 녹음 파일이 아직 없거나(새 문구) 재생이 막히면 같은 문장을 음성 합성으로 읽는다.
+    const fallback = () => {
+      if (finished) return
+      finished = true
+      stopAudio()
+      synthesize(text, options?.lang ?? 'ko', options)
+    }
+    audio.onerror = fallback
     const samples = new Uint8Array(analyser.fftSize)
     const measure = () => {
       analyser.getByteTimeDomainData(samples)
@@ -199,8 +244,8 @@ export function useVoiceGuide({ started, active, ask = false, onWake, onStart, o
       setSpeaking(true)
       voiceActive.current = Boolean(options?.ripple)
       measure()
-    }).catch(() => { setError('자동 재생이 제한되었습니다. 화면 버튼을 눌러 다시 시작해 주세요.'); finish() })
-  }, [armAudio, listen, stopAudio, stopListening])
+    }).catch(fallback)
+  }, [armAudio, listen, stopAudio, stopListening, synthesize])
 
   speakRef.current = speak
 
@@ -284,6 +329,7 @@ export function useVoiceGuide({ started, active, ask = false, onWake, onStart, o
       const transcript = event.results[0]?.[0]?.transcript ?? ''
       setHeard(transcript)
       const command = normalize(transcript)
+      if (callbacksRef.current.onCommand?.(transcript)) { callbacksRef.current.onHeard?.(transcript.trim()); return }
       if (askRef.current && callbacksRef.current.onAsk) {
         // 시연 중에는 호출어(헤이 자칼) 뒤의 말만 질문으로 받는다. 호출어만 말하면 10초 동안 다음 말을 질문으로 받는다.
         const wake = transcript.match(/헤이\s*(자칼|재칼|쟈칼)\s*[,.!?]?\s*(.*)$/i) || transcript.match(/hey\s*jackal\s*[,.!?]?\s*(.*)$/i)
@@ -298,7 +344,15 @@ export function useVoiceGuide({ started, active, ask = false, onWake, onStart, o
         }
         return
       }
-      if (/헤이(자칼|재칼|쟈칼)|heyjackal/.test(command)) { callbacksRef.current.onHeard?.('헤이 자칼'); callbacksRef.current.onWake() }
+      const intent = callbacksRef.current.onIntent
+      const wakeWord = transcript.match(/헤이\s*(?:자칼|재칼|쟈칼)\s*[,.!?]?\s*(.*)$/i) || transcript.match(/hey\s*jackal\s*[,.!?]?\s*(.*)$/i)
+      if (wakeWord) {
+        callbacksRef.current.onHeard?.('헤이 자칼')
+        callbacksRef.current.onWake()
+        // "헤이 자칼, AWS에 있는 …"처럼 한 번에 말하면 뒷부분을 의도로 받는다.
+        const rest = (wakeWord[1] || '').trim()
+        if (intent && rest.length > 3) { callbacksRef.current.onHeard?.(rest); window.setTimeout(() => callbacksRef.current.onIntent?.(rest), 1400) }
+      } else if (startedRef.current && intent && transcript.trim()) { callbacksRef.current.onHeard?.(transcript.trim()); intent(transcript.trim()) }
       else if (startedRef.current && /(마이그레이션|이전).*(시작|진행)/.test(command)) { callbacksRef.current.onHeard?.(transcript.trim()); callbacksRef.current.onStart() }
     }
     recognition.onerror = event => {
