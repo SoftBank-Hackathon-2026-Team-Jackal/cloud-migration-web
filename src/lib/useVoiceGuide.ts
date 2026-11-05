@@ -422,6 +422,8 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
       setHeard(transcript)
       const command = normalize(transcript)
       const { woke, rest } = parseWake(transcript)
+      // 시연 전 점검용: 음성 인식이 무엇으로 들었는지 콘솔에 남긴다(호출어를 못 알아들을 때 원인 확인).
+      console.info('[jackal-voice]', JSON.stringify({ lang: recognition.lang, heard: transcript, woke }))
       // 호출 직후(띠링 → "네, 말씀하세요")에는 호출어 없이 말해도 다음 한 마디를 받는다.
       const armedNow = askRef.current && Date.now() < awakeUntil.current
       if (callbacksRef.current.onCommand?.(transcript, { armed: armedNow })) { disarm(); callbacksRef.current.onHeard?.(transcript.trim()); return }
