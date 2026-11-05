@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import ParticleReveal from './ParticleReveal'
 import { useT, useTOr, type MsgKey, type TranslateOr } from '../lib/i18n'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
+import { useVoiceActions } from '../lib/voice/actions'
 import type { AnalysisFindingData, ScanMethod, Target } from '../lib/migration/events'
 
 /** 11/2 회의에서 정한 스캔 근거 4가지: 코드 호출 확인 · IAM 역할 추적 · CloudTrail 실제 호출 기록 · 리소스 설정 확인 */
@@ -132,6 +133,7 @@ export default function AnalysisStage({ target, onAdvance, onComplete, orbHandof
   const tOr = useTOr()
   const finished = infrastructure === 100 && code === 100
   useEffect(() => { if (finished) onComplete?.() }, [finished, onComplete])
+  useVoiceActions({ next: finished && ready && !proceed && (() => setProceed(true)) })
   const usedMethods = new Set(activeUpdates.flatMap(update => update.via ?? []))
   const latest = activeUpdates[activeUpdates.length - 1]
 

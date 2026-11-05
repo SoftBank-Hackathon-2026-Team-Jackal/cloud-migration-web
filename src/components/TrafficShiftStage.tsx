@@ -8,6 +8,7 @@ import MigrationLanes from './MigrationLanes'
 import type { Target } from '../lib/stages'
 import { useI18n, useT, type MsgKey } from '../lib/i18n'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
+import { useVoiceActions } from '../lib/voice/actions'
 import { DEFAULT_ACTIVITY, policyOf, stageOf, stepCards, verdictOf, type CardState, type Stage } from '../lib/migration/trafficModel'
 
 type Tone = 'ok' | 'warn' | 'fail' | 'pass'
@@ -50,6 +51,7 @@ function TrafficBody({ ready, target, onNext }: { ready: boolean; target: Target
   const residual = { requests: snapshot?.residual.requests_per_sec ?? 0, streams: snapshot?.residual.streams ?? 0 }
   const lagMs = snapshot?.replication?.lag_ms ?? state.traffic.ready?.lag_ms ?? state.data.current?.lag_ms ?? null
   const drained = stage === 'drained'
+  useVoiceActions({ next: drained && onNext, rollback: stage !== 'rolledback' && stage !== 'prepare' && stage !== 'blocked' && (() => provider.rollbackTraffic()), inject: mode === 'mock' && (stage === 'observing' || stage === 'applying') && (() => provider.injectFailure()), retry: stage === 'rolledback' && (() => provider.retryTraffic()) })
   const failedBad = failed > policy.maxFailed
   const p99Bad = p99Ratio > policy.maxP99Ratio
   const origin = prepare?.origin?.name ?? t('traffic.card.originFallback')

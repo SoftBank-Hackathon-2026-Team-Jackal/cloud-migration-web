@@ -9,6 +9,7 @@ import type { Target } from '../lib/stages'
 import type { DataPhase, PreflightCheck, PreflightCheckName } from '../lib/migration/events'
 import type { MigrationState } from '../lib/migration/reducer'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
+import { useVoiceActions } from '../lib/voice/actions'
 
 /**
  * 데이터 이전: 이전 경로 사전 검사(장부) · 경로와 WAL 테이프(구성도) · 지연 오실로스코프 · 테이블별 복사 · 전환 가능 시점 · 단계 띠.
@@ -75,6 +76,7 @@ function DataBody({ ready, target, onNext }: { ready: boolean; target: Target; o
   const verdict = preflight?.status ?? null
   const blocked = view === 'blocked'
   const gate1 = view === 'ready'
+  useVoiceActions({ next: gate1 && onNext })
   const elapsed = useElapsed(ready)
 
   // 초기 복사 진행: 테이블별 행 수 합(없으면 예전 dump_percent)

@@ -10,6 +10,7 @@ import MigrationReport from './MigrationReport'
 import { ArriveMorph } from './ScreenFx'
 import { runTransition } from '../lib/particleHandoff'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
+import { useVoiceActions } from '../lib/voice/actions'
 import type { Target } from '../lib/stages'
 import { useT, useTOr, type MsgKey } from '../lib/i18n'
 
@@ -41,6 +42,7 @@ function CutoverBody({ ready, target, phase, setPhase, onRestart, onComplete }: 
   // 측정이 끝났다: 서버가 마지막 결과를 보내 이전 상태가 done이 됐다(결과 id·개수는 서버가 정한다).
   const measured = phase === 'verify' && tiles.length > 0 && state.status === 'done'
 
+  useVoiceActions({ approve: phase === 'approve' && (() => runTransition(() => { setChecked(true); provider.approveCutover(); setPhase('running') })), next: measured && (() => runTransition(() => { setPhase('done'); onComplete() })) })
   // 6단계가 끝나고 측정 구간에 들어갔다는 이벤트가 오면 화면도 측정 단계로 넘어간다.
   useEffect(() => {
     if (phase === 'running' && state.cutover.verifying) setPhase('verify')

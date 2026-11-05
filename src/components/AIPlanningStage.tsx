@@ -10,6 +10,7 @@ import PlanTopology from './PlanTopology'
 import { issueText, placeText, stepText } from './planText'
 import { LEDGER_GROUPS, ledgerGroupOf, planSummary, planWarnings } from '../lib/migration/planModel'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
+import { useVoiceActions } from '../lib/voice/actions'
 
 type PlanStep = PlanStepData
 
@@ -255,6 +256,7 @@ export default function AIPlanningStage({ target, onNext }: { target: Target; on
   const units = Math.max(steps.length, preview?.resources.length ?? 0)
   const visibleCount = Math.min(revealed, units)
   const complete = state.plan.ready && units > 0 && visibleCount === units
+  useVoiceActions({ next: complete && onNext })
 
   const path: Target = target === 'onprem' ? 'onprem' : 'gcp'
   const revision = preview?.revision ?? state.plan.meta?.revision ?? 1

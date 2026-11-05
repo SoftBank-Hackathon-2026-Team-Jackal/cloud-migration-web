@@ -10,6 +10,7 @@ import PlanTopology from './PlanTopology'
 import { ViewTabs } from './DiagramParts'
 import { issueText, placeText, stepText } from './planText'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
+import { useVoiceActions } from '../lib/voice/actions'
 import { checkDigests } from '../lib/migration/digest'
 import { shortDigest, type ApprovalDecisionData } from '../lib/migration/events'
 
@@ -116,6 +117,8 @@ export default function ApprovalStage({ target, onApprove, onCancel, onRevise }:
     setSubmitted(true)
     provider.approve(plan?.revision)
   }
+  // 음성 승인: 자칼이 사실을 읽은 뒤 "승인해"를 들었을 때만 온다(확인 체크도 함께 한다). 취소·수정은 버튼과 같다.
+  useVoiceActions({ approve: !busy && digest.status !== 'mismatch' && (() => { setChecked(true); submit() }), revise: !busy && (() => { provider.revisePlan(); onRevise() }), cancel: !busy && (() => { provider.cancel(); setCancelled(true) }) })
 
   if (cancelled) {
     return <section className="flow-stage approval-stage is-ready" aria-label={t('approval.cancelled.step')}>

@@ -5,6 +5,7 @@ import StageShell from './StageShell'
 import { useT, type MsgKey } from '../lib/i18n'
 import type { Target } from '../lib/stages'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
+import { useVoiceActions } from '../lib/voice/actions'
 import { shortDigest, type BuildErrorCode, type BuildFixData, type BuildResultData, type SandboxAttemptData, type SandboxEnvData, type SandboxStep } from '../lib/migration/events'
 
 type DiffLine = { kind: 'file' | 'del' | 'add' | 'note'; text: string }
@@ -131,7 +132,7 @@ function Verdict({ result }: { result: SandboxAttemptData | null }) {
 
 function RehearsalBody({ ready, target, onNext, onComplete }: { ready: boolean; target: Target; onNext: () => void; onComplete?: () => void }) {
   const t = useT()
-  const { state: migration } = useMigration()
+  const { state: migration, provider } = useMigration()
   useStageFeed('build', ready, target)
   const sandbox = migration.sandbox
   const fixes = migration.build.fixes
@@ -146,6 +147,7 @@ function RehearsalBody({ ready, target, onNext, onComplete }: { ready: boolean; 
   const done = sandbox.done
   const passed = done?.status === 'PASSED'
   useEffect(() => { if (passed) onComplete?.() }, [passed, onComplete])
+  useVoiceActions({ next: passed && onNext, retry: !!migration.build.review && (() => provider.retrySandbox()) })
   const latest = sandbox.attempts[sandbox.attempts.length - 1] ?? null
   // 판정판은 실제로 테스트까지 돈 마지막 트랙의 결과만 보여 준다(빌드 실패·적용 실패 트랙은 판정 숫자가 없다).
   const judged = [...sandbox.attempts].reverse().find(item => sandbox.steps[item.run]?.test === 'done' || sandbox.steps[item.run]?.judge) ?? null

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import StageShell from './StageShell'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
+import { useVoiceActions } from '../lib/voice/actions'
 import type { Target } from '../lib/stages'
 import { useT, useTOr, type MsgKey } from '../lib/i18n'
 import { KIND_ORDER, REGION, addressOf, kindOf, readyKinds, specOf } from '../lib/migration/provisionModel'
@@ -41,6 +42,7 @@ function ProvisioningBody({ ready, target, onNext, onComplete }: { ready: boolea
 
   const goldKinds = readyKinds(checks)
   const allReady = finished && checksDone
+  useVoiceActions({ next: allReady && onNext })
   const resources: SceneResource[] = events.map((event, index) => {
     const kind = kindOf({ key: event.key, name: event.name })
     return {
