@@ -1,0 +1,43 @@
+/* ── 설정 화면 2단계: 이전 범위 선택(원장 행 · 근거 배지) + 등록 정보 관리 링크 ── */
+.setup3-manage{color:#555;font:500 11px/1 var(--font-sans);text-decoration:underline;text-underline-offset:2px}
+.setup3-manage:hover{color:#111}
+.setup2-heading .setup3-meta{display:flex;align-items:center;gap:10px}
+
+.scope{min-height:0;display:flex;flex-direction:column;gap:12px}
+.scope-head h3{margin:0;display:flex;align-items:center;gap:8px;color:#111;font:600 14px/1.3 var(--font-sans)}
+.scope-head p{margin:4px 0 0;color:#777;font:400 12px/1.45 var(--font-sans)}
+.scope-mock{height:18px;padding:0 6px;display:inline-flex;align-items:center;border:1px dashed #bbb;border-radius:5px;color:#777;font:600 10.5px/1 var(--font-sans)}
+.scope-pickers{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+.scope-field{min-width:0;display:grid;gap:5px}
+.scope-field span{color:#666;font:500 11px/1.3 var(--font-sans)}
+.scope-field select{width:100%;height:36px;padding:0 28px 0 10px;border:1px solid rgba(0,0,0,.12);border-radius:10px;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23666' stroke-width='1.4'/%3E%3C/svg%3E") no-repeat right 10px center;color:#111;font:500 12px/1 var(--font-sans);-webkit-appearance:none;appearance:none;text-overflow:ellipsis}
+.scope-field select:focus-visible{outline:2px solid #444;outline-offset:1px}
+.scope-field select:disabled{color:#aaa;background-color:#f6f6f6}
+
+.scope-progress{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:rgba(17,17,17,.04);color:#444;font:500 12px/1.4 var(--font-sans)}
+.scope-progress i{width:12px;height:12px;border:1.5px solid #ccc;border-top-color:#111;border-radius:50%;animation:scope-spin .8s linear infinite}
+@keyframes scope-spin{to{transform:rotate(360deg)}}
+
+.scope-result{min-height:0;display:flex;flex-direction:column;gap:8px}
+.scope-sum{display:flex;align-items:baseline;justify-content:space-between;gap:10px;font:600 12.5px/1.3 var(--font-sans);color:#111}
+.scope-sum span{color:#777;font-weight:500;font-variant-numeric:tabular-nums}
+.scope-list{min-height:0;max-height:clamp(180px,40vh,420px);margin:0;padding:0;overflow-y:auto;list-style:none;border-top:1px solid #ececec;scrollbar-width:thin}
+.scope-row{border-bottom:1px solid #ececec}
+.scope-row label{padding:9px 4px;display:grid;grid-template-columns:18px 104px minmax(0,1.1fr) minmax(0,1fr);gap:12px;align-items:start;cursor:pointer}
+.scope-row input{margin:2px 0 0;accent-color:#111}
+.scope-row:not(.is-in) .scope-name,.scope-row:not(.is-in) .scope-type{opacity:.45}
+.scope-type{color:#555;font:600 11.5px/1.5 var(--font-sans)}
+.scope-name{min-width:0;display:grid;gap:2px}
+.scope-name strong{color:#111;font:600 12.5px/1.4 var(--font-sans);overflow-wrap:anywhere}
+.scope-name code{color:#888;font:400 10.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
+.scope-ev{min-width:0;display:grid;gap:4px}
+.scope-evi{display:flex;align-items:baseline;gap:7px;min-width:0}
+.scope-evi b{flex:none;padding:2px 6px;border:1px solid #d8d8d8;border-radius:5px;color:#222;font:600 10px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace}
+.scope-evi small{min-width:0;color:#666;font:400 11px/1.45 var(--font-sans);overflow-wrap:anywhere}
+.scope-code{margin-left:6px;font:600 11px/1 ui-monospace,monospace}
+.scope .setup2-footer .envd-btn{flex:none}
+.scope .setup2-footer .repo-footer-note{flex:1}
+
+@media(max-width:1100px){.scope-pickers{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:760px){.scope-pickers{grid-template-columns:1fr 1fr}.scope-row label{grid-template-columns:18px minmax(0,1fr)}.scope-type,.scope-name,.scope-ev{grid-column:2}}
+@media(prefers-reduced-motion:reduce){.scope-progress i{animation:none}}

@@ -49,6 +49,35 @@
           ],
           "additionalProperties": false
         },
+        "source": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "GITHUB_PUBLIC"
+              ]
+            },
+            "repository_id": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "full_name": {
+              "type": "string",
+              "pattern": "^[^/\\s]+/[^/\\s]+$"
+            },
+            "commit_sha": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            }
+          },
+          "required": [
+            "kind",
+            "repository_id",
+            "full_name",
+            "commit_sha"
+          ],
+          "additionalProperties": false
+        },
         "env_file_ref": {
           "type": "string"
         }
@@ -168,6 +197,72 @@
         "scope",
         "manifest_digest",
         "preview_digest"
+      ],
+      "additionalProperties": false
+    },
+    "ApprovalResponse": {
+      "type": "object",
+      "description": "백엔드 openapi ApprovalResponse. 접수(결정)·전달(delivery_status)·실행(execution_status)을 따로 둔다. 전달 실패도 201/200 + FAILED로 온다.",
+      "properties": {
+        "approval_id": {
+          "type": "string"
+        },
+        "plan_id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer"
+        },
+        "decision": {
+          "enum": [
+            "APPROVE",
+            "REJECT"
+          ]
+        },
+        "approver_id": {
+          "type": "string"
+        },
+        "scope": {
+          "enum": [
+            "INFRASTRUCTURE",
+            "WORKLOADS",
+            "FULL"
+          ]
+        },
+        "delivery_status": {
+          "enum": [
+            "PENDING",
+            "DELIVERED",
+            "FAILED"
+          ]
+        },
+        "delivery_attempts": {
+          "type": "integer"
+        },
+        "execution_status": {
+          "enum": [
+            "NOT_STARTED",
+            "RUNNING",
+            "SUCCEEDED",
+            "FAILED",
+            "UNKNOWN"
+          ]
+        },
+        "workflow_state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "approval_id",
+        "plan_id",
+        "revision",
+        "decision",
+        "approver_id",
+        "scope",
+        "delivery_status",
+        "delivery_attempts",
+        "execution_status",
+        "workflow_state"
       ],
       "additionalProperties": false
     }

@@ -48,7 +48,7 @@ test('검증 항목은 id별 최신 상태와 마지막 이벤트를 가진다',
 test('수정 목록과 계획 단계, 구축 리소스는 id로 upsert 된다', () => {
   seq = 0
   const fix: DraftEvent = { type: 'build.fix', phase: 'build', status: 'running', data: { id: 'db', check: 'db', lines: [{ kind: 'add', text: '+ x' }], why: '', evidence: '' } }
-  const step: DraftEvent = { type: 'plan.step', phase: 'planning', status: 'running', data: { id: 'network', group: 'infrastructure', grade: 'convert', before: '', after: '', evidence: '', change: '' } }
+  const step: DraftEvent = { type: 'plan.step', phase: 'planning', status: 'running', data: { id: 'network', group: 'infrastructure', grade: 'API_DIFF', before: '', after: '', evidence: '', change: '', action: 'PROCEED', keep_source: false, verification: 'UNVERIFIED' } }
   const resource: DraftEvent = { type: 'provision.resource', phase: 'provisioning', status: 'running', data: { id: 'gcp-network', key: 'network', state: 'done', progress: 17 } }
   const state = run(initialState, ev(fix), ev(fix), ev(step), ev(resource), ev({ type: 'plan.ready', phase: 'planning', status: 'done', data: {} }))
   assert.equal(state.build.fixes.length, 1)
@@ -95,6 +95,31 @@ test('전환 단계: 완료된 단계 수와 측정 구간, 결과 3개가 모�
   assert.notEqual(state.status, 'done')
   state = run(state, ev(result('loss')))
   assert.equal(state.status, 'done')
+})
+
+test('DB 전환 상세: 계획·전환 가능 시점·단계(ms)·결과·테이블 검증, 새 시도면 지난 결과를 비운다 [가정]', () => {
+  seq = 0
+  const phase = 'verification' as const
+  const ready = (attempt: number): DraftEvent => ({ type: 'cutover.ready', phase, status: 'running', data: { attempt, longest_tx_ms: 40, lock_waits: 0, commits_per_sec: 128, ready: true, limits: { longest_tx_ms: 1000, lock_waits: 0 } } })
+  const step = (n: number, id: string, ms: number): DraftEvent => ({ type: 'cutover.step', phase, status: 'running', data: { n, state: 'done', id, ms, method: 'fast', of: 3 } })
+  const plan: DraftEvent = { type: 'cutover.plan', phase, status: 'waiting', data: { method: 'fast', expected_pause_ms: { min: 4, max: 8 }, rehearsal: { source: 'poc/demo', runs: 1, methods: [] }, preconditions: [], steps: [], rollback: { standby_hours: 72 }, topology: { app: 'a', pooler: 'p', source_db: 's', target_db: 't', source_where: 'x', target_where: 'y', writes_per_sec: 1 }, handover: [] } }
+  let state = run(initialState, ev(plan), ev(ready(1)), ev(step(2, 'marker', 2.1)), ev(step(1, 'pause', 0.6)), ev(step(3, 'liveness', 3)))
+  assert.deepEqual(state.cutover.steps.map(item => item.id), ['pause', 'marker', 'liveness'], '받은 순서와 상관없이 n순')
+  assert.equal(state.cutover.doneSteps, 3)
+  state = run(state,
+    ev({ type: 'cutover.outcome', phase, status: 'waiting', data: { result: 'refused', reason: 'TARGET_LIVENESS_FAILED', active: 'source', pause_ms: 5.7, held_requests: 2, failed_requests: 0, replication: { direction: 'forward', lag_ms: null } } }),
+    ev({ type: 'cutover.verify', phase, status: 'running', data: { table: 'orders', source_rows: 10, target_rows: null, checksum: 'skipped' } }),
+    ev({ type: 'cutover.verify', phase, status: 'running', data: { table: 'orders', source_rows: 11, target_rows: null, checksum: 'skipped' } }))
+  assert.equal(state.cutover.outcome?.result, 'refused')
+  assert.equal(state.cutover.tables.length, 1)
+  assert.equal(state.cutover.tables[0].source_rows, 11)
+  assert.notEqual(state.status, 'failed', '거부는 실패가 아니다')
+  state = run(state, ev(ready(2)))
+  assert.equal(state.cutover.attempt, 2)
+  assert.equal(state.cutover.outcome, null)
+  assert.deepEqual(state.cutover.steps, [])
+  assert.equal(state.cutover.tables.length, 0)
+  assert.ok(state.cutover.plan, '계획은 남는다')
 })
 
 test('승인 요청은 대기 상태로, 두 번째 승인은 따로 표시한다', () => {
@@ -195,7 +220,7 @@ test('plan.ready는 계획 버전·Digest를 담고, 빈 객체는 이전 값을
 
 test('계획 수정으로 revision이 올라가면 같은 id의 단계는 덮어쓰고 새 버전이 반영된다', () => {
   seq = 0
-  const step: DraftEvent = { type: 'plan.step', phase: 'planning', status: 'running', data: { id: 'network', group: 'infrastructure', grade: 'convert', before: '', after: '', evidence: '', change: '' } }
+  const step: DraftEvent = { type: 'plan.step', phase: 'planning', status: 'running', data: { id: 'network', group: 'infrastructure', grade: 'API_DIFF', before: '', after: '', evidence: '', change: '', action: 'PROCEED', keep_source: false, verification: 'UNVERIFIED' } }
   const ready = (revision: number): DraftEvent => ({ type: 'plan.ready', phase: 'planning', status: 'done', data: { revision } })
   let state = run(initialState, ev(step), ev(ready(1)))
   state = run(state, ev(step), ev(ready(2)))
@@ -242,4 +267,79 @@ test('정합성 확인·전환 조건 확인·운영권 인계는 이름별 최�
   assert.equal(state.data.verify.length, 0)
   assert.equal(state.traffic.ready, null)
   assert.equal(state.cutover.handover.length, 0)
+})
+
+test('샌드박스 루프: 트랙별 단계·판정·최종 상태가 쌓이고, INFRA 재시도는 같은 attempt의 새 트랙이다', () => {
+  const checks = { required_passed: 0, required_total: 24, unsupported_calls: 0, calls_in_mapping: 9, calls_total: 9, blocked_egress: 0 }
+  let state = run(initialState,
+    ev({ type: 'sandbox.env', phase: 'build', status: 'running', data: { namespace: 'sbx-run-1', expires_minutes: 120, egress_allowed: 3 } }),
+    ev({ type: 'sandbox.step', phase: 'build', status: 'running', data: { run: 1, attempt: 1, step: 'apply', state: 'failed' } }),
+    ev({ type: 'sandbox.attempt', phase: 'build', status: 'running', data: { run: 1, attempt: 1, max_attempts: 3, verdict: { passed: false, reasons: ['timeout'] }, failure_class: 'INFRA', checks, fix_ids: [] } }),
+    ev({ type: 'sandbox.step', phase: 'build', status: 'running', data: { run: 2, attempt: 1, step: 'judge', state: 'done' } }),
+    ev({ type: 'sandbox.attempt', phase: 'build', status: 'running', data: { run: 2, attempt: 1, max_attempts: 3, verdict: { passed: true, reasons: [] }, failure_class: null, checks: { ...checks, required_passed: 24 }, fix_ids: [] } }),
+    ev({ type: 'sandbox.done', phase: 'build', status: 'done', data: { status: 'PASSED', cleanup_status: 'CLEANED', digest: 'sha256:abc' } }),
+  )
+  assert.equal(state.sandbox.env?.namespace, 'sbx-run-1')
+  assert.equal(state.sandbox.steps[1].apply, 'failed')
+  assert.equal(state.sandbox.steps[2].judge, 'done')
+  assert.deepEqual(state.sandbox.attempts.map(item => [item.run, item.attempt, item.failure_class]), [[1, 1, 'INFRA'], [2, 1, null]])
+  assert.equal(state.build.attempt, 1)
+  assert.equal(state.sandbox.done?.cleanup_status, 'CLEANED')
+  state = run(state, ev({ type: 'sandbox.attempt', phase: 'build', status: 'running', data: { run: 2, attempt: 1, max_attempts: 3, verdict: { passed: true, reasons: [] }, failure_class: null, checks, fix_ids: [] } }))
+  assert.equal(state.sandbox.attempts.length, 2, '같은 트랙의 판정은 덮어쓴다')
+})
+
+// ---- 데이터 이전 단계 상세 [가정] ----
+test('데이터 이전: 사전 검사는 통째로 바뀌고, 테이블은 이름으로 덮어쓰고, 지연 궤적은 160개까지 남는다', async () => {
+  const { dataTimeline, dataTickAt, DATA_END_MS } = await import('../../src/lib/migration/dataScript.ts')
+  seq = 0
+  let state = initialState
+  for (const { event } of dataTimeline('onprem', 'pass', 0)) state = run(state, ev(event))
+  assert.equal(state.data.preflight?.status, 'PASS')
+  assert.equal(state.data.preflight?.checks.length, 4)
+  assert.equal(state.data.phase, 'streaming')
+  assert.equal(state.data.tables.length, 6, '테이블은 이름당 하나')
+  assert.ok(state.data.tables.every(table => table.state === 'matched'))
+  assert.equal(state.data.readiness?.ready, true)
+  assert.equal(state.status, 'running', '사전 검사·단계 이벤트가 이전을 실패로 만들지 않는다')
+  for (let ms = 0; ms <= DATA_END_MS + 30000; ms += 250) for (const event of dataTickAt(ms, 'pass')) state = run(state, ev(event))
+  assert.equal(state.data.lagTrace.length, 160)
+  assert.equal(state.data.lsn?.lag_bytes, 0)
+  assert.equal(state.data.current?.step, 'ready', '예전 진행 값도 함께 온다')
+  state = reducer(state, { type: 'resetPhase', phase: 'data_copy' })
+  assert.deepEqual(state.data, initialState.data)
+})
+
+test('데이터 이전: 경로 실패면 시작 차단이고 이전 자체는 실패가 아니다', async () => {
+  const { dataTimeline } = await import('../../src/lib/migration/dataScript.ts')
+  seq = 0
+  let state = initialState
+  for (const { event } of dataTimeline('gcp', 'route', 0)) state = run(state, ev(event))
+  assert.equal(state.data.preflight?.status, 'FAIL')
+  assert.equal(state.data.preflight?.may_start, false)
+  assert.equal(state.data.preflight?.checks.find(check => check.name === 'route')?.code, 'ROUTE_NOT_TUNNEL')
+  assert.deepEqual(state.data.preflight?.checks.filter(check => check.status === 'SKIPPED').map(check => check.name), ['db_path', 'large_transfer'])
+  assert.equal(state.data.phase, 'blocked')
+  assert.equal(state.data.tables.length, 0)
+  assert.equal(state.failures.data_copy, undefined)
+})
+
+test('승인 결정: 전달 상태는 뒤로 가지 않고, 다시 전달하면 새 시도로 바뀐다 [가정: approval.decision]', () => {
+  seq = 0
+  const base = { approval_id: 'a1', plan_id: 'p', revision: 1, decision: 'APPROVE' as const, scope: 'FULL' as const, delivery_attempts: 1, execution_status: 'NOT_STARTED' as 'NOT_STARTED' | 'RUNNING' }
+  const decision = (data: Partial<typeof base> & { delivery_status: 'PENDING' | 'DELIVERED' | 'FAILED'; execution_status?: 'NOT_STARTED' | 'RUNNING' }): DraftEvent =>
+    ({ type: 'approval.decision', phase: 'awaiting_approval', status: 'waiting', data: { ...base, ...data } })
+  let state = run(initialState, ev(decision({ delivery_status: 'PENDING' })))
+  assert.equal(state.approval.decision?.delivery_status, 'PENDING')
+  assert.notEqual(state.status, 'failed')
+  // 이벤트(DELIVERED)가 API 응답(PENDING)보다 먼저 와도 PENDING으로 돌아가지 않는다.
+  state = run(state, ev(decision({ delivery_status: 'DELIVERED', execution_status: 'RUNNING' })))
+  state = reducer(state, { type: 'approvalDecision', data: { ...base, delivery_status: 'PENDING' } })
+  assert.equal(state.approval.decision?.delivery_status, 'DELIVERED')
+  // 전달 실패 → 다시 전달(시도 2)은 받아들인다. 전달 실패는 이전 실패가 아니다.
+  state = reducer(initialState, { type: 'approvalDecision', data: { ...base, delivery_status: 'FAILED' } })
+  assert.equal(state.status, 'idle')
+  state = reducer(state, { type: 'approvalDecision', data: { ...base, delivery_attempts: 2, delivery_status: 'PENDING' } })
+  assert.equal(state.approval.decision?.delivery_status, 'PENDING')
+  assert.equal(reducer(state, { type: 'resetPhase', phase: 'awaiting_approval' }).approval.decision, null)
 })

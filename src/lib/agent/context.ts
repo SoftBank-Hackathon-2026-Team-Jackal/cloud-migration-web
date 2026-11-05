@@ -18,7 +18,8 @@ export type AgentFacts = {
   provision: { resourcesDone: number; resourcesTotal: number; failed: string[]; checksDone: number; checksTotal: number }
   data: { step: string | null; rows: number; totalRows: number; lagMs: number | null; verifyDone: boolean }
   traffic: { phase: string | null; targetWeight: number; failedRequests: number; maxFailedRequests: number; p99Ratio: number; readyState: string | null }
-  cutover: { doneSteps: number; results: number; handoverDone: number }
+  /** stepsTotal: 전환 단계 수(cutover.step의 of) · outcome: switched|refused · pauseMs: 쓰기 중단 [가정] */
+  cutover: { doneSteps: number; stepsTotal: number | null; results: number; handoverDone: number; handoverTotal: number; outcome: string | null; pauseMs: number | null }
   /** 최근 기록(오래된 것 → 최신 순). 사람이 읽는 문장이 아니라 짧은 항목 이름이다. */
   recent: string[]
 }
@@ -39,8 +40,12 @@ export function buildAgentFacts(state: MigrationState, stage: string, stageLabel
   for (const check of state.provision.checks.slice(-2)) recent.push('준비 검사 ' + check.name + ' ' + check.state)
   if (state.data.current) recent.push('데이터 ' + state.data.current.step + ' ' + state.data.current.rows + '/' + state.data.current.total_rows + '행')
   for (const verify of state.data.verify.slice(-2)) recent.push('정합성 ' + verify.name + ' ' + verify.state)
+  if (state.data.preflight) recent.push('이전 경로 사전 검사 ' + state.data.preflight.status + state.data.preflight.checks.filter(check => check.code).map(check => ' ' + check.name + ':' + check.code).join(''))
+  if (state.data.phase) recent.push('데이터 단계 ' + state.data.phase)
   for (const log of state.traffic.logs.slice(0, 3).reverse()) recent.push('트래픽 ' + log.key)
   if (state.traffic.ready) recent.push('전환 조건 ' + state.traffic.ready.state)
+  if (state.cutover.ready && !state.cutover.outcome) recent.push('전환 가능 시점 ' + (state.cutover.ready.ready ? 'ready' : 'waiting') + (state.cutover.ready.waiting_on ? ' ' + state.cutover.ready.waiting_on : ''))
+  if (state.cutover.outcome) recent.push('DB 전환 ' + state.cutover.outcome.result + (state.cutover.outcome.reason ? ' ' + state.cutover.outcome.reason : '') + ' ' + state.cutover.outcome.pause_ms + 'ms')
   for (const item of state.cutover.handover.slice(-2)) recent.push('운영권 인계 ' + item.item + ' ' + item.state)
 
   return {
@@ -71,7 +76,7 @@ export function buildAgentFacts(state: MigrationState, stage: string, stageLabel
       rows: state.data.current?.rows ?? 0,
       totalRows: state.data.current?.total_rows ?? 0,
       lagMs: state.data.current?.lag_ms ?? null,
-      verifyDone: state.data.verify.some(item => item.name === 'checksum' && item.state === 'done'),
+      verifyDone: state.data.verify.some(item => item.name === 'checksum' && item.state === 'done') || (state.data.tables.length > 0 && state.data.tables.every(item => item.state === 'matched')),
     },
     traffic: {
       phase: snapshot?.phase ?? null,
@@ -81,7 +86,11 @@ export function buildAgentFacts(state: MigrationState, stage: string, stageLabel
       p99Ratio: snapshot?.gate.p99_ratio ?? 1,
       readyState: state.traffic.ready?.state ?? null,
     },
-    cutover: { doneSteps: state.cutover.doneSteps, results: state.cutover.results.length, handoverDone: state.cutover.handover.filter(item => item.state === 'done').length },
+    cutover: {
+      doneSteps: state.cutover.doneSteps, stepsTotal: state.cutover.steps.find(step => step.of)?.of ?? null, results: state.cutover.results.length,
+      handoverDone: state.cutover.handover.filter(item => item.state === 'done').length, handoverTotal: state.cutover.plan?.handover.length ?? state.cutover.handover.length,
+      outcome: state.cutover.outcome?.result ?? null, pauseMs: state.cutover.outcome?.pause_ms ?? null,
+    },
     recent: recent.slice(-RECENT_LIMIT),
   }
 }
@@ -101,7 +110,8 @@ export function factsToText(facts: AgentFacts): string {
   lines.push('프로비저닝: 리소스 ' + facts.provision.resourcesDone + '/' + facts.provision.resourcesTotal + ' 완료, 실패 ' + (facts.provision.failed.join(', ') || '없음') + ', 준비 검사 ' + facts.provision.checksDone + '/' + facts.provision.checksTotal)
   lines.push('데이터: 단계 ' + (facts.data.step ?? '-') + ', 행 ' + facts.data.rows + '/' + facts.data.totalRows + ', 복제 지연 ' + (facts.data.lagMs ?? '-') + 'ms, 정합성 확인 ' + (facts.data.verifyDone ? '완료' : '미완료'))
   lines.push('트래픽: 단계 ' + (facts.traffic.phase ?? '-') + ', 대상 가중치 ' + facts.traffic.targetWeight + '%, 실패 요청 ' + facts.traffic.failedRequests + '(허용 ' + facts.traffic.maxFailedRequests + '), p99 ' + facts.traffic.p99Ratio + '배, 전환 조건 ' + (facts.traffic.readyState ?? '-'))
-  lines.push('전환·검증: ' + facts.cutover.doneSteps + '/6 단계, 측정 결과 ' + facts.cutover.results + '/3, 운영권 인계 ' + facts.cutover.handoverDone + '/3')
+  const cut = facts.cutover
+  lines.push('전환·검증: ' + cut.doneSteps + '/' + (cut.stepsTotal ?? '-') + ' 단계, 결과 ' + (cut.outcome ?? '-') + (cut.pauseMs === null ? '' : ', 쓰기 중단 ' + cut.pauseMs + 'ms') + ', 측정 결과 ' + cut.results + '개, 운영권 인계 ' + cut.handoverDone + '/' + cut.handoverTotal)
   lines.push('최근 기록: ' + (facts.recent.join(' → ') || '없음'))
   return lines.join('\n')
 }

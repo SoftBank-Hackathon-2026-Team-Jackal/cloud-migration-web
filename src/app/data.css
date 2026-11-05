@@ -1,0 +1,190 @@
+/*
+ * 데이터 이전 단계 (DataMigrationStage · ReplicationDiagram · PhaseStrip).
+ * 무채색 장부: 흰 카드 · 회색 괘선 · 오른쪽 정렬 표 숫자 · 증거는 답 옆 mono.
+ * 금색(#b08a2e)은 동기화·통과 순간에만, 빨강은 작은 실패 코드에만.
+ * polish.css 뒤에 불러와 같은 선택자를 덮는다.
+ */
+.dm-stage{--dm-ink:#0a0a0a;--dm-muted:#6b6b6b;--dm-faint:#a3a3a3;--dm-border:#e6e6e6;--dm-rule:#efefef;--dm-gold:#b08a2e;--dm-gold-bg:#f6eedb;--dm-gold-ink:#6b5113;--dm-neg:#c4242a;--dm-neg-bg:#ffedea;--dm-neg-ink:#831c1e;--dm-warn:#92400e;--dm-warn-bg:#fffbeb;--dm-mono:"SF Mono",ui-monospace,Menlo,monospace}
+.dm-stage .flow-body{margin-top:12px}
+.dm-mono{font-family:var(--dm-mono);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+
+.dm{flex:1;min-height:0;display:grid;grid-template-rows:minmax(0,1fr) clamp(176px,calc(26vh - 40px),420px) auto;gap:12px}
+.dm-main{min-height:0;display:grid;grid-template-columns:clamp(340px,24vw,480px) minmax(0,1fr);gap:12px}
+.dm-card{min-height:0;background:#fff;border:1px solid var(--dm-border);border-radius:12px}
+.dm-card h2{margin:0;font-size:13px;font-weight:600;letter-spacing:-.01em;color:var(--dm-ink)}
+
+/* ── 사전 검사 장부 ─────────────────────────────── */
+.dm-pf{display:flex;flex-direction:column;padding:12px 16px;overflow:hidden}
+.dm-pf-note{margin:3px 0 8px;color:var(--dm-muted);font-size:11px;line-height:1.45}
+.dm-checks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.dm-ck{display:grid;grid-template-columns:16px minmax(0,1fr) auto;gap:10px;align-items:start;padding:clamp(5px,1.3vh,22px) 0;border-top:1px solid var(--dm-rule)}
+.dm-dot{position:relative;width:14px;height:14px;margin-top:2px;border:1.5px solid #cfcfcf;border-radius:50%}
+.dm-ck.is-run .dm-dot{border-color:var(--dm-ink);border-right-color:transparent;animation:dm-spin .8s linear infinite}
+.dm-ck.is-pass .dm-dot{border-color:var(--dm-ink);background:var(--dm-ink)}
+.dm-ck.is-pass .dm-dot::after{content:"";position:absolute;left:3.5px;top:1.5px;width:3px;height:6px;border:solid #fff;border-width:0 1.5px 1.5px 0;transform:rotate(45deg)}
+.dm-ck.is-fail .dm-dot{border-color:var(--dm-neg);background:var(--dm-neg)}
+.dm-ck.is-unk .dm-dot{border-color:var(--dm-warn);border-style:dashed}
+.dm-ck.is-skip{opacity:.45}
+@keyframes dm-spin{to{transform:rotate(360deg)}}
+.dm-ck-body{min-width:0;display:flex;flex-direction:column;gap:5px}
+.dm-ck strong{font-size:13px;font-weight:600;color:var(--dm-ink)}
+.dm-kind{margin-left:6px;color:var(--dm-muted);font-size:11px;font-weight:400}
+.dm-ev{color:var(--dm-muted);font-size:11px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dm-ck.is-fail .dm-ev{color:var(--dm-neg-ink)}
+.dm-st{padding:2px 7px;border-radius:5px;background:#eee;color:#3d3d3d;font-size:11px;font-weight:600;white-space:nowrap}
+.dm-st.is-pass{background:#111;color:#fff}
+.dm-st.is-fail{background:var(--dm-neg-bg);color:var(--dm-neg-ink)}
+.dm-st.is-unk{background:var(--dm-warn-bg);color:var(--dm-warn)}
+.dm-chain{display:flex;flex-wrap:wrap;gap:3px}
+.dm-chain i{padding:2px 5px;border-radius:4px;background:#f1f1f1;color:#8a8a8a;font-size:10px;font-style:normal;transition:background .3s,color .3s}
+.dm-chain i.is-ok{background:#111;color:#fff}
+.dm-chain i.is-bad{background:var(--dm-neg-bg);color:var(--dm-neg-ink)}
+.dm-xfer{display:block;height:4px;overflow:hidden;border-radius:2px;background:#eee}
+.dm-xfer i{display:block;height:100%;background:#111;transition:width .25s linear}
+.dm-verdict{margin-top:auto;padding-top:10px;border-top:1px solid var(--dm-ink);display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:center}
+.dm-verdict-big{font-size:19px;font-weight:700;letter-spacing:-.02em;color:var(--dm-ink)}
+.dm-fp{grid-column:1/-1;color:var(--dm-muted);font-size:11px;line-height:1.4;font-variant-numeric:tabular-nums}
+.dm-gate{grid-column:1/-1;margin:4px 0 0;padding:8px 10px;border-radius:8px;background:#f3f3f3;color:#3d3d3d;font-size:12px;line-height:1.45}
+.dm-gate.is-open{background:#111;color:#fff}
+.dm-gate.is-block{background:var(--dm-neg-bg);color:var(--dm-neg-ink)}
+
+/* ── 구성도 ─────────────────────────────── */
+.dm-viz{display:flex;flex-direction:column;padding:12px 16px 8px;overflow:hidden}
+.dm-viz-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.dm-clock{display:flex;align-items:baseline;gap:8px;color:var(--dm-muted);font-size:11px}
+.dm-clock b{color:var(--dm-ink);font-size:15px;font-weight:500}
+.dm-diagram{flex:1;min-height:0;display:flex}
+.dm-svg{width:100%;height:100%;display:block;font-family:var(--font-sans)}
+.dm-svg text{fill:var(--dm-muted)}
+.dm-svg .dm-mono{font-family:var(--dm-mono)}
+.dm-t-zone{font-size:12px}
+.dm-t-box{font-size:12px;fill:#3d3d3d!important}
+.dm-t-small{font-size:11px}
+.dm-t-tiny{font-size:10px}
+.dm-t-name{font-size:20px;font-weight:700;fill:var(--dm-ink)!important;letter-spacing:-.02em}
+.dm-t-lsn{font-size:15px;fill:var(--dm-ink)!important}
+.dm-t-tape{font-size:12px;font-weight:600;fill:var(--dm-ink)!important;paint-order:stroke;stroke:#fff;stroke-width:4px;stroke-linejoin:round}
+.dm-t-gap{font-size:22px;font-weight:600;fill:var(--dm-ink)!important}
+.dm-svg .is-inv{fill:#fff!important}
+.dm-svg .is-inv-muted{fill:#bdbdbd!important}
+.dm-svg .is-ink{fill:var(--dm-ink)!important}
+.dm-svg .is-neg{fill:var(--dm-neg)!important}
+.dm-svg .is-gold{fill:#8a6a1c!important}
+.dm-move{transition:transform .25s linear,width .25s linear}
+.dm-target{transition:stroke .6s,stroke-width .6s}
+.dm-copy{transition:width .4s linear}
+.dm-ticks{animation:dm-tape .58s linear infinite}
+@keyframes dm-tape{from{transform:translateX(0)}to{transform:translateX(-22px)}}
+.dm-packets{animation:dm-probe .65s linear infinite}
+@keyframes dm-probe{from{transform:translateX(0)}to{transform:translateX(-400px)}}
+.dm-probe-pod.is-active{animation:dm-blink 1.3s ease-in-out infinite}
+@keyframes dm-blink{50%{stroke-opacity:.35}}
+.dm-barrier{transition:opacity .4s}
+
+/* ── 아래 세 패널 ─────────────────────────────── */
+.dm-lower{min-height:0;display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr) minmax(0,.8fr);gap:12px}
+.dm-pane{display:flex;flex-direction:column;padding:10px 16px 12px;overflow:hidden}
+.dm-pane-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:6px}
+.dm-pane-head small{color:var(--dm-muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dm-empty{margin:auto 0;color:var(--dm-faint);font-size:12px}
+.dm-scope{position:relative;flex:1;min-height:60px}
+.dm-scope svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.dm-scope-grid{stroke:#efefef;stroke-width:1}
+.dm-scope-line{stroke:var(--dm-ink);stroke-width:1.6;stroke-linecap:round}
+.dm-scope-scale{position:absolute;left:2px;top:0;color:var(--dm-faint);font:400 10px var(--dm-mono)}
+.dm-scope-scale.is-zero{top:auto;bottom:0}
+.dm-scope-dot{position:absolute;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;background:var(--dm-ink);transition:left .25s linear,top .25s linear,background .4s}
+.dm-scope-dot.is-gold{background:var(--dm-gold)}
+.dm-scope-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+.dm-tables{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}
+.dm-tables td{padding:clamp(2px,.45vh,7px) 0;border-top:1px solid var(--dm-rule);vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dm-tables td:first-child{width:38%;color:var(--dm-ink)}
+.dm-tables td:last-child{width:30%}
+.dm-num{text-align:right;font-variant-numeric:tabular-nums}
+.dm-bar{display:block;width:calc(100% - 12px);height:3px;overflow:hidden;border-radius:2px;background:#eee}
+.dm-bar i{display:block;height:100%;background:#111;transition:width .4s linear}
+.dm-tables tr.is-matched .dm-num{color:var(--dm-gold-ink)}
+.dm-ready{margin:0;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px 10px;align-items:baseline;font-size:12px}
+.dm-ready dt{color:var(--dm-muted)}
+.dm-ready dd{margin:0;color:var(--dm-ink);font-size:15px;font-weight:500;text-align:right}
+.dm-ready-verdict{margin:auto 0 0;padding:7px 10px;border-radius:8px;background:#f3f3f3;color:#3d3d3d;font-size:12px;line-height:1.4}
+.dm-ready-verdict.is-ok{background:var(--dm-gold-bg);color:var(--dm-gold-ink)}
+
+/* ── 단계 띠(데이터 · 트래픽 · DB 전환 공용) ─────────────────────────────── */
+.dm-strip{margin-bottom:var(--chrome-b)}
+.ps{--ps-ink:#0a0a0a;--ps-muted:#6b6b6b;--ps-faint:#9a9a9a;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:center;padding:10px 16px;background:#fff;border:1px solid #e6e6e6;border-radius:12px;font-family:var(--font-sans)}
+.ps-lanes{position:relative;display:grid;grid-template-columns:64px minmax(0,1fr);grid-template-rows:36px 36px;column-gap:10px}
+.ps-lane-name{align-self:center;color:var(--ps-muted);font-size:11px}
+.ps-lane-name.ps-app{grid-row:1}
+.ps-lane-name.ps-db{grid-row:2}
+.ps-track{position:relative;grid-column:2;grid-row:1/3}
+.ps-lane{position:absolute;left:0;right:0;height:6px;border-radius:3px;background:#e6e6e6}
+.ps-lane.is-app{top:15px}
+.ps-lane.is-db{top:51px}
+.ps-lane i{position:absolute;top:0;left:0;height:100%;border-radius:3px;background:var(--ps-ink);transition:width .4s linear,left .4s linear}
+.ps-lane.is-blocked i{background:#c4242a}
+.ps-seg{position:absolute;color:var(--ps-faint);font-size:11px;line-height:1;white-space:nowrap}
+.ps-seg.ps-app{top:0}
+.ps-seg.ps-db{top:62px}
+.ps-gate{position:absolute;top:0;bottom:0;width:0;z-index:1}
+.ps-gate::before{content:"";position:absolute;top:2px;bottom:2px;left:0;border-left:1px dashed var(--ps-ink)}
+.ps-gate b{position:absolute;top:50%;left:-10px;width:20px;height:20px;margin-top:-10px;display:grid;place-items:center;border:1px solid var(--ps-ink);border-radius:50%;background:#fff;color:var(--ps-ink);font-size:10px;font-weight:600;transition:background .4s,border-color .4s,color .4s}
+.ps-gate.is-pass b{background:var(--ps-ink);color:#fff}
+.ps-gate.is-sync.is-pass b{background:#b08a2e;border-color:#b08a2e}
+.ps-gate.is-fail b{background:#c4242a;border-color:#c4242a;color:#fff}
+/* 지금 위치 선은 두 줄(레인) 사이에만 그어 위·아래 구간 이름(예: 50:50 → 0:100)과 겹치지 않게 한다 */
+.ps-now{position:absolute;top:12px;bottom:12px;width:2px;margin-left:-1px;background:#b08a2e;transition:left .4s linear}
+.ps-side{display:flex;flex-direction:column;align-items:flex-end;gap:6px;max-width:300px}
+.ps-side small{color:var(--ps-muted);font-size:11px;line-height:1.35;text-align:right}
+.ps.is-compact{padding:6px 14px}
+.ps.is-compact .ps-side{max-width:260px}
+
+/* 데이터 화면의 주 버튼: e2e 선택자(.flow-footer .flow-primary)를 그대로 두고 띠 안에 놓는다 */
+.dm-go.flow-footer{margin:0;padding:0;border:0;display:block}
+
+/* 트래픽 · DB 전환 화면에 얹는 띠 */
+.flow-strip{grid-column:1/-1;min-width:0}
+
+/* ── 높이에 맞추기 ─────────────────────────────── */
+@media (max-height:900px){
+  .dm-pf-note{display:none}
+  .dm-pf{overflow-y:auto;scrollbar-width:thin}
+  .dm-fp{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dm-gate{padding:6px 10px}
+  .dm-verdict-big{font-size:17px}
+  .dm-pf .dm-ck{padding:4px 0}
+  .dm-ck-body{gap:3px}
+  .dm-pf .dm-chain{gap:2px}
+}
+@media (min-height:1200px){
+  .dm-ck strong{font-size:14px}
+  .dm-ev{font-size:12px}
+  .dm-pane-head h2,.dm-card h2{font-size:14px}
+}
+
+/* ── 좁은 화면: 한 줄씩 쌓고 구성도는 카드 안에서 가로로 넘긴다 ─────────────────── */
+@media (max-width:980px){
+  .dm-stage .flow-body{flex:none}
+  .dm,.dm-main,.dm-lower{display:flex;flex-direction:column;flex:none}
+  .dm-card,.dm-strip{flex:none}
+  .dm-pf{overflow:visible}
+  .dm-pf .dm-verdict{margin-top:12px}
+  .dm-diagram{flex:none;overflow-x:auto;overscroll-behavior-x:contain}
+  .dm-svg{width:760px;min-width:760px;height:289px}
+  .dm-pane{min-height:170px}
+  .dm-pane .dm-scope{min-height:110px}
+  .ps{grid-template-columns:1fr}
+  .ps-side{align-items:stretch;max-width:none}
+  .ps-side small{text-align:left}
+  .ps-seg.is-minor,.ps-seg.is-tail{display:none}
+}
+@media (max-width:620px){
+  .ps-lanes{grid-template-columns:48px minmax(0,1fr)}
+  .ps-seg{display:none}
+  .dm-ev{white-space:normal}
+}
+
+@media (prefers-reduced-motion:reduce){
+  .dm-ck.is-run .dm-dot,.dm-ticks,.dm-packets,.dm-probe-pod.is-active{animation:none}
+  .dm-move,.dm-copy,.dm-scope-dot,.ps-now,.ps-lane i,.dm-bar i,.dm-xfer i{transition:none}
+}

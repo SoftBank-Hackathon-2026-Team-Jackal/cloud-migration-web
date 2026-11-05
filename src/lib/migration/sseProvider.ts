@@ -1,6 +1,7 @@
-import { startRequestFor, type BackendPhase, type ErrorData, type MigrationEvent, type PlanReadyData, type StartRequest } from './events'
+import { isBackendPreview, normalizePlanStep, startRequestFor, type ApprovalDecisionData, type BackendPhase, type ErrorData, type MigrationEvent, type PlanReadyData, type StartRequest } from './events.ts'
 import type { EnterContext, MigrationProvider, ProviderHost } from './provider'
 import type { ReportData } from './events'
+import type { SseStartMode } from './config'
 
 type Options = {
   baseUrl: string
@@ -9,7 +10,13 @@ type Options = {
    * 인증 방식이 정해지면 이 한 곳만 채우면 된다.
    */
   getHeaders?: () => Record<string, string> | Promise<Record<string, string>>
+  /** 시작 방식(config.ts의 sseStartMode). 기본 wait: 백엔드가 source를 받기 전까지 POST /migrations를 부르지 않는다. */
+  startMode?: SseStartMode
 }
+
+/** 이전을 시작하지 않고 멈춘 이유(StatusPanel이 실패가 아니라 대기 안내로 보여 준다). */
+export const BACKEND_PENDING = 'backend_pending'
+export const SOURCE_REQUIRED = 'source_required'
 
 // 백엔드 시작 요청의 project_id. 프로젝트 개념이 정해지기 전까지 고정값을 쓴다.
 const PROJECT_ID = 'demo'
@@ -37,6 +44,8 @@ export class SseProvider implements MigrationProvider {
   private lastId = ''
   /** 가장 최근 plan.ready 값: 승인 API가 계획 ID·버전·digest를 요구한다. */
   private plan: PlanReadyData | null = null
+  /** 가장 최근 승인 결정(API 응답·approval.decision). 전달이 실패했으면 다시 전달할 때 approval_id를 쓴다. */
+  private decision: ApprovalDecisionData | null = null
 
   constructor(host: ProviderHost, options: Options) {
     this.host = host
@@ -51,8 +60,9 @@ export class SseProvider implements MigrationProvider {
     this.host.dispatch({ type: 'fail', error })
   }
 
-  private async post(path: string, body?: object, absolute = false): Promise<boolean> {
-    if (!this.migrationId) return false
+  /** POST를 보내고 응답 본문(JSON이 아니면 null)을 돌려준다. 실패하면 화면에 요청 실패를 알리고 undefined. */
+  private async post(path: string, body?: object, absolute = false): Promise<unknown> {
+    if (!this.migrationId) return undefined
     try {
       const response = await fetch(this.options.baseUrl + (absolute ? '' : '/migrations/' + this.migrationId) + path, {
         method: 'POST',
@@ -60,16 +70,42 @@ export class SseProvider implements MigrationProvider {
         body: body ? JSON.stringify(body) : undefined,
       })
       if (!response.ok) throw new Error('HTTP ' + response.status)
-      return true
+      return await response.json().catch(() => null)
     } catch (error) {
       this.fail({ code: 'request_failed', message: error instanceof Error ? error.message : String(error), phase: null, retryable: true })
-      return false
+      return undefined
     }
   }
 
-  /** 시연용 쿼리(?review=1)를 목업 서버에 넘긴다. 실제 백엔드는 무시한다. */
+  /** 승인 API 응답(ApprovalResponse)이면 상태에 넣는다. 전달 상태가 없는 응답(옛 경로)은 넣지 않는다: 그때는 구축 이벤트가 진행을 알려 준다. */
+  private takeDecision(body: unknown) {
+    const data = body as Partial<ApprovalDecisionData> | null | undefined
+    if (!data || typeof data !== 'object' || !data.approval_id || !data.delivery_status) return
+    this.decision = data as ApprovalDecisionData
+    this.host.dispatch({ type: 'approvalDecision', data: this.decision })
+  }
+
+  /** 시연용 쿼리(?review=1 · ?preflight=route|unknown · ?cutover=classic|kill|tamper|tamper-classic)를 목업 서버에 넘긴다. 실제 백엔드는 무시한다. */
   private demoQuery() {
-    return typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('review') === '1' ? '?review=1' : ''
+    if (typeof window === 'undefined') return ''
+    const search = new URLSearchParams(window.location.search)
+    const query = new URLSearchParams()
+    if (search.get('review') === '1') query.set('review', '1')
+    const preflight = search.get('preflight')
+    if (preflight === 'route' || preflight === 'unknown') query.set('preflight', preflight)
+    const cutover = search.get('cutover')
+    if (cutover && cutover !== 'fast' && ['classic', 'kill', 'tamper', 'tamper-classic'].includes(cutover)) query.set('cutover', cutover)
+    const text = query.toString()
+    return text ? '?' + text : ''
+  }
+
+  private get startMode(): SseStartMode {
+    return this.options.startMode ?? 'wait'
+  }
+
+  /** 시작하지 않고 대기 안내를 띄운다(분석이 시작된 것처럼 보이지 않게). */
+  private hold(code: typeof BACKEND_PENDING | typeof SOURCE_REQUIRED) {
+    this.fail({ code, message: '', phase: null, retryable: false })
   }
 
   start(request: StartRequest) {
@@ -77,7 +113,11 @@ export class SseProvider implements MigrationProvider {
     this.migrationId = null
     this.lastId = ''
     this.plan = null
+    this.starting = null
     this.host.dispatch({ type: 'reset' })
+    // [#60 전] 백엔드 /migrations는 source를 아직 받지 않는다: 부르지 않는다.
+    if (this.startMode === 'wait') { this.hold(BACKEND_PENDING); return }
+    if (this.startMode === 'source' && !request.source) { this.hold(SOURCE_REQUIRED); return }
     this.starting = (async () => {
       try {
         const response = await fetch(this.options.baseUrl + '/migrations' + this.demoQuery(), {
@@ -101,8 +141,12 @@ export class SseProvider implements MigrationProvider {
   }
 
   enter(_phase: BackendPhase, context: EnterContext): () => void {
-    // 설정 화면을 거치지 않고 주소로 단계를 연 경우에는 기본 요청으로 이전을 하나 시작한다.
-    if (!this.migrationId && !this.starting) this.start(startRequestFor(context.target))
+    // 설정 화면을 거치지 않고 주소로 단계를 연 경우: 저장소(source)가 없으므로 시작하지 않고 대기 안내를 띄운다.
+    // 목업 SSE 서버 시험(legacy)만 예전처럼 기본 요청으로 이전을 하나 시작한다.
+    if (!this.migrationId && !this.starting) {
+      if (this.startMode === 'legacy') this.start(startRequestFor(context.target))
+      else this.hold(this.startMode === 'wait' ? BACKEND_PENDING : SOURCE_REQUIRED)
+    }
     return () => {}
   }
 
@@ -115,10 +159,16 @@ export class SseProvider implements MigrationProvider {
     const plan = this.plan
     if (!plan?.plan_id || plan.revision === undefined || !plan.manifest_digest || !plan.preview_digest) { fallback(); return }
     const path = '/provisioning/plans/' + encodeURIComponent(plan.plan_id) + '/revisions/' + plan.revision + '/approvals'
-    void this.post(path, { decision, scope: 'FULL', manifest_digest: plan.manifest_digest, preview_digest: plan.preview_digest }, true)
+    // 같은 계획 버전의 승인이 기록됐지만 전달에 실패했으면, 새로 결정하지 않고 같은 승인을 다시 전달한다(openapi: POST …/approvals/{approval_id}/delivery).
+    const last = this.decision
+    const redeliver = decision === 'APPROVE' && last && last.decision === 'APPROVE' && last.plan_id === plan.plan_id && last.revision === plan.revision && last.delivery_status === 'FAILED'
+    const request = redeliver
+      ? this.post(path + '/' + encodeURIComponent(last.approval_id) + '/delivery', undefined, true)
+      : this.post(path, { decision, scope: 'FULL', manifest_digest: plan.manifest_digest, preview_digest: plan.preview_digest }, true)
+    void request.then(body => this.takeDecision(body))
   }
 
-  approve(revision?: number) { this.decide('APPROVE', () => { void this.post('/approve', revision === undefined ? undefined : { revision }) }) }
+  approve(revision?: number) { this.decide('APPROVE', () => { void this.post('/approve', revision === undefined ? undefined : { revision }).then(body => this.takeDecision(body)) }) }
   /**
    * 계획 수정 요청. [가정] 백엔드는 재계획 의미를 아직 정하지 않았다(openapi: REJECT만 구현, revision 요청은 undecided).
    * 그래서 거절(REJECT)로 보내고 revision + 1의 plan.ready가 다시 온다고 기대한다. 계획 정보가 없으면 [가정] POST /plan/revise.
@@ -229,7 +279,53 @@ export class SseProvider implements MigrationProvider {
     let event: MigrationEvent
     try { event = JSON.parse(data.join('\n')) as MigrationEvent } catch { return }
     if (id) this.lastId = id
+    event = normalizeEvent(event)
     if (event.type === 'plan.ready') this.plan = event.data
+    if (event.type === 'approval.decision') this.decision = event.data
+    if (event.type === 'snapshot') {
+      for (const item of event.data.events) {
+        if (item.type === 'plan.ready') this.plan = item.data
+        if (item.type === 'approval.decision') this.decision = item.data
+      }
+    }
     this.host.dispatch({ type: 'event', event })
+  }
+}
+
+/**
+ * 서버 값을 화면이 읽는 모양으로 맞춘다 [가정: 백엔드 계약 미정].
+ * - plan.step: 예전 등급(direct/convert/none)과 빠진 처리·원본 유지·검증 상태를 채운다.
+ * - plan.preview: 빠진 목록은 빈 목록으로(백엔드 Preview 모양도 받는다).
+ * - traffic.prepare·traffic.snapshot [가정]: 빠진 목록은 빈 목록으로.
+ * - snapshot 안의 이벤트도 같은 규칙으로.
+ */
+export function normalizeEvent(event: MigrationEvent): MigrationEvent {
+  switch (event.type) {
+    case 'plan.step':
+      return { ...event, data: normalizePlanStep(event.data) }
+    case 'plan.preview': {
+      const data = event.data
+      // 백엔드 Preview 모양은 reducer가 매핑과 함께 옮긴다(previewAdapter). 빠진 목록만 채운다.
+      if (isBackendPreview(data)) return { ...event, data: { ...data, changes: data.changes ?? [], applied_defaults: data.applied_defaults ?? [], warnings: data.warnings ?? [], errors: data.errors ?? [], pending_decisions: data.pending_decisions ?? [] } }
+      return { ...event, data: {
+        ...data,
+        resources: data.resources ?? [],
+        env_remap: data.env_remap ?? [],
+        security_rules: data.security_rules ?? [],
+        validation: { errors: data.validation?.errors ?? [], warnings: data.validation?.warnings ?? [] },
+      } }
+    }
+    // [가정] 트래픽 사전 확인: 빠진 확인 목록은 빈 목록으로.
+    case 'traffic.prepare':
+      return { ...event, data: { ...event.data, checks: event.data.checks ?? [] } }
+    // [가정] 트래픽 스냅샷: 빠진 notes·results는 빈 목록으로, steps가 비어 있으면 지운다(화면이 기본 단계를 쓴다).
+    case 'traffic.snapshot': {
+      const { steps, ...data } = event.data
+      return { ...event, data: { ...data, ...(steps?.length ? { steps } : {}), notes: data.notes ?? [], results: data.results ?? [] } }
+    }
+    case 'snapshot':
+      return { ...event, data: { ...event.data, events: (event.data.events ?? []).map(normalizeEvent) } }
+    default:
+      return event
   }
 }

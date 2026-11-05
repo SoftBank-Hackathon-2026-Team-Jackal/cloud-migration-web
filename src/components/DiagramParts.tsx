@@ -1,17 +1,22 @@
 'use client'
 
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import * as Tabs from '@radix-ui/react-tabs'
 
 /** 구성도 위쪽의 작은 탭(예: 구성도 | 변경 내용). 방향키 이동·포커스 관리는 Radix Tabs가 맡는다. */
-export function ViewTabs<T extends string>({ items, value, onChange, label }: {
+export function ViewTabs<T extends string>({ items, value, onChange, label, variant }: {
   items: Array<{ id: T; label: string }>
   value: T
   onChange: (next: T) => void
   label: string
+  /** segmented: 옅은 회색 트랙 위 흰 알약(계획 화면). 기본은 검은 선택 칩. */
+  variant?: 'segmented'
 }) {
+  // 마우스·터치로 고를 때는 포커스 고리를 숨기고, 키보드로 움직일 때만 보인다(Radix가 클릭한 탭에 포커스를 옮겨 고리가 겹쳐 보이던 문제).
+  const [pointer, setPointer] = useState(false)
   return <Tabs.Root className="view-tabs-root" value={value} onValueChange={next => onChange(next as T)} activationMode="manual">
-    <Tabs.List className="view-tabs" aria-label={label}>
+    <Tabs.List className={'view-tabs' + (variant ? ' is-' + variant : '') + (pointer ? ' is-pointer' : '')} aria-label={label}
+      onPointerDown={() => setPointer(true)} onKeyDown={() => setPointer(false)}>
       {/* 탭 내용은 선택된 것만 화면에 있어서 Radix가 붙이는 aria-controls가 없는 요소를 가리킨다. 뺀다. */}
       {items.map(item => <Tabs.Trigger key={item.id} value={item.id} aria-controls={undefined} className={item.id === value ? 'is-selected' : ''}>{item.label}</Tabs.Trigger>)}
     </Tabs.List>

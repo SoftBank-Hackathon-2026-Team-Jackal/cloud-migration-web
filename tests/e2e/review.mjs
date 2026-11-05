@@ -24,7 +24,7 @@ async function open(query) {
   page.setDefaultTimeout(30000)
   page.on('pageerror', error => problems.push('pageerror: ' + error))
   page.on('console', message => { if (message.type() === 'error') problems.push('console.error: ' + message.text().slice(0, 160)) })
-  await page.goto(`${BASE_URL}/?${query}`)
+  await page.goto(`${BASE_URL}/?${query}${/(^|&)speed=/.test(query) ? '' : `&speed=${process.env.E2E_SPEED ?? '10'}`}`)
   return page
 }
 const overflow = page => page.evaluate(() => document.documentElement.scrollWidth > innerWidth || document.documentElement.scrollHeight > innerHeight)
@@ -63,6 +63,26 @@ try {
     await page.locator('.approval-check input').check()
     check(await page.locator('.approval-actions .flow-primary').isDisabled(), '불일치면 체크해도 승인 버튼이 막힌다')
     check(!(await overflow(page)), '가로·세로 넘침이 없다')
+    await page.close()
+  }
+
+  console.log('승인 전달 실패 → 다시 전달 (?delivery=fail)')
+  {
+    // 잠깐 지나가는 '전달 중' 상태를 확인해야 하므로 이 시험은 실제 시간(×1)으로 돈다.
+    const page = await open('stage=approval&delivery=fail&target=gcp&lang=ko&speed=1')
+    await page.waitForSelector('.approval-digest')
+    await page.locator('.approval-check input').check()
+    await page.locator('.approval-actions .flow-primary').click()
+    await page.waitForSelector('.approval-delivery.is-pending')
+    check(await page.locator('.approval-actions .flow-primary').isDisabled(), '전달을 기다리는 동안 승인 버튼이 막힌다')
+    await page.waitForSelector('.approval-delivery.is-failed', { timeout: 10000 })
+    await page.waitForTimeout(1500)
+    check(await page.locator('.approval-panel').count() === 1, '전달이 실패하면 다음 단계로 넘어가지 않는다')
+    check(await page.locator('.approval-actions .flow-primary').isEnabled(), '전달 실패 뒤 [다시 전달]을 누를 수 있다')
+    await page.locator('.approval-actions .flow-primary').click()
+    await page.waitForSelector('.approval-delivery.is-delivered', { timeout: 10000 })
+    await page.waitForSelector('.approval-panel', { state: 'detached', timeout: 15000 })
+    check(true, '다시 전달해 전달되면 구축으로 넘어간다')
     await page.close()
   }
 } catch (error) {

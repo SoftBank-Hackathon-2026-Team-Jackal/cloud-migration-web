@@ -15,7 +15,9 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DATA_TICK_MS, DATA_VERIFY_TOTAL_MS, PLAN_REVEAL_MS, REPORT_SECONDS, TRAFFIC_READY_EVENTS, dataProgressAt, dueDataVerify, timelineEnd, timelineFor } from '../src/lib/migration/script.ts'
+import { APPROVAL_ID, PLAN_ID, PLAN_REVEAL_MS, approvalTimeline, REPORT_SECONDS, TRAFFIC_READY_EVENTS, trafficPrepareTimeline, timelineEnd, timelineFor } from '../src/lib/migration/script.ts'
+import { DATA_END_MS, DATA_LSN_TICK_MS, DATA_TABLES, dataTickAt, dataTimeline } from '../src/lib/migration/dataScript.ts'
+import { cutoverPlan, cutoverRefusesFirst, cutoverRun } from '../src/lib/migration/cutoverScript.ts'
 import { targetOfRequest } from '../src/lib/migration/events.ts'
 import { TrafficSim } from '../src/lib/migration/trafficSim.ts'
 
@@ -23,6 +25,8 @@ const PORT = Number(process.env.PORT || 8000)
 const HOST = process.env.HOST || '127.0.0.1'
 const STATE_FILE = process.env.MOCK_STATE_FILE || join(tmpdir(), 'mock-sse-state.json')
 const HEARTBEAT_MS = 15000
+// 시험용 MOCK_SPEED=N(1–20): 대본 시계를 N배 빠르게 돌린다(단위 시험이 실제 시간만큼 기다리지 않게).
+const SPEED = Math.min(20, Math.max(1, Number(process.env.MOCK_SPEED) || 1))
 const PHASE_GAP_MS = 800
 
 const CORS = {
@@ -99,7 +103,7 @@ function wait(record, ms) {
   const state = runtime(record.id)
   return new Promise((resolve, reject) => {
     if (state.cancelled) return reject(CANCELLED)
-    const waiter = { timer: setTimeout(() => { state.waiters.delete(waiter); resolve() }, ms), reject }
+    const waiter = { timer: setTimeout(() => { state.waiters.delete(waiter); resolve() }, ms / SPEED), reject }
     state.waiters.add(waiter)
   })
 }
@@ -118,7 +122,7 @@ function cancelRun(record) {
 async function play(record, items) {
   const began = Date.now()
   for (const { after, event } of [...items].sort((a, b) => a.after - b.after)) {
-    await wait(record, Math.max(0, after - (Date.now() - began)))
+    await wait(record, Math.max(0, after - (Date.now() - began) * SPEED))
     emit(record, event)
   }
 }
@@ -169,28 +173,27 @@ const phaseRunners = {
     record.status = 'waiting'
     await waitApproval(record, 'plan')
     record.status = 'running'
+    // 결정 기록(PENDING) → 실행 엔진에 전달(DELIVERED). 전달이 끝난 뒤에 구축을 시작한다(ADR-002).
+    await play(record, approvalTimeline(record.revision))
   },
   async provisioning(record) {
     await play(record, timelineFor('provisioning', context(record)))
   },
   async data_copy(record) {
+    // 사전 검사 → (PASS면) 스키마 → 초기 복사 → CDC → 스트리밍. 대본과 250ms 틱(data.lsn·data.progress)을 함께 흘린다.
+    // 사전 검사가 PASS가 아니면(?preflight=route|unknown) 시작 차단에서 멈춘다(다음 단계로 넘어가지 않는다).
+    const scenario = record.preflight ?? 'pass'
     const began = Date.now()
-    let reachedAt = 0
-    let verifyCursor = 0
+    let finished = false
+    const script = play(record, dataTimeline(record.target, scenario, began)).finally(() => { finished = true })
     for (;;) {
-      await wait(record, DATA_TICK_MS)
-      const data = dataProgressAt((Date.now() - began) / 1000)
-      emit(record, { type: 'data.progress', phase: 'data_copy', status: data.step === 'ready' ? 'done' : 'running', data })
-      if (data.step === 'ready' && !reachedAt) reachedAt = Date.now()
-      // 준비되면 정합성 확인(행 수 → 체크섬)을 이어서 보낸다.
-      if (reachedAt) {
-        const due = dueDataVerify(Date.now() - reachedAt, verifyCursor)
-        verifyCursor = due.cursor
-        for (const event of due.events) emit(record, event)
-      }
-      // 준비 상태가 된 뒤에도 정합성 확인이 끝날 때까지 흘려 보낸다(화면의 숫자가 계속 움직인다).
-      if (reachedAt && Date.now() - reachedAt > DATA_VERIFY_TOTAL_MS + 800) return
+      await wait(record, DATA_LSN_TICK_MS)
+      for (const event of dataTickAt((Date.now() - began) * SPEED, scenario)) emit(record, event)
+      if (scenario === 'pass' && finished && (Date.now() - began) * SPEED > DATA_END_MS) break
+      // 시작 차단: 판정 뒤에는 더 보낼 것이 없다. 취소될 때까지 기다린다.
+      if (scenario !== 'pass' && finished) await wait(record, 2 ** 31 - 1)
     }
+    await script
   },
   async traffic(record) {
     const state = runtime(record.id)
@@ -201,11 +204,18 @@ const phaseRunners = {
       readyDone = item.after
       emit(record, { type: 'traffic.ready', phase: 'traffic', status: 'running', data: item.data })
     }
+    // [가정] 사전 확인(traffic_prepare)과 연결 정보
+    let prepareDone = 0
+    for (const item of trafficPrepareTimeline(record.target)) {
+      await wait(record, Math.max(0, item.after - prepareDone))
+      prepareDone = item.after
+      emit(record, { type: 'traffic.prepare', phase: 'traffic', status: item.data.state === 'done' ? 'done' : 'running', data: item.data })
+    }
     await new Promise((resolve, reject) => {
       const sim = new TrafficSim(data => {
         emit(record, { type: 'traffic.snapshot', phase: 'traffic', status: data.phase === 'complete' ? 'done' : 'running', data })
         if (data.phase === 'complete' && data.residual.requests_per_sec === 0 && data.residual.streams === 0) resolve()
-      })
+      }, undefined, SPEED)
       state.sim = sim
       state.approvals.set('traffic', { resolve, reject })
       sim.start()
@@ -215,11 +225,19 @@ const phaseRunners = {
     state.sim = null
   },
   async verification(record) {
-    emit(record, { type: 'approval.required', phase: 'verification', status: 'waiting', data: { excluded: [], rollback_policy: '', gate: 'cutover' } })
-    record.status = 'waiting'
-    await waitApproval(record, 'cutover')
-    record.status = 'running'
-    await play(record, timelineFor('verification', context(record)))
+    // 전환 계획(승인 2/2 화면) → 승인 → 전환. 전환이 거부되면(?cutover=kill|tamper-classic 첫 시도) 원본에 남고 다시 승인을 기다린다 [가정].
+    const scenario = record.cutover ?? 'fast'
+    emit(record, { type: 'cutover.plan', phase: 'verification', status: 'waiting', data: cutoverPlan(record.target, scenario) })
+    for (let attempt = 1; ; attempt++) {
+      emit(record, { type: 'approval.required', phase: 'verification', status: 'waiting', data: { excluded: [], rollback_policy: '', gate: 'cutover' } })
+      record.status = 'waiting'
+      await waitApproval(record, 'cutover')
+      record.status = 'running'
+      await play(record, cutoverRun(scenario, attempt, DATA_TABLES))
+      if (!(cutoverRefusesFirst(scenario) && attempt === 1)) break
+      record.approved.cutover = false
+      save()
+    }
   },
 }
 
@@ -289,6 +307,8 @@ const server = http.createServer(async (req, res) => {
     const record = {
       id: 'm-' + randomUUID().slice(0, 8), target: targetOfRequest(body), status: 'running', phase: 'analysis',
       revision: 1, review: url.searchParams.get('review') === '1', retried: false,
+      preflight: ['route', 'unknown'].includes(url.searchParams.get('preflight')) ? url.searchParams.get('preflight') : 'pass',
+      cutover: ['classic', 'kill', 'tamper', 'tamper-classic'].includes(url.searchParams.get('cutover')) ? url.searchParams.get('cutover') : 'fast',
       seq: 0, history: [], approved: { plan: false, cutover: false, review: false }, aiFixes: Number(body.ai_fixes) >= 1 && Number(body.ai_fixes) <= 4 ? Number(body.ai_fixes) : 1, pending: 'analysis',
     }
     migrations.set(record.id, record)
@@ -323,7 +343,9 @@ const server = http.createServer(async (req, res) => {
       void run(record, 'planning')
       return send(res, 200, { decision: 'REJECT', revision: approvals[2] })
     }
-    return approve(record, 'plan') ? send(res, 200, { decision: 'APPROVE', revision: approvals[2] }) : send(res, 409, { error: 'ALREADY_DECIDED' })
+    // 응답은 백엔드 ApprovalResponse 모양: 기록은 됐지만 아직 전달 전(PENDING). 전달 완료는 approval.decision 이벤트로 온다.
+    if (!approve(record, 'plan')) return send(res, 409, { error: 'ALREADY_DECIDED' })
+    return send(res, 201, { approval_id: APPROVAL_ID, plan_id: PLAN_ID, revision: record.revision, decision: 'APPROVE', approver_id: 'demo', scope: body.scope, delivery_status: 'PENDING', delivery_attempts: 1, execution_status: 'NOT_STARTED', workflow_state: 'WAITING_FOR_APPROVAL' })
   }
 
   const match = path.match(/^\/migrations\/([^/]+)(\/.*)?$/)

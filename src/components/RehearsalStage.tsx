@@ -1,41 +1,32 @@
 'use client'
 
+import FixerEnvNotice from './FixerEnvNotice'
 import { useEffect } from 'react'
 import StageShell from './StageShell'
 import { useT, type MsgKey } from '../lib/i18n'
 import type { Target } from '../lib/stages'
-import ArchitectureDiagram, { type NodeState } from './ArchitectureDiagram'
-import AiTip, { type TipFix } from './AiTip'
-import ZoomableDiagram from './ZoomableDiagram'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
-import { shortDigest, type BuildCheckData, type BuildErrorCode, type BuildFixData, type BuildResultData, type CheckState } from '../lib/migration/events'
+import { useVoiceActions } from '../lib/voice/actions'
+import { shortDigest, type BuildErrorCode, type BuildFixData, type BuildResultData, type SandboxAttemptData, type SandboxEnvData, type SandboxStep } from '../lib/migration/events'
 
-// running: 검증 중 · failed: 실패 · fixing: AI(픽서)가 수정 중 · recheck: AI(리베리파이어)가 재검증 중 · done: 통과
-// fixed: fixing/recheck 때 지금까지 고친 개수(한 검증 항목 안에서 수정이 여러 개일 수 있다)
-
-const CHECKS = [{ id: 'build' }, { id: 'health' }, { id: 'db' }, { id: 'render' }, { id: 'secret' }, { id: 'scope' }]
-
-/** 11/2 회의의 에이전트 5종. 스캐너·매퍼는 앞 단계에서 끝났고, 샌드박스에서는 테스터·픽서·리베리파이어가 일한다. */
-const AGENTS = ['scanner', 'mapper', 'tester', 'fixer', 'verifier'] as const
-
-// AI가 고친 항목은 build.fix 이벤트로 온다. 변경 내용의 줄(fix)·칩·팝업이 같은 id로 이어진다.
-type FixId = 'db' | 'host' | 'port' | 'probe'
-type Fix = BuildFixData
-
-type DiffLine = { kind: 'file' | 'del' | 'add' | 'note'; text: string; key?: MsgKey; fix?: FixId }
-const DIFF: ReadonlyArray<DiffLine> = [
-  { kind: 'file', text: '.env' },
-  { kind: 'del', text: '- DB_HOST=postgres', fix: 'db' },
-  { kind: 'add', text: '+ DB_HOST=postgresql.demo.svc.cluster.local', fix: 'db' },
-  { kind: 'del', text: '- HOST=127.0.0.1', fix: 'host' },
-  { kind: 'add', text: '+ HOST=0.0.0.0', fix: 'host' },
-  { kind: 'del', text: '- DB_USERNAME=demo_user' },
-  { kind: 'add', text: '+ DB_USERNAME=', key: 'rehearsal.diffAccount' },
-  { kind: 'file', text: '', key: 'rehearsal.diffFile' },
-  { kind: 'add', text: '+ containerPort: 8080', fix: 'port' },
-  { kind: 'add', text: '+ readinessProbe: { httpGet: { path: /health, port: 8080 } }', fix: 'probe' },
-  { kind: 'note', text: '', key: 'rehearsal.diffNote' },
-]
+type DiffLine = { kind: 'file' | 'del' | 'add' | 'note'; text: string }
+/** 받은 수정(build.fix)으로 전체 변경 내용을 만든다: 파일별로 묶고, 수정 이유가 있으면 주석 줄로 붙인다. */
+function diffOf(fixes: BuildFixData[]): DiffLine[] {
+  const files = new Map<string, BuildFixData[]>()
+  for (const fix of fixes) {
+    const file = fix.file ?? ''
+    files.set(file, [...(files.get(file) ?? []), fix])
+  }
+  const lines: DiffLine[] = []
+  for (const [file, items] of files) {
+    if (file) lines.push({ kind: 'file', text: file })
+    for (const fix of items) {
+      lines.push(...fix.lines.map(line => ({ kind: line.kind, text: line.text })))
+      if (fix.why) lines.push({ kind: 'note', text: '# ' + fix.why })
+    }
+  }
+  return lines
+}
 
 export default function RehearsalStage({ target, onNext, onComplete }: { target: Target; onNext: () => void; onComplete?: () => void }) {
   const t = useT()
@@ -47,11 +38,6 @@ export default function RehearsalStage({ target, onNext, onComplete }: { target:
     subtitle={t('rehearsal.subtitle')}>
     {ready => <RehearsalBody ready={ready} target={target} onNext={onNext} onComplete={onComplete} />}
   </StageShell>
-}
-
-// 검증 항목이 어느 구성 요소를 확인하는지(샌드박스는 코드·기능만 보므로 진입·DNS는 대상이 아니다)
-const CHECK_NODES: Record<string, string[]> = {
-  build: ['group', 'app'], health: ['app', 'entry'], db: ['db'], render: ['group'], secret: [], scope: [],
 }
 
 // 이미지 빌드 실패 코드별 안내와 다음 행동(재업로드 / AI 수정 / 재시도). 시도를 다 썼으면 사람 검토다.
@@ -71,112 +57,147 @@ function BuildResultNote({ result }: { result: BuildResultData }) {
   </p>
 }
 
-const MARK: Record<CheckState, string> = { running: '', failed: '!', fixing: '✎', recheck: '', done: '✓' }
+const STEPS: SandboxStep[] = ['render', 'apply', 'ready', 'test', 'judge']
+
+type Track = { run: number; attempt: number; steps: Partial<Record<SandboxStep, 'running' | 'done' | 'failed'>>; result?: SandboxAttemptData; retry: boolean }
+
+/** 시도 트랙 한 줄: 렌더 → 적용 → 준비 검사 → 테스트 → 판정. 실패하면 분류·다음 행동·수정 카드가 붙는다. */
+function TrackCard({ track, fixes, current }: { track: Track; fixes: BuildFixData[]; current: boolean }) {
+  const t = useT()
+  const result = track.result
+  const failed = result && !result.verdict.passed
+  const cls = result?.failure_class
+  const fixList = result ? fixes.filter(fix => result.fix_ids.includes(fix.id)) : []
+  const status = !result ? t('sbx.running') : result.verdict.passed ? t('sbx.passed') : t('sbx.failed', { cls: t(('sbx.cls.' + cls) as MsgKey) })
+  const noSteps = Object.keys(track.steps).length === 0
+  return <article className={'sbx-track' + (failed ? ' is-failed' : result ? ' is-passed' : ' is-running') + (current ? ' is-current' : '')}>
+    <header>
+      <strong>{t('sbx.run', { n: track.attempt })}{track.retry && <small> · {t('sbx.retry')}</small>}</strong>
+      <span className="sbx-status" role={current ? 'status' : undefined}>{status}</span>
+    </header>
+    {!noSteps && <ol className="sbx-lane" aria-label={t('sbx.run', { n: track.attempt })}>
+      {STEPS.map(step => <li key={step} className={'is-' + (track.steps[step] ?? 'idle')}>
+        <span aria-hidden="true" /><em>{t(('sbx.step.' + step) as MsgKey)}</em>
+      </li>)}
+    </ol>}
+    {failed && cls && <p className="sbx-next">{t(('sbx.next.' + cls) as MsgKey)}{result.verdict.reasons[0] && <code>{result.verdict.reasons[0]}</code>}</p>}
+    {fixList.length > 0 && <div className="sbx-fix">
+      <small>{t('sbx.fixer', { n: fixList.length })}</small>
+      {fixList.map(fix => <pre key={fix.id}>{fix.lines.map((line, index) => <span key={index} className={'flow-diff-' + line.kind}>{line.text}</span>)}</pre>)}
+    </div>}
+  </article>
+}
+
+/** 격리실: 임시 Namespace 안의 앱 Pod·테스트 DB·출구 관문. 원본은 바깥에서 읽기만 한다. 정리되면 흩어진다. */
+function Chamber({ env, digest, applied, blocked, cleaned }: { env: SandboxEnvData | null; digest: string | null; applied: boolean; blocked: number; cleaned: boolean }) {
+  const t = useT()
+  return <figure className={'sbx-chamber' + (applied ? ' is-applied' : '') + (cleaned ? ' is-cleaned' : '')} aria-label={t('sbx.chamberAria')}>
+    <figcaption><b>{t('sbx.ns')}</b> {env ? env.namespace + ' · ' + t('sbx.expires', { m: env.expires_minutes }) : t('sbx.preparing')}</figcaption>
+    <svg viewBox="0 0 330 168" role="img" aria-label={t('sbx.chamberAria')}>
+      <rect className="sbx-src" x="2" y="52" width="66" height="64" rx="8" />
+      <text className="sbx-t" x="35" y="80" textAnchor="middle">{t('sbx.source')}</text>
+      <text className="sbx-ts" x="35" y="96" textAnchor="middle">{t('sbx.readOnly')}</text>
+      <line className="sbx-flow" x1="68" y1="84" x2="112" y2="60" />
+      <g className="sbx-room">
+        <rect className="sbx-wall" x="92" y="8" width="234" height="152" rx="14" />
+        <rect className="sbx-pod" x="112" y="30" width="96" height="50" rx="9" />
+        <text className="sbx-t is-inv" x="160" y="52" textAnchor="middle">{t('sbx.pod')}</text>
+        <text className="sbx-ts is-inv" x="160" y="68" textAnchor="middle">{digest ? shortDigest(digest) : '—'}</text>
+        <line className="sbx-link" x1="208" y1="55" x2="222" y2="55" />
+        <rect className="sbx-db" x="222" y="30" width="90" height="50" rx="9" />
+        <text className="sbx-t" x="267" y="52" textAnchor="middle">{t('sbx.db')}</text>
+        <text className="sbx-ts" x="267" y="68" textAnchor="middle">PostgreSQL 16</text>
+        <line className="sbx-link" x1="160" y1="80" x2="160" y2="104" />
+        <rect className={'sbx-gate' + (blocked > 0 ? ' is-warn' : '')} x="112" y="104" width="200" height="38" rx="9" />
+        <text className="sbx-ts" x="212" y="127" textAnchor="middle">{t('sbx.egress', { a: env?.egress_allowed ?? 0, b: blocked })}</text>
+      </g>
+      {cleaned && <text className="sbx-cleaned" x="209" y="90" textAnchor="middle">{t('sbx.cleaned')}</text>}
+    </svg>
+  </figure>
+}
+
+function Verdict({ result }: { result: SandboxAttemptData | null }) {
+  const t = useT()
+  const c = result?.checks
+  const rows: Array<[MsgKey, string, boolean]> = c ? [
+    ['sbx.cond.tests', c.required_passed + ' / ' + c.required_total, c.required_passed === c.required_total],
+    ['sbx.cond.unsupported', String(c.unsupported_calls), c.unsupported_calls === 0],
+    ['sbx.cond.mapping', c.calls_in_mapping + ' / ' + c.calls_total, c.calls_in_mapping === c.calls_total],
+    ['sbx.cond.egress', String(c.blocked_egress), c.blocked_egress === 0],
+  ] : (['sbx.cond.tests', 'sbx.cond.unsupported', 'sbx.cond.mapping', 'sbx.cond.egress'] as MsgKey[]).map(key => [key, '—', true])
+  return <section className="sbx-verdict" aria-label={t('sbx.verdict')}>
+    <div className="flow-panel-head"><strong>{t('sbx.verdict')}</strong><small>{t('sbx.verdictBy')}</small></div>
+    <dl>{rows.map(([key, value, ok]) => <div key={key} className={c && !ok ? 'is-bad' : c ? 'is-ok' : ''}><dt>{t(key)}</dt><dd>{value}</dd></div>)}</dl>
+  </section>
+}
 
 function RehearsalBody({ ready, target, onNext, onComplete }: { ready: boolean; target: Target; onNext: () => void; onComplete?: () => void }) {
   const t = useT()
-  const { state: migration } = useMigration()
+  const { state: migration, provider } = useMigration()
   useStageFeed('build', ready, target)
+  const sandbox = migration.sandbox
   const fixes = migration.build.fixes
-  const states = new Map<string, BuildCheckData>(Object.entries(migration.build.checks))
-  const stateOf = (id: string) => states.get(id)?.state
-  const done = CHECKS.filter(check => stateOf(check.id) === 'done').length
-  const finished = done === CHECKS.length
-  useEffect(() => { if (finished) onComplete?.() }, [finished, onComplete])
-  const last = migration.build.lastCheck
-  const fixesOf = (checkId: string) => fixes.filter(fix => fix.check === checkId)
-  // 수정이 적용된 것: 재검증에 들어갔거나 통과한 항목의 수정 전부 + 수정 중인 항목에서는 지금까지 고친 개수만큼
-  const isApplied = (fix: Fix) => {
-    const event = states.get(fix.check)
-    if (!event) return false
-    if (event.state === 'recheck' || event.state === 'done') return true
-    return event.state === 'fixing' && fixesOf(fix.check).indexOf(fix) < (event.fixed ?? 0)
-  }
-  const applied = fixes.filter(isApplied)
-  const tipFixes = (list: Fix[]): TipFix[] => list.map(fix => ({ id: fix.id, lines: fix.lines }))
-  const agentStatus = (agent: (typeof AGENTS)[number]): 'done' | 'active' | 'idle' => {
-    if (agent === 'scanner' || agent === 'mapper') return 'done'
-    if (agent === 'tester') return finished ? 'done' : last && (last.state === 'fixing' || last.state === 'recheck') ? 'idle' : 'active'
-    if (agent === 'fixer') return last?.state === 'fixing' ? 'active' : applied.length > 0 ? 'done' : 'idle'
-    return last?.state === 'recheck' ? 'active' : fixes.length > 0 && fixes.every(fix => stateOf(fix.check) === 'done') ? 'done' : 'idle'
-  }
-  const nodeStates: Record<string, NodeState> = {}
-  for (const check of CHECKS) {
-    const state = stateOf(check.id)
-    if (!state) continue
-    for (const node of CHECK_NODES[check.id]) {
-      if (state === 'done') nodeStates[node] = 'done'
-      else if (nodeStates[node] !== 'done') nodeStates[node] = 'on'
-    }
-  }
+  // 트랙: 단계 이벤트와 판정 이벤트를 run 순번으로 묶는다. 같은 attempt가 다시 나오면 환경(INFRA) 재시도다.
+  const runs = [...new Set([...Object.keys(sandbox.steps).map(Number), ...sandbox.attempts.map(item => item.run)])].sort((a, b) => a - b)
+  const tracks: Track[] = runs.map((run, index) => {
+    const result = sandbox.attempts.find(item => item.run === run)
+    const attempt = result?.attempt ?? migration.build.attempt ?? run
+    const previous = index > 0 ? (sandbox.attempts.find(item => item.run === runs[index - 1])?.attempt ?? -1) : -1
+    return { run, attempt, steps: sandbox.steps[run] ?? {}, result, retry: previous === attempt }
+  })
+  const done = sandbox.done
+  const passed = done?.status === 'PASSED'
+  useEffect(() => { if (passed) onComplete?.() }, [passed, onComplete])
+  useVoiceActions({ next: passed && onNext, retry: !!migration.build.review && (() => provider.retrySandbox()) })
+  const latest = sandbox.attempts[sandbox.attempts.length - 1] ?? null
+  // 판정판은 실제로 테스트까지 돈 마지막 트랙의 결과만 보여 준다(빌드 실패·적용 실패 트랙은 판정 숫자가 없다).
+  const judged = [...sandbox.attempts].reverse().find(item => sandbox.steps[item.run]?.test === 'done' || sandbox.steps[item.run]?.judge) ?? null
+  const current = tracks[tracks.length - 1]
+  const appliedFixes = sandbox.attempts.flatMap(item => item.fix_ids)
+  const digest = migration.build.result?.digest ?? null
+  const applied = !!current && (current.steps.apply === 'done' || current.steps.apply === 'running')
+  const tests = sandbox.tests
 
-  // 검증 항목 카드의 설명: 수정이 있는 항목은 단계(실패 → 수정 → 재검증)에 맞춰 바뀌고, 여러 개면 하나씩 진행 상황을 보여 준다.
-  const detailOf = (id: string) => {
-    const event = states.get(id)
-    const list = fixesOf(id)
-    if (list.length === 0 || !event || event.state === 'running' || event.state === 'done') return t(('rehearsal.check.' + id + '.detail') as MsgKey)
-    const many = list.length > 1
-    if (event.state === 'failed') return many ? t('rehearsal.failMany', { n: list.length }) : t(('rehearsal.fail.' + list[0].id) as MsgKey)
-    if (event.state === 'fixing') {
-      const current = list[Math.min(event.fixed ?? 0, list.length - 1)]
-      return <><b>{t(('rehearsal.fix.' + current.id + '.title') as MsgKey)}</b><br />{t(('rehearsal.fix.' + current.id + '.detail') as MsgKey)}</>
-    }
-    return many ? t('rehearsal.recheckMany', { n: list.length }) : t(('rehearsal.recheck.' + list[0].id) as MsgKey)
-  }
-
-  return <div className="flow-split flow-split-wide">
-    <section className="flow-list" aria-label={t('rehearsal.listAria')}>
-      <div className="agent-strip" role="group" aria-label={t('rehearsal.agents.title')}>
-        <small>{t('rehearsal.agents.title')}</small>
-        {AGENTS.map(agent => <span key={agent} className={'agent-pill is-' + agentStatus(agent)}>{t(('rehearsal.agent.' + agent) as MsgKey)}</span>)}
-      </div>
-      {CHECKS.map((check, index) => {
-        const event = states.get(check.id)
-        const state = event?.state
-        const list = fixesOf(check.id)
-        const statusKey = state ? 'rehearsal.state.' + state : 'rehearsal.state.wait'
-        const working = list.length > 1 && (state === 'failed' || state === 'fixing' || state === 'recheck')
-        return <article key={check.id} className={'flow-check' + (state ? ' is-' + state : '')}>
-          <span className="flow-check-mark" aria-hidden="true">{state ? MARK[state] : String(index + 1).padStart(2, '0')}</span>
-          <div>
-            <strong>{t(('rehearsal.check.' + check.id + '.title') as MsgKey)}{list.length > 0 && state === 'done' && <AiTip fixes={tipFixes(list)} />}</strong>
-            <p>{detailOf(check.id)}</p>
-            {working && <ul className="fix-list" aria-label={t('rehearsal.aiTag')}>
-              {list.map((fix, i) => <li key={fix.id} className={isApplied(fix) ? 'is-done' : state === 'fixing' && i === (event?.fixed ?? 0) ? 'is-active' : ''}>
-                <span aria-hidden="true">{isApplied(fix) ? '✓' : state === 'fixing' && i === (event?.fixed ?? 0) ? '✎' : '·'}</span>{t(('rehearsal.fixLabel.' + fix.id) as MsgKey)}
-              </li>)}
-            </ul>}
-          </div>
-          <small>{t(statusKey as MsgKey)}</small>
-        </article>
-      })}
+  return <div className="flow-split flow-split-wide sbx-split">
+    <section className="flow-list sbx-tracks" aria-label={t('rehearsal.listAria')}>
+      {tracks.length === 0 && <p className="flow-note">{t('sbx.preparing')}</p>}
+      {tracks.map(track => <TrackCard key={track.run} track={track} fixes={fixes} current={track === current && !done} />)}
+      {tests && <p className="flow-note sbx-tests"><b>{t('sbx.testsBy')}</b> {t('sbx.tests', { total: tests.total, catalog: tests.catalog, original: tests.original, generated: tests.generated, readOnly: tests.read_only })}</p>}
       {migration.build.result && <BuildResultNote result={migration.build.result} />}
+      <FixerEnvNotice fixes={fixes} />
     </section>
 
-    <aside className="flow-panel rehearsal-side" aria-label={t('rehearsal.diffTitle')}>
-      <div className="rehearsal-diagram">
-        <ZoomableDiagram><ArchitectureDiagram view="after" target={target} states={nodeStates} adaptive /></ZoomableDiagram>
+    <aside className="flow-panel sbx-side" aria-label={t('sbx.chamberAria')}>
+      <Chamber env={sandbox.env} digest={digest} applied={applied} blocked={latest?.checks.blocked_egress ?? 0} cleaned={done?.cleanup_status === 'CLEANED'} />
+      <Verdict result={judged} />
+      <div className="sbx-tiles">
+        <div className={'sbx-tile' + (passed ? ' is-locked' : '')}>
+          <small>{passed && <svg className="sbx-lock" viewBox="0 0 12 14" aria-hidden="true"><rect x="1" y="6" width="10" height="7" rx="1.5" /><path d="M3.5 6V4a2.5 2.5 0 0 1 5 0v2" /></svg>}{t('sbx.digest')}</small>
+          <b>{passed && done?.digest ? shortDigest(done.digest) : '—'}</b>
+          <small>{passed ? t('sbx.digestSame') : t('sbx.digestWait')}</small>
+        </div>
+        <div className="sbx-tile">
+          <small>{t('sbx.cleanup')}</small>
+          <b>{done?.cleanup_status ?? '—'}</b>
+          <small>{done ? t(('sbx.cleanup.' + done.cleanup_status) as MsgKey) : t('sbx.cleanup.none')}</small>
+        </div>
       </div>
-      <p className="flow-note">{t('rehearsal.diagramNote')}</p>
-      <div className="rehearsal-diff">
-        <div className="flow-panel-head"><strong>{t('rehearsal.diffTitle')}</strong></div>
+      {fixes.length > 0 && <details className="rehearsal-diff">
+        <summary>{t('sbx.diffAll')}</summary>
         <pre className="flow-diff" aria-label={t('rehearsal.diffAria')}>
-          {DIFF.map((line, index) => {
-            // 같은 수정에 속한 연속된 줄(삭제+추가)에는 칩을 하나만, 그 묶음의 마지막 줄에 단다. 수정마다 칩이 하나다.
-            const fix = line.fix ? fixes.find(item => item.id === line.fix) : undefined
-            const groupEnd = fix && DIFF[index + 1]?.fix !== line.fix
-            return <span key={index} className={'flow-diff-' + line.kind}>{line.text + (line.key ? t(line.key) : '')}{groupEnd && fix && isApplied(fix) && <AiTip fixes={tipFixes([fix])} />}</span>
-          })}
+          {diffOf(fixes).map((line, index) => <span key={index} className={'flow-diff-' + line.kind}>{line.text}</span>)}
         </pre>
-        <p className="flow-note">{t('rehearsal.note')}</p>
-      </div>
+      </details>}
+      <p className="flow-note">{t('rehearsal.note')}</p>
     </aside>
 
     <div className="flow-footer">
-      <span>{finished
-        ? t('rehearsal.footDone', { done, total: CHECKS.length }) + ' ' + t('rehearsal.fixSummary', { n: applied.length })
-        : t('rehearsal.footRun', { done, total: CHECKS.length })}</span>
-      <button type="button" className="flow-primary" disabled={!finished} onClick={onNext}>{t('rehearsal.next')} <span aria-hidden="true">→</span></button>
+      <span>{passed
+        ? t('sbx.foot.pass') + (appliedFixes.length ? ' ' + t('sbx.foot.fixes', { n: appliedFixes.length }) : '')
+        : done?.status === 'STOPPED_RENDER' ? t('sbx.foot.render')
+        : migration.build.review ? t('review.title')
+        : current ? t('sbx.foot.run', { n: current.attempt, max: latest?.max_attempts ?? 3 }) : t('sbx.foot.wait')}</span>
+      <button type="button" className="flow-primary" disabled={!passed} onClick={onNext}>{t('rehearsal.next')} <span aria-hidden="true">→</span></button>
     </div>
   </div>
 }

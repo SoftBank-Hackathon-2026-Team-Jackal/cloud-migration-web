@@ -1,0 +1,212 @@
+/*
+ * 계획 화면(오른쪽 문서 영역) — "무채색 장부" 앱 화면 스타일(taste-skill achromatic-ledger).
+ * 왼쪽 구체 열(.plan-visual)은 그대로 두고, 문서 영역만 다시 짠다. polish.css 뒤에 불러온다.
+ * 화면에서 색은 경고 점(호박색) 하나뿐이다. 나머지는 잉크·회색 단계.
+ */
+.plan-stage{--plan-ink:#0a0a0a;--plan-sub:#5c5c5c;--plan-rule:#ececec;--plan-head-rule:#dedede;--plan-well:#efefef;--plan-warn:#d97706}
+
+/* ── 문서 틀: 가로 폭 상한 + 화면 높이를 채우는 세로 배치(머리 · 탭 · 본문 · 바닥) ── */
+.plan-stage .plan-document{width:100%;max-width:1180px;justify-self:center;align-self:center;height:100%;max-height:min(100%,1000px);display:flex;flex-direction:column;padding:4px 0 4px clamp(18px,2vw,40px);overflow:hidden;translate:none}
+.plan-stage .plan-heading{flex:none}
+.plan-stage .plan-heading>.plan-meta{display:block;margin:0;color:var(--text-muted);font:500 12.5px/1.4 var(--font-sans);font-variant-numeric:tabular-nums}
+.plan-stage .plan-heading h1{margin:10px 0 12px}
+.plan-stage .plan-heading>.plan-finding{display:flex;flex-wrap:wrap;align-items:center;margin:0;max-width:none;color:#3d3d3d;font:400 14px/1.5 var(--font-sans);font-variant-numeric:tabular-nums}
+.plan-finding>span{display:inline-flex;align-items:center;white-space:nowrap}
+.plan-finding>span+span::before{content:"·";margin:0 9px;color:#b0b0b0}
+.plan-warn-dot{display:inline-block;flex:none;width:7px;height:7px;margin:0 6px 0 2px;border-radius:50%;background:var(--plan-warn);vertical-align:middle}
+
+/* ── 탭 줄: 옅은 회색 트랙 + 흰 알약(굵은 검은 테두리 없이), 오른쪽에 이전 경로 ── */
+.plan-bar{flex:none;display:flex;align-items:center;justify-content:space-between;gap:12px 20px;flex-wrap:wrap;margin-top:clamp(16px,2.6vh,30px)}
+.view-tabs.is-segmented{gap:2px;padding:3px;border:0;border-radius:10px;background:#e9e9e9}
+.view-tabs.is-segmented button,.view-tabs.is-segmented button.is-selected{box-shadow:none}
+.view-tabs.is-segmented button{height:30px;padding:0 15px;border:1px solid transparent;border-radius:7px;color:var(--plan-sub,#5c5c5c);font:500 13px/1 var(--font-sans);transition:background .2s,color .2s,border-color .2s}
+.view-tabs.is-segmented button:hover:not(.is-selected){color:#1a1a1a}
+.view-tabs.is-segmented button.is-selected{border-color:#dcdcdc;background:#fff;color:#0a0a0a}
+/* 클릭할 때는 테두리를 그리지 않고, 키보드로 왔을 때만 안쪽에 가는 고리 */
+.view-tabs.is-segmented button:focus{outline:none}
+.view-tabs.is-segmented button:focus-visible{outline:none;border-color:#3d3d3d}
+.view-tabs.is-segmented.is-pointer button:focus-visible{border-color:transparent}
+.view-tabs.is-segmented.is-pointer button.is-selected:focus-visible{border-color:#dcdcdc}
+.plan-route{display:flex;align-items:center;gap:9px;margin:0;color:var(--text-muted);font:500 13px/1.3 var(--font-sans);white-space:nowrap}
+.plan-route span:last-child{color:#0a0a0a}
+.plan-route b{font-weight:400;color:#9a9a9a}
+
+/* ── 본문: 남은 높이를 모두 쓰고, 줄 높이는 '본문 높이 ÷ 줄 수'(44~68px) ── */
+.plan-stage .plan-body{flex:1 1 0;min-height:0;margin-top:clamp(12px,2vh,22px);padding:0;overflow-y:auto;scrollbar-gutter:auto;scrollbar-width:thin;container-type:size}
+.plan-empty{margin:24px 0;color:var(--text-muted);font-size:13px}
+.plan-ledger-wrap{--row-h:clamp(44px,calc((100cqh - 40px - var(--groups,4) * 32px) / var(--rows,7)),68px);display:grid;grid-template-columns:minmax(0,1fr) clamp(272px,33%,340px);gap:clamp(20px,2.6vw,44px);align-items:start}
+.plan-ledger-wrap.is-single{grid-template-columns:minmax(0,1fr)}
+
+/* 장부 표: 헤더는 회색 문장형, 줄 구분선만, 숫자는 오른쪽 정렬 · 자리 폭 고정 */
+.plan-ledger{width:100%;border-collapse:collapse;table-layout:fixed;font-family:var(--font-sans)}
+.plan-ledger thead th{height:38px;padding:0 12px 0 0;border-bottom:1px solid var(--plan-head-rule);color:var(--text-muted);font:400 12px/1 var(--font-sans);text-align:left;vertical-align:middle;white-space:nowrap}
+.plan-ledger thead th:last-child,.plan-ledger td:last-child{padding-right:0}
+.plan-ledger .is-num{width:30%;text-align:right}
+.plan-ledger .is-change{width:112px;text-align:right}
+.plan-ledger-group th{height:32px;padding:12px 0 4px;color:var(--text-muted);font:500 12px/1 var(--font-sans);text-align:left;vertical-align:bottom}
+.plan-ledger-row>th,.plan-ledger-row>td{height:var(--row-h);padding:0 12px 0 0;border-bottom:1px solid var(--plan-rule);text-align:left;vertical-align:middle;font-weight:400}
+.plan-ledger-row>td.is-num,.plan-ledger-row>td.is-change{text-align:right}
+.plan-cell-main{display:flex;align-items:center;gap:6px;min-width:0;color:var(--plan-ink);font:500 14px/1.3 var(--font-sans)}
+.plan-cell-main .plan-warn-dot{margin:0 0 0 2px}
+.plan-cell-sub{display:block;margin-top:4px;overflow:hidden;color:var(--text-muted);font:400 12px/1.35 var(--font-sans);white-space:nowrap;text-overflow:ellipsis}
+.plan-ledger .is-num .plan-cell-main{justify-content:flex-end;font-variant-numeric:tabular-nums;white-space:nowrap}
+.plan-ledger .is-num .plan-cell-sub{font-variant-numeric:tabular-nums}
+.plan-ledger-row.is-keep .plan-cell-main{color:#555}
+.plan-ledger-row.is-keep .is-num .plan-cell-main{color:#9a9a9a}
+/* 줄이 하나씩 드러나는 연출(기존 계획 화면의 속도 그대로) */
+.plan-reveal{opacity:0;transform:translateY(6px);transition:opacity .6s var(--ease-out),transform .6s var(--ease-out)}
+.plan-reveal.is-visible{opacity:1;transform:none}
+
+/* 칩: 새로 만듦(회색 알약) · Digest 고정(잉크 알약, 하나뿐) · 원본 유지(점선) · 매핑 등급(흑백) */
+.plan-chip{display:inline-flex;flex:none;align-items:center;height:22px;padding:0 9px;border:1px solid transparent;border-radius:999px;font:500 12px/1 var(--font-sans);white-space:nowrap}
+.plan-chip.is-CREATE{background:#ededed;color:#3d3d3d}
+.plan-chip.is-PINNED{background:#141414;color:#fff}
+.plan-chip.is-KEEP_SOURCE{border:1px dashed #a3a3a3;color:#5c5c5c}
+.plan-chip.is-grade-DIRECT{border-color:#141414;color:#141414}
+.plan-chip.is-grade-API_DIFF{background:#ededed;color:#3d3d3d}
+.plan-chip.is-grade-PARTIAL{border-color:#d4d4d4;background:#f7f7f7;color:#3d3d3d}
+.plan-chip.is-grade-NONE{border:1px dashed #a3a3a3;color:#5c5c5c}
+.plan-muted{color:#6b6b6b}
+
+/* 매핑 근거 표 */
+.plan-mapping thead th:nth-child(2){width:124px}
+.plan-mapping thead th:nth-child(3){width:96px}
+.plan-mapping .is-verify{width:128px;text-align:right}
+.plan-mapping .plan-ledger-row>td.is-verify{text-align:right}
+.plan-mapping .plan-cell-main{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.plan-mapping .plan-cell-main b{margin:0 7px;color:#9a9a9a;font-weight:400}
+.plan-mapping .plan-before{color:#555}
+.plan-action{color:#222;font:500 13px/1 var(--font-sans);white-space:nowrap}
+.plan-action.is-APPROVAL,.plan-action.is-BLOCK{font-weight:650}
+.plan-verify{color:var(--text-muted);font:400 12.5px/1 var(--font-sans);white-space:nowrap}
+.plan-verify.is-SANDBOX_VERIFIED{color:#222}
+.plan-verify.is-SANDBOX_VERIFIED::before{content:"";display:inline-block;width:7px;height:3.5px;margin:0 7px 3px 0;border-left:1.4px solid currentColor;border-bottom:1.4px solid currentColor;transform:rotate(-45deg)}
+
+/* 오른쪽 열쇠-값 칸: 테두리 없이 한 단계 진한 바탕 */
+.plan-wells{display:flex;flex-direction:column;gap:12px;padding-top:38px}
+.plan-well{padding:13px 16px 14px;border-radius:10px;background:var(--plan-well)}
+.plan-well h3{margin:0 0 4px;color:var(--plan-ink);font:600 13px/1.3 var(--font-sans)}
+.plan-well dl{margin:0}
+.plan-well dl>div{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:30px}
+.plan-well dt{min-width:0;overflow:hidden;color:#3d3d3d;font:400 13px/1.3 var(--font-sans);white-space:nowrap;text-overflow:ellipsis}
+.plan-well dd{display:flex;align-items:center;gap:5px;min-width:0;margin:0;color:var(--plan-ink);font:500 13px/1.3 var(--font-sans);font-variant-numeric:tabular-nums;white-space:nowrap}
+.plan-well code{font:500 12px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace}
+.plan-well dt code{color:var(--plan-ink)}
+.plan-well dd code{overflow:hidden;color:#555;text-overflow:ellipsis}
+.plan-well p{margin:6px 0 0;color:#5f5f5f;font:400 12px/1.45 var(--font-sans)}
+.plan-well .plan-issue{color:#3d3d3d}
+.plan-lock{width:10px;height:11px;flex:none;fill:none;stroke:#555;stroke-width:1.3}
+
+/* ── 구성도 ── */
+.plan-topo{height:100%;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px}
+.plan-topo-svg{display:block;flex:0 1 auto;width:100%;max-width:1000px;height:auto;max-height:calc(100cqh - 34px);font-family:var(--font-sans)}
+.plan-topo-legend{flex:none;display:flex;flex-wrap:wrap;justify-content:center;gap:6px 20px;margin:0;padding:0;list-style:none;color:var(--text-muted);font:400 12px/1.3 var(--font-sans)}
+.plan-topo-legend li{display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
+.plan-topo-legend i{display:inline-block;width:20px;height:0;border-top:1.3px solid #9a9a9a}
+.plan-topo-legend i.is-planned{border-color:#c9c9c9}
+.plan-topo-legend i.is-keep{border-top-style:dashed;border-color:#a3a3a3}
+.plan-topo-legend i.is-lock{width:14px;height:9px;border:0;border-radius:5px;background:#141414}
+.topo-frame rect{fill:#fff;stroke:#e3e3e3}
+.topo-frame.is-target rect{stroke:#141414}
+.topo-frame-title{fill:#0a0a0a;font-size:14px;font-weight:650;letter-spacing:-.01em}
+.topo-frame-sub{fill:#6b6b6b;font-size:12px;font-weight:500}
+.topo-frame-label text{paint-order:stroke;stroke:#fff;stroke-width:6px;stroke-linejoin:round}
+.topo-gutter-label{fill:#8a8a8a;font-size:12px;font-weight:500}
+.topo-users rect{fill:#f8f8f8;stroke:#d4d4d4}
+.topo-users text{fill:#3d3d3d;font-size:12px;font-weight:500}
+.topo-edge{fill:none;stroke:#9a9a9a;stroke-width:1.3}
+.topo-edge.is-target{stroke:#c4c4c4}
+.topo-edge.is-keep{stroke-dasharray:4 4}
+.topo-link{fill:none;stroke:#bdbdbd;stroke-width:1.2}
+.topo-link.is-keep{stroke:#c9c9c9;stroke-dasharray:4 4}
+.topo-link.is-block{stroke:#141414;stroke-dasharray:2 3}
+.topo-dot{fill:#3d3d3d;opacity:.55}
+.topo-dot.is-map{fill:#7a7a7a;opacity:.6}
+.topo-chip rect{fill:#fff;stroke:#141414;stroke-width:1}
+.topo-chip text{fill:#141414;font-size:12px;font-weight:500}
+.topo-chip.is-API_DIFF rect{fill:#ededed;stroke:#ededed}
+.topo-chip.is-API_DIFF text,.topo-chip.is-PARTIAL text{fill:#3d3d3d}
+.topo-chip.is-PARTIAL rect{fill:#f7f7f7;stroke:#d4d4d4}
+.topo-chip.is-NONE rect,.topo-chip.is-keep rect{fill:#f8f8f8;stroke:#a3a3a3;stroke-dasharray:3 3}
+.topo-chip.is-NONE text,.topo-chip.is-keep text{fill:#5c5c5c}
+.topo-box :is(rect,path,ellipse){fill:#fff;stroke:#a3a3a3;stroke-width:1.1}
+.topo-box.is-target :is(rect,path,ellipse){stroke:#141414}
+.topo-box.is-entry :is(rect,path,ellipse){fill:#4a4a4a;stroke:#4a4a4a}
+.topo-box.is-entry.is-target :is(rect,path,ellipse){fill:#141414;stroke:#141414}
+.topo-box.is-keep :is(rect,path,ellipse){fill:#fafafa;stroke:#b0b0b0;stroke-dasharray:4 3}
+.topo-node.is-keep text{opacity:.8}
+.topo-name{fill:#0a0a0a;font-size:13.5px;font-weight:600}
+.topo-sub{fill:#6b6b6b;font-size:11.5px;font-weight:500}
+.topo-name.is-inv{fill:#fff}
+.topo-sub.is-inv{fill:#d0d0d0}
+.topo-lock rect{fill:#141414}
+.topo-lock path{fill:none;stroke:#fff;stroke-width:1.2}
+.topo-lock text{fill:#fff;font:500 11px ui-monospace,SFMono-Regular,Menlo,monospace} /* taste-skill-ignore: 이미지 Digest(해시)는 코드 값 */
+.topo-note{fill:#6b6b6b;font-size:11.5px}
+.topo-reveal{opacity:0;transition:opacity .7s var(--ease-out)}
+.topo-reveal.is-visible{opacity:1}
+
+/* ── 바닥: 요약(계산값) + 검은 주 버튼 하나 ── */
+.plan-foot{flex:none;display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:clamp(12px,2vh,20px);padding-top:14px;border-top:1px solid var(--plan-head-rule)}
+.plan-stage .plan-status{display:flex;align-items:center;min-width:0;margin:0;gap:10px;color:#3d3d3d;font:400 13px/1.4 var(--font-sans);font-variant-numeric:tabular-nums}
+.plan-stage .plan-status small{margin-left:8px;color:var(--text-muted);font-size:12px}
+.plan-stage .plan-status>.plan-status-dot{flex:none;width:9px;height:9px;border:1px solid #5f5f5f;border-radius:50%;animation:analysis-scan-pulse 1.6s ease-in-out infinite}
+.plan-stage .plan-status>.plan-status-dot.is-complete{background:#333;animation:none}
+.plan-stage .plan-status>.plan-summary{display:inline-flex;flex-wrap:wrap;width:auto;height:auto;border:0;border-radius:0;animation:none}
+.plan-summary>span{white-space:nowrap}
+.plan-summary>span+span::before{content:"·";margin:0 9px;color:#b0b0b0}
+.plan-stage .plan-next{margin:0}
+/* 장부 화면의 주 버튼은 그림자 없는 단색 검은 알약 */
+.plan-stage .plan-next .flow-primary{box-shadow:none}
+
+/* 탭을 바꿔 내용이 바뀌면 부드럽게(첫 등장은 줄 연출이 맡는다) */
+.plan-body.is-swapped>*{animation:tab-fade .22s ease both}
+
+/* 낮은 화면(노트북 860px 포함): 간격만 줄인다 */
+@media(max-height:900px){
+  .plan-ledger-wrap{--row-h:clamp(40px,calc((100cqh - 38px - var(--groups,4) * 26px) / var(--rows,7)),60px)}
+  .plan-ledger-group th{height:26px;padding-top:8px}
+  .plan-cell-sub{margin-top:2px}
+  .plan-wells{gap:8px;padding-top:0}
+  .plan-well{padding:10px 14px 11px}
+  .plan-well dl>div{min-height:25px}
+  .plan-well p{margin-top:4px}
+  .plan-stage .plan-heading h1{margin:6px 0 8px}
+  .plan-bar{margin-top:12px}
+  .plan-stage .plan-body{margin-top:10px}
+  .plan-foot{margin-top:10px;padding-top:10px}
+}
+/* 좁은 화면: 오른쪽 칸은 표 아래로, 구성도는 가로로 밀어 본다 */
+@media(max-width:1100px){
+  .plan-ledger-wrap{grid-template-columns:minmax(0,1fr)}
+  .plan-wells{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));padding-top:0}
+  .plan-topo{justify-content:flex-start;overflow-x:auto}
+  .plan-topo-svg{min-width:620px;max-height:none}
+}
+@media(max-width:650px){
+  .plan-stage .plan-document{height:auto;max-height:none;overflow:visible;padding:12px 0 40px}
+  .plan-stage .plan-body{flex:none;container-type:normal;overflow:visible}
+  .plan-ledger-wrap{--row-h:54px}
+  .plan-ledger .is-num{width:34%}
+  .plan-ledger .is-change{width:92px}
+  .plan-mapping thead th:nth-child(2),.plan-mapping thead th:nth-child(3){width:auto}
+  .plan-mapping .is-verify{display:none}
+  .plan-topo{align-items:flex-start}
+  .plan-foot{flex-wrap:wrap}
+}
+@media(prefers-reduced-motion:reduce){.plan-reveal,.topo-reveal{transition:none}}
+
+/* 백엔드 Preview의 applied_defaults 줄 · 정해야 할 값 · 비용 탭 */
+.plan-default{margin-left:6px;padding:0 6px;border:1px solid #d2d2d2;border-radius:999px;color:#6b6b6b;font-size:10px;font-style:normal;font-weight:600}
+.plan-issue.is-pending{color:#444;border-left:2px dashed #9a9a9a;padding-left:8px}
+.plan-cost{max-width:640px;padding:4px 2px 0;overflow-y:auto}
+.plan-chip.is-EXISTING{border-color:#cfcfcf;color:#5c5c5c}
+.plan-chip.is-UPDATE{border-color:#141414;color:#141414}
+.plan-chip.is-DELETE{border:1px solid #141414;color:#141414;text-decoration:line-through}
+
+/* Fixer가 새로 읽게 된 환경 변수(값 받는 방법 미정: 중립 안내) */
+.fixer-env{display:grid;gap:4px;margin:8px 0 0;padding:8px 10px;border:1px dashed #bdbdbd;border-radius:10px;color:#444;font-size:12px;line-height:1.45}
+.fixer-env strong{font-weight:650;color:#141414}
+.fixer-env span{display:flex;flex-wrap:wrap;gap:4px}
+.fixer-env code{padding:1px 6px;border-radius:6px;background:#efefef;font:500 11px/1.4 ui-monospace,monospace}
+.fixer-env small{color:#7a7a7a;font-size:11px}

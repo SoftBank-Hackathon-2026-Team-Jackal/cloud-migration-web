@@ -1,0 +1,96 @@
+/* ── 오프닝: 첫 화면 의도 버튼 + 간소화한 설정 화면(등록 환경 · 저장소 가져오기 · .env). 흑백 유리 질감을 따른다 ── */
+
+/* 첫 화면 */
+.prompt-action{gap:8px}
+.prompt-targets{display:flex;gap:8px}
+.prompt-yes kbd,.migration-next kbd,.envd-btn kbd{display:inline-grid;place-items:center;min-width:18px;height:18px;margin-left:8px;padding:0 4px;border:1px solid rgba(255,255,255,.32);border-radius:5px;background:rgba(255,255,255,.14);font:600 10px/1 ui-monospace,SFMono-Regular,monospace;vertical-align:1px}
+.prompt-intent{max-width:min(620px,calc(100vw - 220px));overflow:hidden;text-overflow:ellipsis;font-weight:500}
+.prompt-setup{background:rgba(255,255,255,.78);color:#111;border-color:rgba(0,0,0,.14)}
+.prompt-setup:hover{background:#fff}
+
+/* 설정 화면 패널: 넓은 화면에서 두 칸 */
+.setup2-panel{width:min(1080px,calc(100% - 48px));max-height:calc(100vh - 120px);gap:14px}
+.setup2-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:2px}
+
+.senv-chip{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:999px;background:rgba(17,17,17,.06);color:#333;font:600 10.5px/1 var(--font-sans);white-space:nowrap;letter-spacing:0;text-transform:none}
+.senv-chip i{width:6px;height:6px;border-radius:50%;background:#222}
+.senv-chip.is-live i{animation:senv-pulse 1.6s ease-in-out infinite}
+.senv-chip.is-off i{background:#bbb;animation:none}
+.senv-chip.is-quiet{background:rgba(255,255,255,.7);color:#666}
+@keyframes senv-pulse{50%{opacity:.25}}
+
+.senv{display:grid;grid-template-columns:1fr 24px 1fr;align-items:stretch;gap:8px}
+.senv-arrow{display:grid;place-items:center;color:#aaa;font-size:18px}
+.senv-card{min-width:0;padding:11px 14px;display:grid;gap:3px;border:1px solid rgba(255,255,255,.9);border-radius:15px;background:rgba(255,255,255,.5)}
+.senv-card.is-selected{background:rgba(255,255,255,.92);box-shadow:inset 0 0 0 1.5px #111}
+.senv-k{display:flex;align-items:center;justify-content:space-between;gap:8px;color:#888;font:600 10px/1.3 var(--font-sans);letter-spacing:.06em;text-transform:uppercase}
+.senv-card strong{color:#111;font:600 14px/1.3 var(--font-sans)}
+.senv-card>span{color:#777;font:400 11px/1.4 var(--font-sans);overflow-wrap:anywhere}
+.senv-switch{margin-top:5px;width:max-content;grid-template-columns:auto auto;padding:3px;gap:3px}
+.senv-switch button{height:24px;padding:0 12px;font-size:11px}
+
+.setup2-main{min-height:0;display:grid;grid-template-columns:1.25fr 1fr;gap:12px}
+.setup2-card{min-width:0;min-height:0;padding:14px 16px;display:grid;gap:10px;align-content:start;border:1px solid rgba(255,255,255,.95);border-radius:18px;background:rgba(255,255,255,.5);transition:background .4s,box-shadow .4s}
+.setup2-card.is-focus{background:#fff;box-shadow:0 12px 32px rgba(0,0,0,.08),inset 0 0 0 1.5px #111}
+.setup2-card h3{margin:0;display:flex;align-items:baseline;justify-content:space-between;gap:10px;color:#111;font:600 13px/1.3 var(--font-sans)}
+.setup2-card h3 small{color:#888;font:500 11px/1.3 var(--font-sans)}
+.setup2-demo{justify-self:start}
+.setup2-note{margin:0;color:var(--text-muted);font:400 12px/1.45 var(--font-sans)}
+.setup2-note.is-alert{padding:9px 12px;border-radius:12px;background:rgba(17,17,17,.06);color:#222}
+
+/* 저장소 가져오기 장면 */
+.rimp{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:start}
+.rimp-tree{height:clamp(150px,30vh,320px);margin:0;padding:0;overflow:hidden;list-style:none;color:#555;font:400 11.5px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;-webkit-mask-image:linear-gradient(#000 78%,transparent);mask-image:linear-gradient(#000 78%,transparent)}
+.rimp-tree li{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:rimp-in .25s ease-out both}
+.rimp-tree li.is-hit{color:#111;font-weight:600}
+.rimp-tree li.is-hit::after{content:"";display:inline-block;width:5px;height:5px;margin-left:6px;border-radius:50%;background:#111;vertical-align:2px}
+@keyframes rimp-in{from{opacity:0;transform:translateX(-4px)}}
+.rimp-dets{margin:0;padding:0;display:grid;gap:6px;list-style:none}
+.rimp-det{min-height:38px;padding:7px 10px;display:grid;grid-template-columns:26px minmax(0,1fr);grid-template-rows:auto auto;column-gap:10px;align-items:center;border-radius:11px;background:rgba(17,17,17,.04);color:#aaa;transition:background .35s,color .35s}
+.rimp-det.is-on{background:#111;color:#fff}
+.rimp-mark{grid-row:1/3;width:26px;height:26px;display:grid;place-items:center;border-radius:8px;background:rgba(128,128,128,.14);font:700 9.5px/1 var(--font-sans)}
+.rimp-det strong{font:600 12px/1.3 var(--font-sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rimp-det small{font:400 10.5px/1.3 var(--font-sans);opacity:.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rimp-state{grid-column:1/-1;margin:0;color:#777;font:500 11px/1.4 var(--font-sans)}
+
+/* .env */
+.envd{display:grid;gap:9px}
+.envd-drop{min-height:96px}
+.envd-actions{display:flex;flex-wrap:wrap;gap:6px}
+.envd-btn{height:32px;padding:0 13px;display:inline-flex;align-items:center;border:1px solid rgba(0,0,0,.14);border-radius:999px;background:rgba(255,255,255,.8);color:#111;font:600 11.5px/1 var(--font-sans);cursor:pointer;transition:background .2s,transform .15s}
+.envd-btn:hover{background:#fff}
+.envd-btn:active{transform:scale(.97)}
+.envd-btn kbd{border-color:#ddd;background:#f2f2f2}
+.envd-btn:focus-visible{outline:2px solid #444;outline-offset:2px}
+.envd-head{display:flex;align-items:center;justify-content:space-between;gap:10px;color:#444;font:600 12px/1.3 var(--font-sans)}
+.envd-file{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.envd-sum{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;font:600 12px/1.4 var(--font-sans);color:#111}
+.envd-sum span{color:#888;font-weight:500}
+.envd-keys{max-height:clamp(120px,26vh,320px);margin:0;padding:0;display:grid;gap:4px;overflow-y:auto;list-style:none;scrollbar-width:thin}
+.envd-key{min-height:30px;padding:4px 9px;display:grid;grid-template-columns:minmax(0,1fr) 44px auto;gap:8px;align-items:center;border-radius:9px;background:rgba(17,17,17,.04);animation:rimp-up .3s ease-out both}
+@keyframes rimp-up{from{opacity:0;transform:translateY(4px)}}
+.envd-key code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#222;font:500 11.5px/1.3 ui-monospace,SFMono-Regular,monospace}
+.envd-mask{color:#aaa;letter-spacing:1px;font:500 11px/1 ui-monospace,monospace}
+.envd-tag{padding:3px 8px;border:1px solid #ddd;border-radius:999px;background:#fff;color:#555;font:600 10px/1.2 var(--font-sans);white-space:nowrap}
+.envd-key.is-replaced .envd-tag{border-color:#111;background:#111;color:#fff}
+.envd-key.is-excluded code{color:#999;text-decoration:line-through}
+.envd-key.is-excluded .envd-tag,.envd-key.is-pending .envd-tag{border-style:dashed;color:#888}
+.envd-ref{display:block;margin-top:2px;color:inherit;opacity:.75;font:500 9.5px/1.2 ui-monospace,monospace;white-space:nowrap}
+.envd-class{margin:0;color:#666;font:500 11px/1.4 var(--font-sans)}
+.envd-key.is-missing,.envd-key.is-empty{background:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.1)}
+.envd-key.is-missing code,.envd-key.is-empty code{color:#999}
+.envd-key.is-missing .envd-tag,.envd-key.is-empty .envd-tag{border-style:dashed;color:#999;background:transparent}
+.envd-policy{margin:0;color:#888;font:400 10.5px/1.45 var(--font-sans)}
+
+.setup2-footer{align-items:center;justify-content:space-between;gap:14px}
+.setup2-footer .repo-footer-note.is-ready{color:#111;font-weight:500}
+.setup2-footer .migration-next{min-width:150px}
+
+@media(max-width:900px){
+  .setup2-main{grid-template-columns:1fr}
+  .senv{grid-template-columns:1fr}
+  .senv-arrow{transform:rotate(90deg);height:16px}
+  .setup2-heading{flex-direction:column;align-items:flex-start}
+}
+@media(max-width:620px){.rimp{grid-template-columns:1fr}.prompt-intent{max-width:calc(100vw - 32px)}.prompt-action{flex-wrap:wrap;height:auto}}
+@media(prefers-reduced-motion:reduce){.rimp-tree li,.envd-key{animation:none}.senv-chip.is-live i{animation:none}}

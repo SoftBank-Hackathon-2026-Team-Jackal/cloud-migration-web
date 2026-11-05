@@ -4,7 +4,8 @@
  * 대본의 시각(after)은 "그 단계 화면이 준비된 순간"부터 센 ms이다.
  * Node가 그대로 읽으므로 런타임 import가 없고, 타입 문법만 쓴다(enum·네임스페이스 금지).
  */
-import type { AnalysisFindingData, BuildErrorCode, BuildFixData, DataProgressData, DataVerifyData, DraftEvent, TrafficReadyData, FixLine, FlowPath, Grade, PlanStepData, ReportData, Target } from './events'
+import type { AnalysisFindingData, AnalysisScanData, ApprovalDecisionData, BackendPreviewData, PreviewChange, ValidationIssue, BuildErrorCode, BuildFixData, DataProgressData, DataVerifyData, DraftEvent, TrafficPrepareData, TrafficReadyData, EnvRemap, FixLine, FlowPath, Grade, PlanEnvironment,  PlanStepData, SecurityRule, ReportData, SandboxChecks, SandboxDoneData, SandboxEnvData, SandboxFailureClass, SandboxStep, SandboxTestsData, Target } from './events'
+import type { SandboxScenario } from '../demoConfig'
 
 /** events.ts의 pathOf와 같다(이 모듈은 런타임 import가 없어야 Node가 그대로 읽는다). */
 const pathOf = (target: Target): FlowPath => (target === 'onprem' ? 'onprem' : 'gcp')
@@ -21,6 +22,10 @@ export type ScriptContext = {
   retried?: boolean
   /** 데모(?digest=mismatch): 검증한 이미지 Digest가 빌드한 것과 다르다. */
   digestMismatch?: boolean
+  /** 데모(?sandbox=…): 샌드박스 루프 결과 */
+  sandbox?: SandboxScenario
+  /** 데모(?analysis=items): 예전 방식(발견 항목마다 한 건). 기본은 백엔드 방식(스캔 Activity가 끝날 때마다 개수 묶음 하나). */
+  analysisItems?: boolean
 }
 
 // ---- 이미지 Digest(데모 값) ----
@@ -51,6 +56,52 @@ const FINDINGS: Finding[] = [
   { after: 12400, id: 'code-done', stream: 'code', progress: 100, key: 'code-done', via: ['code'] },
 ]
 
+/**
+ * 백엔드 방식: 스캔 Activity(cmp_worker.activities.analysis)가 끝날 때마다 analysis.scan 한 건.
+ * items는 찾은 것의 개수(sku는 요금 추정에 쓰는 인스턴스 유형 등), evidence는 Evidence{kind, locator, verified}.
+ * CLOUD_RESOURCE·IAM_POLICY·CLOUDTRAIL은 백엔드가 늘 verified=false로 둔다.
+ */
+type ScanSeed = Omit<AnalysisScanData, 'completed' | 'total'> & { after: number }
+const SCANS: ScanSeed[] = [
+  { after: 2600, id: 'scan-fetch', activity: 'fetch_source', stream: 'code',
+    items: [{ key: 'files', n: 48 }, { key: 'commit', n: 1 }],
+    evidence: [{ kind: 'CODE', locator: 'github.com/demo/app@9f2c4a7', verified: true }] },
+  { after: 4400, id: 'scan-network', activity: 'scan_network', stream: 'infrastructure',
+    items: [{ key: 'vpc', n: 1 }, { key: 'subnet', n: 4 }, { key: 'security_group', n: 3 }],
+    evidence: [{ kind: 'CLOUD_RESOURCE', locator: 'arn:aws:ec2:ap-northeast-2:…:vpc/vpc-0a1b', verified: false }, { kind: 'CONFIG', locator: 'k8s/ingress.yaml:12', verified: true }] },
+  { after: 6600, id: 'scan-manifests', activity: 'scan_manifests', stream: 'code',
+    items: [{ key: 'manifests', n: 5 }, { key: 'services', n: 2 }, { key: 'statefulsets', n: 1 }],
+    evidence: [{ kind: 'MANIFEST', locator: 'k8s/deployment.yaml:1', verified: true }, { kind: 'MANIFEST', locator: 'k8s/postgres.yaml:1', verified: true }] },
+  { after: 9400, id: 'scan-aws', activity: 'scan_aws_infra', stream: 'infrastructure',
+    items: [
+      { key: 'resources', n: 9 }, { key: 'eks_cluster', n: 1 }, { key: 'node', n: 2, sku: 't3.large' }, { key: 'alb', n: 1 },
+      { key: 'nat_gateway', n: 1 }, { key: 'ebs_gb', n: 20 }, { key: 's3_bucket', n: 1 }, { key: 'iam_role', n: 3 }, { key: 'trail_calls', n: 6 },
+    ],
+    evidence: [
+      { kind: 'CLOUD_RESOURCE', locator: 'arn:aws:eks:ap-northeast-2:…:cluster/demo', verified: false },
+      { kind: 'IAM_POLICY', locator: 'arn:aws:iam::…:role/demo-app-irsa', verified: false },
+      { kind: 'CLOUDTRAIL', locator: 's3:PutObject · s3:GetObject', verified: false },
+    ] },
+  { after: 11200, id: 'scan-code', activity: 'scan_code', stream: 'code',
+    items: [{ key: 'db_driver', n: 1, sku: 'psycopg' }, { key: 's3_sdk', n: 3 }, { key: 'env_keys', n: 6 }, { key: 'health_endpoint', n: 1 }],
+    evidence: [{ kind: 'CODE', locator: 'app/db.py:14', verified: true }, { kind: 'CODE', locator: 'app/storage.py:22', verified: true }, { kind: 'CONFIG', locator: '.env.example:3', verified: true }] },
+]
+
+function scanTimeline(): TimedDraft[] {
+  const totals = { infrastructure: 0, code: 0 }
+  for (const scan of SCANS) totals[scan.stream]++
+  const done = { infrastructure: 0, code: 0 }
+  const items: TimedDraft[] = SCANS.map(({ after, ...scan }) => {
+    done[scan.stream]++
+    const progress = Math.round((done.infrastructure + done.code) / SCANS.length * 100)
+    return { after, event: { type: 'analysis.scan', phase: 'analysis', status: 'running', progress, data: { ...scan, completed: done[scan.stream], total: totals[scan.stream] } } }
+  })
+  const end = SCANS[SCANS.length - 1].after + 700
+  items.push({ after: end, event: { type: 'analysis.done', phase: 'analysis', status: 'done', progress: 100, data: {} } })
+  return items
+}
+
+/** 예전 방식(?analysis=items): 발견 항목마다 한 건 */
 function analysisTimeline(): TimedDraft[] {
   const items: TimedDraft[] = FINDINGS.map(({ after, ...finding }) => ({
     after,
@@ -64,98 +115,241 @@ function analysisTimeline(): TimedDraft[] {
 
 // ---- 샌드박스 검증(build) ----
 
-const CHECK_IDS = ['build', 'health', 'db', 'render', 'secret', 'scope']
-
 type FixId = 'db' | 'host' | 'port' | 'probe'
 // AI가 고치는 항목. 수정은 검증 항목 하나에 여러 개 붙을 수 있다(예: 상태 확인에서 서너 건).
-const FIX_POOL: Array<{ id: FixId; check: string; lines: FixLine[] }> = [
-  { id: 'db', check: 'db', lines: [{ kind: 'del', text: '- DB_HOST=postgres' }, { kind: 'add', text: '+ DB_HOST=postgresql.demo.svc.cluster.local' }] },
-  { id: 'host', check: 'health', lines: [{ kind: 'del', text: '- HOST=127.0.0.1' }, { kind: 'add', text: '+ HOST=0.0.0.0' }] },
-  { id: 'port', check: 'health', lines: [{ kind: 'add', text: '+ containerPort: 8080' }] },
-  { id: 'probe', check: 'health', lines: [{ kind: 'add', text: '+ readinessProbe: { httpGet: { path: /health, port: 8080 } }' }] },
+const FIX_POOL: Array<{ id: FixId; check: string; file: string; lines: FixLine[]; new_env_keys?: string[] }> = [
+  // [가정] DB 수정은 대상 DB 연결에 TLS 설정을 새로 읽는다(새 환경 변수 1개)
+  { id: 'db', check: 'db', file: '.env', lines: [{ kind: 'del', text: '- DB_HOST=postgres' }, { kind: 'add', text: '+ DB_HOST=postgresql.demo.svc.cluster.local' }, { kind: 'add', text: '+ ssl: process.env.DB_SSLMODE' }], new_env_keys: ['DB_SSLMODE'] },
+  { id: 'host', check: 'health', file: '.env', lines: [{ kind: 'del', text: '- HOST=127.0.0.1' }, { kind: 'add', text: '+ HOST=0.0.0.0' }] },
+  { id: 'port', check: 'health', file: 'k8s/deployment.yaml', lines: [{ kind: 'add', text: '+ containerPort: 8080' }] },
+  { id: 'probe', check: 'health', file: 'k8s/deployment.yaml', lines: [{ kind: 'add', text: '+ readinessProbe: { httpGet: { path: /health, port: 8080 } }' }] },
 ]
 
 const FIX_GAP_MS = 1400 // 수정 하나를 고치는 데 걸리는 시간
 
 const MAX_ATTEMPTS = 3
 
-/** ?review=1 데모: 빌드가 3번 실패하고 사람 검토를 기다린다. */
+// 샌드박스 루프(AV-011~016): 빌드는 샌드박스 밖에서 먼저 → 임시 Namespace → 시도마다 렌더 → 적용 → 준비 검사 → 테스트 → 판정.
+// 실패하면 원인을 나눈다: SPEC(매핑) 재렌더 · CODE/BUILD 수정·재빌드 · INFRA 같은 입력으로 재시도(횟수 제외) · RENDER 중단·보고.
+// 통과하면 그 Digest가 고정되고, 성공·실패와 관계없이 정리(Namespace 삭제)한다.
+const SANDBOX_STEPS: SandboxStep[] = ['render', 'apply', 'ready', 'test', 'judge']
+const STEP_MS = 620
+const SANDBOX_TESTS: SandboxTestsData = { total: 24, catalog: 12, original: 8, generated: 4, read_only: 17 }
+const PASS_CHECKS: SandboxChecks = { required_passed: 24, required_total: 24, unsupported_calls: 0, calls_in_mapping: 9, calls_total: 9, blocked_egress: 0 }
+const SANDBOX_ENV: SandboxEnvData = { namespace: 'sbx-run-7f2c', expires_minutes: 120, egress_allowed: 3 }
+// 코드 수정 시나리오에서 첫 빌드(수정 전) 이미지
+const FIRST_DIGEST = 'sha256:4b1e07c9a2d3f5e6b7c8d9e0f1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4'
+
+type RunPlan = { attempt: number; fail?: { cls: SandboxFailureClass; at: SandboxStep; checks: SandboxChecks; reasons: string[] } }
+
+function sandboxPlans(scenario: SandboxScenario): RunPlan[] {
+  const failTests = (cls: SandboxFailureClass, reasons: string[]): RunPlan['fail'] => ({ cls, at: 'judge', reasons, checks: { ...PASS_CHECKS, required_passed: 21, calls_in_mapping: 8 } })
+  switch (scenario) {
+    case 'pass': return [{ attempt: 1 }]
+    case 'spec': return [{ attempt: 1, fail: failTests('SPEC', ['required test failed: db.read_write', 'call outside mapping: postgres:5432']) }, { attempt: 2 }]
+    case 'code': return [{ attempt: 1, fail: failTests('CODE', ['required test failed: files.upload']) }, { attempt: 2 }]
+    case 'infra': return [{ attempt: 1, fail: { cls: 'INFRA', at: 'apply', reasons: ['registry pull timeout'], checks: { ...PASS_CHECKS, required_passed: 0 } } }, { attempt: 1 }]
+    case 'render': return [{ attempt: 1, fail: { cls: 'RENDER', at: 'render', reasons: ['render output does not match requirements: service.ports'], checks: { ...PASS_CHECKS, required_passed: 0 } } }]
+  }
+}
+
+function buildTimeline(aiFixes: number, retried = false, scenario: SandboxScenario = 'spec'): TimedDraft[] {
+  const plans = sandboxPlans(scenario)
+  const fixing = plans.some(plan => plan.fail && (plan.fail.cls === 'SPEC' || plan.fail.cls === 'CODE'))
+  const fixes: BuildFixData[] = fixing ? FIX_POOL.slice(0, aiFixes).map(fix => ({ id: fix.id, check: fix.check, file: fix.file, lines: fix.lines, why: '', evidence: '', ...(fix.new_env_keys ? { new_env_keys: fix.new_env_keys } : {}) })) : []
+  const items: TimedDraft[] = fixes.map(data => ({ after: 0, event: { type: 'build.fix', phase: 'build', status: 'running', data } }))
+  const build = (after: number, attempt: number, digest: string, reused: boolean) => items.push({ after, event: { type: 'build.result', phase: 'build', status: 'running', data: { attempt, max_attempts: MAX_ATTEMPTS, status: 'SUCCEEDED', digest, image_uri: 'registry.example.com/demo/app@' + digest, reused, error_code: null } } })
+  // 이미지 빌드(샌드박스 밖) → 임시 Namespace 준비 → 테스트 묶음 고정(Tester)
+  build(0, 1, scenario === 'code' ? FIRST_DIGEST : DEMO_DIGEST, retried)
+  items.push({ after: 200, event: { type: 'sandbox.env', phase: 'build', status: 'running', data: SANDBOX_ENV } })
+  items.push({ after: 450, event: { type: 'sandbox.tests', phase: 'build', status: 'running', data: SANDBOX_TESTS } })
+  let at = 800
+  let finalStatus: SandboxDoneData['status'] = 'PASSED'
+  plans.forEach((plan, index) => {
+    const run = index + 1
+    for (const step of SANDBOX_STEPS) {
+      items.push({ after: at, event: { type: 'sandbox.step', phase: 'build', status: 'running', data: { run, attempt: plan.attempt, step, state: 'running' } } })
+      at += STEP_MS
+      // 테스트 실패는 Activity 실패가 아니라 판정 결과다: 테스트 단계는 끝나고 판정에서 실패한다.
+      const failed = plan.fail?.at === step
+      items.push({ after: at, event: { type: 'sandbox.step', phase: 'build', status: 'running', data: { run, attempt: plan.attempt, step, state: failed ? 'failed' : 'done' } } })
+      if (failed) break
+    }
+    const fixIds = plan.fail && (plan.fail.cls === 'SPEC' || plan.fail.cls === 'CODE') ? fixes.map(fix => fix.id) : []
+    items.push({ after: at + 150, event: { type: 'sandbox.attempt', phase: 'build', status: 'running', data: {
+      run, attempt: plan.attempt, max_attempts: MAX_ATTEMPTS,
+      verdict: { passed: !plan.fail, reasons: plan.fail?.reasons ?? [] },
+      failure_class: plan.fail?.cls ?? null, checks: plan.fail?.checks ?? PASS_CHECKS, fix_ids: fixIds,
+    } } })
+    at += 500
+    if (!plan.fail) return
+    if (plan.fail.cls === 'RENDER') { finalStatus = 'STOPPED_RENDER'; return }
+    // Fixer가 하나씩 고친다(SPEC은 재렌더, CODE는 수정 뒤 재빌드). INFRA는 고치지 않고 같은 입력으로 다시 돈다.
+    at += fixIds.length * FIX_GAP_MS
+    if (plan.fail.cls === 'CODE') { build(at, 2, DEMO_DIGEST, false); at += 700 }
+    if (plan.fail.cls === 'INFRA') at += 600
+  })
+  // 정리는 검증 결과와 따로 보고한다: 먼저 정리 중(PENDING), 곧 정리 완료(CLEANED).
+  const digest = finalStatus === 'PASSED' ? DEMO_DIGEST : null
+  items.push({ after: at, event: { type: 'sandbox.done', phase: 'build', status: 'running', data: { status: finalStatus, cleanup_status: 'PENDING', digest } } })
+  items.push({ after: at + 900, event: { type: 'sandbox.done', phase: 'build', status: finalStatus === 'PASSED' ? 'done' : 'failed', data: { status: finalStatus, cleanup_status: 'CLEANED', digest } } })
+  return items
+}
+
+/** ?review=1 데모: 이미지 빌드가 3번 실패(BUILD)하고 사람 검토를 기다린다. 샌드박스에는 들어가지 못한다. */
 function reviewTimeline(): TimedDraft[] {
   const errors: BuildErrorCode[] = ['DOCKERFILE_MISSING', 'BUILD_FAILED', 'BUILD_FAILED']
   const items: TimedDraft[] = []
+  const none: SandboxChecks = { ...PASS_CHECKS, required_passed: 0, calls_in_mapping: 0 }
   errors.forEach((error, index) => {
     const attempt = index + 1
     const at = 600 + index * 2200
     items.push({ after: at, event: { type: 'build.result', phase: 'build', status: 'running', data: { attempt, max_attempts: MAX_ATTEMPTS, status: 'FAILED', digest: null, image_uri: null, reused: false, error_code: error } } })
-    items.push({ after: at + 400, event: { type: 'build.check', phase: 'build', status: 'running', data: { id: 'build', state: 'failed', attempt } } })
+    items.push({ after: at + 400, event: { type: 'sandbox.attempt', phase: 'build', status: 'running', data: { run: attempt, attempt, max_attempts: MAX_ATTEMPTS, verdict: { passed: false, reasons: ['image build failed: ' + error] }, failure_class: 'BUILD', checks: none, fix_ids: [] } } })
   })
   items.push({ after: 600 + errors.length * 2200, event: { type: 'build.review', phase: 'build', status: 'waiting', data: { reason: 'max_attempts', attempts: MAX_ATTEMPTS } } })
   return items
 }
 
-function buildTimeline(aiFixes: number, retried = false): TimedDraft[] {
-  const fixes: BuildFixData[] = FIX_POOL.slice(0, aiFixes).map(fix => ({ id: fix.id, check: fix.check, lines: fix.lines, why: '', evidence: '' }))
-  // 수정 목록은 단계 시작에 한꺼번에 알려 준다(검증 항목 카드의 개수 표시와 변경 내용 칩이 처음부터 같은 목록을 본다).
-  const items: TimedDraft[] = fixes.map(data => ({ after: 0, event: { type: 'build.fix', phase: 'build', status: 'running', data } }))
-  // 이미지 빌드 결과: 검증 항목(테스트)을 돌리기 전에 첫 시도가 성공한 상태로 시작한다. 사람 검토 뒤 재시도면 이전 빌드를 재사용한다.
-  items.push({ after: 0, event: { type: 'build.result', phase: 'build', status: 'running', data: { attempt: 1, max_attempts: MAX_ATTEMPTS, status: 'SUCCEEDED', digest: DEMO_DIGEST, image_uri: DEMO_IMAGE_URI, reused: retried, error_code: null } } })
-  const check = (after: number, id: string, state: 'running' | 'failed' | 'fixing' | 'recheck' | 'done', fixed?: number) => {
-    items.push({ after, event: { type: 'build.check', phase: 'build', status: state === 'done' ? 'done' : 'running', data: fixed === undefined ? { id, state, attempt: 1 } : { id, state, fixed, attempt: 1 } } })
-  }
-  // 검증 항목은 차례로 돌고, 수정이 붙은 항목은 "실패 → 수정(여러 개면 하나씩) → 재검증 → 통과"를 거친다.
-  let at = 500
-  for (const id of CHECK_IDS) {
-    const count = fixes.filter(fix => fix.check === id).length
-    check(at, id, 'running')
-    if (count > 0) {
-      check(at + 900, id, 'failed')
-      for (let index = 0; index < count; index++) check(at + 1600 + index * FIX_GAP_MS, id, 'fixing', index)
-      const recheckAt = at + 1600 + count * FIX_GAP_MS + 200
-      check(recheckAt, id, 'recheck', count)
-      check(recheckAt + 1000, id, 'done', count)
-      at = recheckAt + 1400
-    } else {
-      check(at + 900, id, 'done')
-      at += 1400
-    }
-  }
-  return items
-}
-
 // ---- 계획 ----
 
-const PLAN_STEPS: Array<{ id: string; group: 'infrastructure' | 'code' }> = [
-  { id: 'network', group: 'infrastructure' },
-  { id: 'compute', group: 'infrastructure' },
-  { id: 'database', group: 'infrastructure' },
-  { id: 'storage', group: 'infrastructure' },
-  { id: 'db-code', group: 'code' },
-  { id: 's3-code', group: 'code' },
+type PlanStepSeed = Pick<PlanStepData, 'id' | 'group' | 'kind' | 'verification'>
+const PLAN_STEPS: PlanStepSeed[] = [
+  { id: 'network', group: 'infrastructure', kind: 'ingress', verification: 'EVIDENCE_CHECKED' },
+  { id: 'compute', group: 'infrastructure', kind: 'compute', verification: 'SANDBOX_VERIFIED' },
+  { id: 'database', group: 'infrastructure', kind: 'database', verification: 'SANDBOX_VERIFIED' },
+  { id: 'storage', group: 'infrastructure', kind: 'storage', verification: 'UNVERIFIED' },
+  { id: 'db-code', group: 'code', kind: 'config', verification: 'SANDBOX_VERIFIED' },
+  { id: 's3-code', group: 'code', kind: 'config', verification: 'UNVERIFIED' },
 ]
+/** 이번 범위에서 옮기지 않고 원본을 그대로 쓰는 항목(AV-022) */
+const KEEP_SOURCE = new Set(['storage', 's3-code'])
 
-/** 매핑 등급(11/2 회의): 대상에 그대로 쓸 수 있으면 직접 대응, 대응물이 없으면 MVP에서 제외. 가운데 등급은 화면용 제안. */
+/** 매핑 등급(AV-008): 그대로 대응 · API 차이 · 일부 대응 · 대응 없음. 원본 유지 항목은 등급과 관계없이 원본 유지로 보인다. */
 export function gradeOf(id: string, target: Target): Grade {
   switch (id) {
-    case 'network': case 'db-code': return 'convert'
-    case 'storage': case 's3-code': return pathOf(target) === 'gcp' ? 'direct' : 'none'
-    default: return 'direct'
+    case 'network': return 'API_DIFF'
+    case 'db-code': return 'PARTIAL'
+    case 'storage': case 's3-code': return pathOf(target) === 'gcp' ? 'API_DIFF' : 'NONE'
+    default: return 'DIRECT'
   }
+}
+
+// ---- 계획 미리보기 ----
+// 백엔드 Preview(cmp_contracts.plan.Preview) 모양으로 보낸다: changes[{resource_type, action, name, quantity, size}] ·
+// applied_defaults · warnings · errors · pending_decisions(ValidationIssue{code, path, message}). 화면은 previewAdapter로 옮겨 그린다.
+// Preview에는 Digest 고정(PINNED)·원본 유지(KEEP_SOURCE)가 없다: 화면이 매핑(keep_source)·검증한 Digest에서 만든다.
+// env_remap·security_rules·source·target은 Preview가 아니라 앱 Values·계획 입력에서 온다(프론트 감싸기 [가정]).
+// 전환 방법(rollout)·요금 추정은 계획 시점에 백엔드에 없다: 화면이 정책 기본값(policy.ts)·가격표(pricing.ts)를 쓴다.
+const PREVIEW_CHANGES: Record<FlowPath, PreviewChange[]> = {
+  gcp: [
+    { resource_type: 'NETWORK', action: 'CREATE', name: 'demo-vpc', quantity: null, size: '10.20.0.0/20' },
+    { resource_type: 'INGRESS', action: 'CREATE', name: 'demo-https-lb', quantity: null, size: 'HTTPS 443' },
+    { resource_type: 'CLUSTER', action: 'CREATE', name: 'demo-gke', quantity: null, size: 'regional' },
+    { resource_type: 'NODE', action: 'CREATE', name: 'demo-pool', quantity: 2, size: 'e2-standard-2' },
+    { resource_type: 'APP', action: 'CREATE', name: 'demo-app', quantity: 2, size: 'replicas' },
+    { resource_type: 'DATABASE', action: 'CREATE', name: 'demo-postgres', quantity: null, size: 'db-custom-2-7680 · 20 GiB SSD' },
+  ],
+  onprem: [
+    { resource_type: 'NETWORK', action: 'CREATE', name: 'k3s-pod-net', quantity: null, size: '10.42.0.0/16' },
+    { resource_type: 'INGRESS', action: 'CREATE', name: 'relay-ingress', quantity: null, size: 'HTTPS 443' },
+    { resource_type: 'CLUSTER', action: 'READ', name: 'k3s-dc1', quantity: null, size: 'K3s' },
+    { resource_type: 'NODE', action: 'READ', name: 'dc1-nodes', quantity: 3, size: '4 vCPU · 16 GiB' },
+    { resource_type: 'APP', action: 'CREATE', name: 'demo-app', quantity: 2, size: 'replicas' },
+    { resource_type: 'DATABASE', action: 'CREATE', name: 'demo-postgres', quantity: null, size: 'StatefulSet · 20 GiB PV' },
+  ],
+}
+/** 사용자가 정하지 않아 기본값을 쓴 리소스(applied_defaults). changes에 같은 리소스가 있으면 그 줄에 '기본값'으로 표시된다. */
+const PREVIEW_DEFAULTS: Record<FlowPath, PreviewChange[]> = {
+  gcp: [{ resource_type: 'NODE', action: 'CREATE', name: 'demo-pool', quantity: 2, size: 'e2-standard-2' }],
+  onprem: [{ resource_type: 'DATABASE', action: 'CREATE', name: 'demo-postgres', quantity: null, size: 'StatefulSet · 20 GiB PV' }],
+}
+const PREVIEW_WARNINGS: ValidationIssue[] = [{ code: 'DB_BACKUP_RETENTION_SHORT', path: 'resources.db.backup_retention_days', message: '' }]
+/** 승인 전에 정해야 할 값: 실패 시 만든 리소스 정리 정책(백엔드 CLEANUP_POLICY_REQUIRED) */
+const PREVIEW_PENDING: ValidationIssue[] = [{ code: 'CLEANUP_POLICY_REQUIRED', path: 'spec.cleanup_policy', message: '' }]
+const PREVIEW_ENV: Record<FlowPath, EnvRemap[]> = {
+  gcp: [
+    { key: 'DB_HOST', from: 'postgres', to: '10.20.0.5', secret: false },
+    { key: 'DB_PASSWORD', from: 'secret', to: 'sm://db-password', secret: true },
+    { key: 'S3_BUCKET', from: 'uploads-demo', to: 'uploads-demo', secret: false, keep: true },
+  ],
+  onprem: [
+    { key: 'DB_HOST', from: 'postgres', to: 'postgresql.app.svc', secret: false },
+    { key: 'DB_PASSWORD', from: 'secret', to: 'k8s://app/db-password', secret: true },
+    { key: 'S3_BUCKET', from: 'uploads-demo', to: 'uploads-demo', secret: false, keep: true },
+  ],
+}
+const PREVIEW_RULES: SecurityRule[] = [
+  { from: 'internet', to: 'lb', port: 443, protocol: 'TCP', action: 'ALLOW' },
+  { from: 'lb', to: 'app', port: 8080, protocol: 'TCP', action: 'ALLOW' },
+  { from: 'app', to: 'db', port: 5432, protocol: 'TCP', action: 'ALLOW' },
+  { from: '*', to: '*', port: null, protocol: 'ANY', action: 'DENY' },
+]
+const PREVIEW_TARGET: Record<FlowPath, PlanEnvironment> = {
+  gcp: { provider: 'GCP', platform: 'GKE', location: 'asia-northeast3' },
+  onprem: { provider: 'ON_PREM', platform: 'K3s', location: 'dc-1' },
+}
+export const PLAN_ID = 'pln-7f2c9a'
+
+/** 백엔드 Preview + 프론트 감싸기(계획 입력·앱 Values) */
+export function planPreviewFor(target: Target, revision: number): BackendPreviewData {
+  const path = pathOf(target)
+  return {
+    contract_version: '1',
+    manifest_digest: DEMO_MANIFEST_DIGEST,
+    changes: PREVIEW_CHANGES[path],
+    applied_defaults: PREVIEW_DEFAULTS[path],
+    warnings: PREVIEW_WARNINGS,
+    errors: [],
+    pending_decisions: PREVIEW_PENDING,
+    plan_id: PLAN_ID,
+    revision,
+    source: { provider: 'AWS', platform: 'EKS', location: 'ap-northeast-2' },
+    target: PREVIEW_TARGET[path],
+    env_remap: PREVIEW_ENV[path],
+    security_rules: PREVIEW_RULES,
+  }
+}
+
+// ---- 승인 결정(접수 → 전달 → 실행) ----
+
+/** 결정을 기록한 뒤 실행 엔진에 전달되기까지 걸리는 시간(데모 값) */
+export const APPROVAL_DELIVERY_MS = 1400
+export const APPROVAL_ID = 'apr-3c81e0'
+
+/**
+ * 승인 버튼을 누른 뒤의 대본: 결정 기록(PENDING) → 전달 완료(DELIVERED, 실행 시작).
+ * fail이면 전달이 실패한다(FAILED). 전달 실패는 이전 실패가 아니므로(API도 201 + FAILED) 이벤트 status는 waiting이다. attempt는 전달 시도 횟수(다시 전달할 때마다 +1).
+ */
+export function approvalTimeline(revision: number, options: { attempt?: number; fail?: boolean } = {}): TimedDraft[] {
+  const attempt = options.attempt ?? 1
+  const base: ApprovalDecisionData = { approval_id: APPROVAL_ID, plan_id: PLAN_ID, revision, decision: 'APPROVE', scope: 'FULL', delivery_status: 'PENDING', delivery_attempts: attempt, execution_status: 'NOT_STARTED', workflow_state: 'WAITING_FOR_APPROVAL' }
+  const done: ApprovalDecisionData = options.fail
+    ? { ...base, delivery_status: 'FAILED', workflow_state: 'UNAVAILABLE' }
+    : { ...base, delivery_status: 'DELIVERED', execution_status: 'RUNNING', workflow_state: 'PROVISIONING' }
+  return [
+    { after: 0, event: { type: 'approval.decision', phase: 'awaiting_approval', status: 'waiting', data: base } },
+    { after: APPROVAL_DELIVERY_MS, event: { type: 'approval.decision', phase: 'awaiting_approval', status: options.fail ? 'waiting' : 'done', data: done } },
+  ]
 }
 
 /** 계획 화면이 항목을 하나씩 드러내는 연출(화면이 쓴다): 첫 항목까지의 시간, 항목 간격, 전체 길이. 서버는 연출이 끝난 뒤 승인을 요청한다. */
 export const PLAN_FIRST_REVEAL_MS = 2550
 export const PLAN_REVEAL_GAP_MS = 720
-export const PLAN_STEP_COUNT = PLAN_STEPS.length
+/** 드러내는 줄 수: 매핑 항목과 만들 리소스(Preview 변경 + 원본 유지 1) 중 많은 쪽 */
+export const PLAN_STEP_COUNT = Math.max(PLAN_STEPS.length, PREVIEW_CHANGES.gcp.length + 1)
 export const PLAN_REVEAL_MS = PLAN_FIRST_REVEAL_MS + PLAN_STEP_COUNT * PLAN_REVEAL_GAP_MS + 850
 
 function planTimeline(target: Target, revision: number, mismatch: boolean): TimedDraft[] {
   // 문구(전·후·근거·변경)는 비워 두고 화면이 id로 자기 문구를 쓴다(GCP 대상일 때만 다른 문구 포함).
   const items: TimedDraft[] = PLAN_STEPS.map(step => {
-    const data: PlanStepData = { id: step.id, group: step.group, grade: gradeOf(step.id, target), before: '', after: '', evidence: '', change: '' }
+    const keep = KEEP_SOURCE.has(step.id)
+    const data: PlanStepData = { ...step, grade: gradeOf(step.id, target), before: '', after: '', evidence: '', change: '', action: 'PROCEED', keep_source: keep }
     return { after: 0, event: { type: 'plan.step', phase: 'planning', status: 'running', data } }
   })
+  items.push({ after: 0, event: { type: 'plan.preview', phase: 'planning', status: 'running', data: planPreviewFor(target, revision) } })
   const verified = mismatch ? OTHER_DIGEST : DEMO_DIGEST
-  items.push({ after: 0, event: { type: 'plan.ready', phase: 'planning', status: 'done', progress: 100, data: { plan_id: 'plan-demo', revision, template_version: TEMPLATE_VERSION, built_digest: DEMO_DIGEST, verified_digest: verified, manifest_digest: DEMO_MANIFEST_DIGEST, preview_digest: DEMO_PREVIEW_DIGEST } } })
+  items.push({ after: 0, event: { type: 'plan.ready', phase: 'planning', status: 'done', progress: 100, data: { plan_id: PLAN_ID, revision, template_version: TEMPLATE_VERSION, built_digest: DEMO_DIGEST, verified_digest: verified, manifest_digest: DEMO_MANIFEST_DIGEST, preview_digest: DEMO_PREVIEW_DIGEST } } })
   return items
 }
 
@@ -221,6 +415,44 @@ export const TRAFFIC_READY_EVENTS: Array<{ after: number; data: TrafficReadyData
 ]
 export const DATA_TICK_MS = 250
 
+// ---- 트래픽 사전 확인 [가정] (traffic_prepare: 인계 상태 READY · ready=true · external_endpoint · 헬스) ----
+/** 데모 값. 실제 화면은 백엔드가 보낸 traffic.prepare 값으로 그린다. */
+function trafficPrepareBase(target: Target): Omit<TrafficPrepareData, 'state' | 'checks'> {
+  const onprem = target === 'onprem'
+  return {
+    entry_host: 'app.example.com',
+    relay: { name: 'Envoy', location: 'AWS ap-northeast-2', mode: 'weighted_clusters' },
+    origin: { name: 'env-a', platform: 'ALB → EKS', location: 'AWS ap-northeast-2' },
+    target: onprem
+      ? { name: 'env-b', platform: 'K3s', location: 'on-prem', external_endpoint: 'http://10.8.0.12:80', tunnel: { interface: 'wg0', mtu: 1420 } }
+      : { name: 'env-b', platform: 'GKE', location: 'GCP asia-northeast3', external_endpoint: 'http://34.64.120.18:80' },
+    data_path: { pooler: 'PgBouncer', source_db: 'pg-a', target_db: 'pg-b' },
+    policy: { steps: [10, 50, 100], observe_seconds: 4, max_failed_requests: 0, max_p99_ratio: 1.5 },
+  }
+}
+const PREPARE_CHECK_IDS = ['handoff_status', 'ready', 'external_endpoint', 'health'] as const
+export const TRAFFIC_PREPARE_STEP_MS = 350
+/** 사전 확인 이벤트(확인 하나씩 끝나고 마지막에 done). 끝나는 시각은 TRAFFIC_PREPARE_STEP_MS × (확인 수 + 1). */
+export function trafficPrepareTimeline(target: Target): Array<{ after: number; data: TrafficPrepareData }> {
+  const base = trafficPrepareBase(target)
+  const values: Record<(typeof PREPARE_CHECK_IDS)[number], string> = {
+    handoff_status: 'READY', ready: 'true', external_endpoint: base.target?.external_endpoint ?? '', health: '/healthz 200',
+  }
+  const items: Array<{ after: number; data: TrafficPrepareData }> = []
+  for (let done = 0; done <= PREPARE_CHECK_IDS.length; done++) {
+    // 끝난 확인은 값과 함께, 지금 확인 중인 것 하나는 running으로(아직 시작하지 않은 확인은 보내지 않는다).
+    const checks = PREPARE_CHECK_IDS.slice(0, done + 1).map((id, index) => index < done
+      ? { id, state: 'done' as const, value: values[id] }
+      : { id, state: 'running' as const })
+    items.push({ after: done * TRAFFIC_PREPARE_STEP_MS, data: { ...base, state: 'running', checks } })
+  }
+  const last = items[items.length - 1]
+  last.after += TRAFFIC_PREPARE_STEP_MS / 2
+  last.data = { ...last.data, state: 'done' }
+  return items
+}
+export const TRAFFIC_PREPARE_MS = (PREPARE_CHECK_IDS.length + 0.5) * TRAFFIC_PREPARE_STEP_MS
+
 function lagAt(seconds: number): number | null {
   if (seconds < 5) return null
   const base = 2200 * Math.exp(-(seconds - 5) * 0.62)
@@ -245,35 +477,7 @@ export function dataProgressAt(seconds: number): DataProgressData {
 }
 
 // ---- DB 전환 ----
-
-/** 화면이 입자로 만들어지는 동안(2.4초)은 내용이 아직 안 보이므로, 그만큼 기다렸다가 단계를 시작한다. */
-export const CUTOVER_ENTER_MS = 2400
-const CUTOVER_STEP_MS = 1100
-const RESULT_AT = [600, 1500, 2400]
-const CUTOVER_RESULTS: Array<{ id: 'fail' | 'delay' | 'loss'; value: string }> = [
-  { id: 'fail', value: '' }, { id: 'delay', value: '' }, { id: 'loss', value: '' },
-]
-
-/** 승인 뒤 시작 시점(approveCutover)부터의 대본. 측정 값은 비워 두고 화면이 id로 자기 문구를 쓴다. */
-function cutoverTimeline(): TimedDraft[] {
-  const items: TimedDraft[] = []
-  for (let n = 1 as 1 | 2 | 3 | 4 | 5 | 6; n <= 6; n = (n + 1) as typeof n) {
-    items.push({ after: CUTOVER_ENTER_MS + n * CUTOVER_STEP_MS, event: { type: 'cutover.step', phase: 'verification', status: 'running', progress: Math.round((n / 6) * 100), data: { n, state: 'done' } } })
-  }
-  const verifyAt = CUTOVER_ENTER_MS + 6 * CUTOVER_STEP_MS + 900
-  items.push({ after: verifyAt, event: { type: 'cutover.step', phase: 'verification', status: 'running', data: { n: 6, state: 'verify' } } })
-  CUTOVER_RESULTS.forEach((result, index) => {
-    items.push({ after: verifyAt + RESULT_AT[index], event: { type: 'cutover.result', phase: 'verification', status: index === CUTOVER_RESULTS.length - 1 ? 'done' : 'running', data: result } })
-  })
-  // 최종 검증 뒤 운영권 인계: DNS 마지막 전환 → 원본 대기 유지 → 운영 권한 이전 (순서대로)
-  const handoverAt = verifyAt + RESULT_AT[RESULT_AT.length - 1] + 500
-  const HANDOVER: Array<'dns' | 'origin' | 'access'> = ['dns', 'origin', 'access']
-  HANDOVER.forEach((item, index) => {
-    items.push({ after: handoverAt + index * 700, event: { type: 'cutover.handover', phase: 'verification', status: 'running', data: { item, state: 'running' } } })
-    items.push({ after: handoverAt + index * 700 + 600, event: { type: 'cutover.handover', phase: 'verification', status: 'done', data: { item, state: 'done' } } })
-  })
-  return items
-}
+// DB 전환 대본은 cutoverScript.ts(전환 계획·전환 가능 시점·쓰기 중단 구간 단계·검증·인계)에 있다.
 
 // ---- 리포트 ----
 
@@ -295,15 +499,14 @@ export function reportFor(aiFixes: number): ReportData {
 
 // ---- 대본 조회 ----
 
-export type ScriptedPhase = 'analysis' | 'build' | 'planning' | 'provisioning' | 'verification'
+export type ScriptedPhase = 'analysis' | 'build' | 'planning' | 'provisioning'
 
 export function timelineFor(phase: ScriptedPhase, context: ScriptContext): TimedDraft[] {
   switch (phase) {
-    case 'analysis': return analysisTimeline()
-    case 'build': return context.review ? reviewTimeline() : buildTimeline(context.aiFixes, context.retried)
+    case 'analysis': return context.analysisItems ? analysisTimeline() : scanTimeline()
+    case 'build': return context.review ? reviewTimeline() : buildTimeline(context.aiFixes, context.retried, context.sandbox)
     case 'planning': return planTimeline(context.target, context.revision ?? 1, !!context.digestMismatch)
     case 'provisioning': return provisionTimeline(context.target)
-    case 'verification': return cutoverTimeline()
   }
 }
 

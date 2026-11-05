@@ -1,9 +1,9 @@
 'use client'
 
-import { createContext, useContext, useEffect, useMemo, useReducer, useState, type ReactNode } from 'react'
-import { apiBase, apiMode, type ApiMode } from './config'
+import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useState, type ReactNode } from 'react'
+import { apiBase, apiMode, sseStartMode, type ApiMode } from './config'
 import type { BackendPhase, Target } from './events'
-import { initialState, reducer, type MigrationState } from './reducer'
+import { initialState, reducer, type Action, type MigrationState } from './reducer'
 import { reportFor } from './script'
 import { aiFixCount } from '../demoConfig'
 import { MockProvider } from './mockProvider'
@@ -14,6 +14,8 @@ type Api = {
   state: MigrationState
   mode: ApiMode
   provider: Provider
+  /** 공급자가 보낸 액션(이벤트 포함)을 받는다: 말 보고처럼 상태가 아니라 '방금 온 이벤트'가 필요한 곳이 쓴다. */
+  subscribe: (listener: (action: Action) => void) => () => void
 }
 
 const MigrationContext = createContext<Api | null>(null)
@@ -26,11 +28,14 @@ export function MigrationProvider({ children, mode = apiMode() }: { children: Re
   const [state, dispatch] = useReducer(reducer, undefined, () =>
     // 목업은 리포트의 값(소요 시간·AI 수정 개수)을 처음부터 알고 있다.
     mode === 'mock' ? { ...initialState, report: reportFor(aiFixCount()) } : initialState)
-  const [provider] = useState<Provider>(() => mode === 'sse'
-    ? new SseProvider({ dispatch }, { baseUrl: apiBase() })
-    : new MockProvider({ dispatch }))
+  const [listeners] = useState(() => new Set<(action: Action) => void>())
+  const [provider] = useState<Provider>(() => {
+    const host = { dispatch: (action: Action) => { dispatch(action); listeners.forEach(listener => listener(action)) } }
+    return mode === 'sse' ? new SseProvider(host, { baseUrl: apiBase(), startMode: sseStartMode() }) : new MockProvider(host)
+  })
+  const subscribe = useCallback((listener: (action: Action) => void) => { listeners.add(listener); return () => { listeners.delete(listener) } }, [listeners])
   useEffect(() => () => provider.dispose(), [provider])
-  const value = useMemo(() => ({ state, mode, provider }), [state, mode, provider])
+  const value = useMemo(() => ({ state, mode, provider, subscribe }), [state, mode, provider, subscribe])
   return <MigrationContext.Provider value={value}>{children}</MigrationContext.Provider>
 }
 
