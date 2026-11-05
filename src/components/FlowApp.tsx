@@ -28,7 +28,7 @@ import { useVoiceGuide } from '../lib/useVoiceGuide'
 import { buildAgentFacts } from '../lib/agent/context'
 import { askAgent } from '../lib/agent/ask'
 import { FoldIcon, MicIcon, SpeakerIcon } from './JackalIcons'
-import { isStartCommand, targetFromUtterance } from '../lib/agent/intent'
+import { isRecommendRequest, isStartCommand, targetFromUtterance } from '../lib/agent/intent'
 import { useStageVoice } from '../lib/voice/useStageVoice'
 import { voiceText, type VoiceKey } from '../lib/voice/messages'
 import VoiceHints from './VoiceHints'
@@ -248,6 +248,8 @@ export default function FlowApp() {
     if (!started) { voice.armAudio(); setStarted(true) }
     const chosen = targetFromUtterance(text)
     if (chosen) { confirmTarget(chosen); return }
+    // "추천해 봐"처럼 고르는 것을 맡기면 자칼이 고른다: 관리형이고 이미 연결된 GCP로 되짚는다(되짚는 문장이 대상을 말해 준다).
+    if (isRecommendRequest(text)) { confirmTarget('gcp'); return }
     setAskingTarget(true)
     sayIntro('open.jackal.askTarget')
   }

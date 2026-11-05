@@ -26,6 +26,11 @@ export function isMoveIntent(text: string): boolean {
   return MOVE.test(said) || targetFromUtterance(text) !== null
 }
 
+/** "추천해 줘 / 알아서 골라 줘"처럼 대상 선택을 자칼에게 맡기는 말 */
+export function isRecommendRequest(text: string): boolean {
+  return /(추천|골라줘|골라봐|알아서|아무거나|어디가좋|recommend|suggest|youchoose|yourpick|youdecide|おすすめ|お勧め|任せ|選んで)/.test(normalize(text))
+}
+
 /** 설정 화면에서 "좋아, 시작하자" */
 export function isStartCommand(text: string): boolean {
   return /(시작하자|시작해|시작할게|진행하자|진행해|가자|start|go ahead|始め|開始)/.test(text.toLowerCase().replace(/[.,!?~]/g, ''))

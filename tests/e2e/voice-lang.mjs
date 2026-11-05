@@ -104,6 +104,18 @@ const openPanel = async page => { if (await page.locator('.jv-panel').count() ==
   record('E 기본값 en: 응답 영어', await waitChat(page, /Yes\? I'm listening/))
   await context.close()
 }
+// F) 첫 화면: "추천해 봐"는 자칼이 GCP로 골라 되짚는다(같은 질문을 되풀이하지 않는다)
+{
+  const { page, context } = await open({ screen: 'ko', voice: 'ko', input: 'ko' })
+  await page.evaluate(t => window.__say(t), '헤이 자칼')
+  await page.waitForTimeout(2500)
+  await page.evaluate(t => window.__say(t), '추천해 봐')
+  await openPanel(page)
+  record('F 첫 화면 "추천해 봐" → GCP로 되짚는다', await waitChat(page, /GCP/))
+  const chat = await chatText(page)
+  record('F 되묻기("어디로 옮길까요")를 되풀이하지 않는다', !chat.some(x => /어디로 옮길까요/.test(x)), chat.slice(-2).join(' | ').slice(0, 100))
+  await context.close()
+}
 await browser.close()
 const failed = results.filter(r => !r.ok)
 console.log(`\n합계 ${results.length}건, 통과 ${results.length - failed.length}, 실패 ${failed.length}`)
