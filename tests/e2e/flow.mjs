@@ -25,7 +25,7 @@ const problems = []
 const note = message => console.log('  ' + message)
 const check = (ok, message) => { if (!ok) problems.push(message); console.log((ok ? '  ✓ ' : '  ✗ ') + message) }
 
-const browser = await chromium.launch()
+const browser = await chromium.launch(process.env.PW_CHANNEL ? { channel: process.env.PW_CHANNEL } : {})
 const page = await browser.newPage({ viewport: { width: 1536, height: 800 } })
 page.setDefaultTimeout(TIMEOUT)
 page.on('pageerror', error => problems.push('pageerror: ' + error))
@@ -47,9 +47,11 @@ try {
   }
   await press('.prompt-setup')
   note('소개 → 설정')
-  // 설정 화면: 대상을 GCP로 고르면 대상 리전 선택이 나온다(기본 ap-northeast-2).
+  // 설정 화면: 등록된 환경은 읽기 전용이다. 대상을 GCP로 고르면 플랫폼 기본 리전(asia-northeast3)이 보인다.
+  check(await page.locator('input[name=accessKeyId], input[name=agentId], select[name=destRegion]').count() === 0, '설정 화면에 AWS 키·에이전트 ID·리전 입력이 없다')
   await page.locator('[role=radio]').first().click()
-  check(await page.locator('select[name=destRegion]').inputValue() === 'asia-northeast3', 'GCP 선택 시 대상 리전 기본값 asia-northeast3')
+  await page.locator('.senv-card.is-selected[data-target=gcp]').waitFor()
+  check((await page.locator('.senv-card.is-selected').innerText()).includes('asia-northeast3'), 'GCP 선택 시 대상 리전 기본값 asia-northeast3')
   await press('.migration-next')
 
   await press('.analysis-next-area button')
