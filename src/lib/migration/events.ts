@@ -259,6 +259,69 @@ export type DataProgressData = {
 export type DataVerifyName = 'rows' | 'checksum'
 export type DataVerifyData = { name: DataVerifyName; state: 'running' | 'done' | 'failed'; source?: number; target?: number }
 
+/* ==== 데이터 이전 단계 상세 (data.preflight · data.phase · data.lsn · data.table · data.readiness) ====
+ * [가정: SSE 이벤트 이름·필드는 백엔드와 미정]. 값은 Finals 리허설(poc/demo · poc/cdc)을 따른다:
+ * Migration Network Preflight(check_cidr_overlap · check_route · probe_db_path · probe_large_transfer → run_network_preflight)
+ * → 스키마 덤프(pg_dump --schema-only + mig.marker) → 테이블별 초기 복사 → CDC 따라잡기 → 지연≈0 스트리밍.
+ * 문구는 담지 않는다: evidence·endpoint·LSN처럼 언어와 무관한 값만 온다.
+ */
+export type PreflightCheckName = 'cidr_overlap' | 'route' | 'db_path' | 'large_transfer'
+/** PENDING 대기 · RUNNING 검사 중 · SKIPPED 앞 검사 실패로 실행하지 않음 */
+export type PreflightStatus = 'PENDING' | 'RUNNING' | 'PASS' | 'FAIL' | 'UNKNOWN' | 'SKIPPED'
+/** probe_db_path의 연결 사슬: DNS → TCP → TLS → 인증 → SELECT 1 */
+export type DbPathStep = 'DNS' | 'TCP' | 'TLS' | 'AUTH' | 'QUERY'
+export type PreflightCheck = {
+  name: PreflightCheckName
+  status: PreflightStatus
+  /** 실패·확인 불가 코드(예: CIDR_OVERLAP, ROUTE_NOT_TUNNEL, DNS_FAILED, TCP_UNREACHABLE, TLS_FAILED, AUTH_FAILED, QUERY_FAILED) */
+  code: string | null
+  /** 증거 원문(mono로 그대로 보인다) */
+  evidence: string
+  checked_at?: string
+  tested_endpoint?: string
+  /** db_path: 연결 사슬 단계별 상태 */
+  steps?: Array<{ name: DbPathStep; status: 'PENDING' | 'PASS' | 'FAIL' | 'UNKNOWN' }>
+  /** large_transfer: 전송한 바이트 / 목표 바이트(기본 4 MiB, 최대 64 MiB) · 걸린 시간 · MTU 진단 */
+  bytes_done?: number
+  bytes_total?: number
+  elapsed_ms?: number
+  mtu?: 'NOT_ATTEMPTED' | 'PASS' | 'FAIL'
+}
+/** 이전 경로: AWS 원본 ↔ 대상 사이 사설 경로. wireguard(온프레미스 wg0) · cloud_vpn(새 클라우드 네트워크) */
+export type PreflightNetwork = {
+  source_cidr: string
+  target_cidr: string
+  path: { kind: 'wireguard' | 'cloud_vpn' | 'other'; name: string; cidr: string | null }
+  /** 원본 DB 주소(DNS 이름:포트)와 해석된 IP */
+  source_db: string
+  source_addr: string
+  /** 복제를 실행할 노드(검사 Pod가 뜨는 곳) */
+  replication_node: string
+  target_db: string
+  target_db_detail: string
+}
+/** run_network_preflight 결과 전체(매번 전체를 다시 보낸다: 같은 이벤트가 다시 와도 결과가 같다). */
+export type DataPreflightData = {
+  status: 'RUNNING' | 'PASS' | 'FAIL' | 'UNKNOWN'
+  checks: PreflightCheck[]
+  probe_location: string
+  /** 입력 지문: 입력(CIDR·엔드포인트·경로)이 바뀌면 달라진다. 다른 지문의 이전 PASS는 재사용하지 않는다. */
+  input_fingerprint: string | null
+  checked_at: string | null
+  /** may_start_data_migration: 같은 입력 지문의 PASS일 때만 true */
+  may_start: boolean
+  network: PreflightNetwork
+}
+/** preflight 사전 검사 · blocked 시작 차단 · schema 스키마 복사 · copy 초기 복사 · catchup 변경분 따라잡기 · streaming 지연≈0 유지 */
+export type DataPhase = 'preflight' | 'blocked' | 'schema' | 'copy' | 'catchup' | 'streaming'
+export type DataPhaseData = { phase: DataPhase }
+/** 원본 쓰기 위치(pg_current_wal_lsn)와 대상 재생 위치(replay LSN). 둘의 차이가 복제 지연이다. */
+export type DataLsnData = { source_lsn: string; target_lsn: string | null; lag_bytes: number; lag_ms: number | null }
+export type DataTableData = { name: string; rows_copied: number; rows_total: number; state: 'waiting' | 'copying' | 'copied' | 'matched' }
+/** 전환 가능 시점(1초마다): 가장 긴 트랜잭션 · 잠금 대기 · 초당 커밋. ready면 지연≈0이고 트래픽을 옮겨도 된다(게이트 1). */
+export type DataReadinessData = { longest_tx_ms: number; lock_waits: number; commits_per_sec: number; ready: boolean }
+/* ==== 데이터 이전 단계 상세 끝 ==== */
+
 /** 전환 조건 확인: 복제 지연·가장 긴 트랜잭션·초당 커밋을 보고 DB 전환이 가능한 시점인지 판단한다. */
 export type TrafficReadyData = { state: 'running' | 'done' | 'waiting'; lag_ms: number; longest_tx_ms: number; commits_per_sec: number }
 
@@ -338,6 +401,11 @@ export type MigrationEvent =
   | Base<'provision.check', ProvisionCheckData>
   | Base<'data.progress', DataProgressData>
   | Base<'data.verify', DataVerifyData>
+  | Base<'data.preflight', DataPreflightData>
+  | Base<'data.phase', DataPhaseData>
+  | Base<'data.lsn', DataLsnData>
+  | Base<'data.table', DataTableData>
+  | Base<'data.readiness', DataReadinessData>
   | Base<'traffic.ready', TrafficReadyData>
   | Base<'traffic.snapshot', TrafficSnapshotData>
   | Base<'cutover.step', CutoverStepData>

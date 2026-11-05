@@ -1,8 +1,9 @@
 import { targetOfRequest, type BackendPhase, type DraftEvent, type MigrationEvent, type StartRequest, type Target } from './events'
 import type { EnterContext, MigrationProvider, ProviderHost } from './provider'
-import { DATA_TICK_MS, TRAFFIC_READY_EVENTS, approvalTimeline, dataProgressAt, dueDataVerify, reportFor, timelineFor, type ScriptedPhase, type TimedDraft } from './script'
+import { TRAFFIC_READY_EVENTS, approvalTimeline, reportFor, timelineFor, type ScriptedPhase, type TimedDraft } from './script'
+import { DATA_LSN_TICK_MS, dataTickAt, dataTimeline } from './dataScript'
 import { TrafficSim } from './trafficSim'
-import { aiFixCount, deliveryFailDemo, digestMismatchDemo, reviewDemo, sandboxScenario } from '../demoConfig'
+import { aiFixCount, deliveryFailDemo, digestMismatchDemo, preflightScenario, reviewDemo, sandboxScenario } from '../demoConfig'
 
 /**
  * 백엔드 없이 지금까지와 똑같이 움직이게 하는 공급자. 단계 화면이 준비되면 그 단계의 대본(script.ts)을
@@ -85,22 +86,15 @@ export class MockProvider implements MigrationProvider {
         break
       }
       case 'data_copy': {
-        // 복제 시작부터 250ms마다 그 시점의 진행 값을 내보낸다(화면이 열려 있는 동안 계속).
+        // 사전 검사 → (PASS면) 스키마 → 초기 복사 → CDC → 스트리밍 대본(dataScript.ts)을 내보내고,
+        // 250ms마다 그 시점의 WAL 위치·지연(data.lsn)과 예전 진행 값(data.progress)을 보낸다(화면이 열려 있는 동안 계속).
+        const scenario = preflightScenario()
         const began = performance.now()
-        let readyAt = 0
-        let verifyCursor = 0
+        const stopScript = this.play(dataTimeline(this.target, scenario, Date.now()))
         const timer = window.setInterval(() => {
-          const data = dataProgressAt((performance.now() - began) / 1000)
-          this.emit({ type: 'data.progress', phase: 'data_copy', status: data.step === 'ready' ? 'done' : 'running', data })
-          // 복제가 준비되면 정합성 확인(행 수 → 체크섬)을 이어서 보낸다.
-          if (data.step === 'ready') {
-            if (!readyAt) readyAt = performance.now()
-            const due = dueDataVerify(performance.now() - readyAt, verifyCursor)
-            verifyCursor = due.cursor
-            for (const event of due.events) this.emit(event)
-          }
-        }, DATA_TICK_MS)
-        stop = () => window.clearInterval(timer)
+          for (const event of dataTickAt(performance.now() - began, scenario)) this.emit(event)
+        }, DATA_LSN_TICK_MS)
+        stop = () => { stopScript(); window.clearInterval(timer) }
         break
       }
       case 'traffic': {

@@ -39,6 +39,8 @@ export function buildAgentFacts(state: MigrationState, stage: string, stageLabel
   for (const check of state.provision.checks.slice(-2)) recent.push('준비 검사 ' + check.name + ' ' + check.state)
   if (state.data.current) recent.push('데이터 ' + state.data.current.step + ' ' + state.data.current.rows + '/' + state.data.current.total_rows + '행')
   for (const verify of state.data.verify.slice(-2)) recent.push('정합성 ' + verify.name + ' ' + verify.state)
+  if (state.data.preflight) recent.push('이전 경로 사전 검사 ' + state.data.preflight.status + state.data.preflight.checks.filter(check => check.code).map(check => ' ' + check.name + ':' + check.code).join(''))
+  if (state.data.phase) recent.push('데이터 단계 ' + state.data.phase)
   for (const log of state.traffic.logs.slice(0, 3).reverse()) recent.push('트래픽 ' + log.key)
   if (state.traffic.ready) recent.push('전환 조건 ' + state.traffic.ready.state)
   for (const item of state.cutover.handover.slice(-2)) recent.push('운영권 인계 ' + item.item + ' ' + item.state)
@@ -71,7 +73,7 @@ export function buildAgentFacts(state: MigrationState, stage: string, stageLabel
       rows: state.data.current?.rows ?? 0,
       totalRows: state.data.current?.total_rows ?? 0,
       lagMs: state.data.current?.lag_ms ?? null,
-      verifyDone: state.data.verify.some(item => item.name === 'checksum' && item.state === 'done'),
+      verifyDone: state.data.verify.some(item => item.name === 'checksum' && item.state === 'done') || (state.data.tables.length > 0 && state.data.tables.every(item => item.state === 'matched')),
     },
     traffic: {
       phase: snapshot?.phase ?? null,

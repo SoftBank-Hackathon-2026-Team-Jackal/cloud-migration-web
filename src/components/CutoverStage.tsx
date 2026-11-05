@@ -5,6 +5,7 @@ import StageShell from './StageShell'
 import ProposalTag from './ProposalTag'
 import CutoverDiagram from './CutoverDiagram'
 import LiveRequests from './LiveRequests'
+import MigrationLanes from './MigrationLanes'
 import MigrationReport from './MigrationReport'
 import { ArriveMorph } from './ScreenFx'
 import { runTransition } from '../lib/particleHandoff'
@@ -129,6 +130,7 @@ function CutoverBody({ ready, target, phase, setPhase, onRestart, onComplete }: 
         : <p className="flow-note">{t('cutover.measureNote')}</p>}
     </aside>
 
+    <MigrationLanes stage="cutover" />
     <div className="flow-footer">
       <span>{measured ? t('cutover.foot.done') : phase === 'verify' ? t('cutover.foot.verify') : t('cutover.foot.running')}</span>
       <button type="button" className="flow-primary" disabled={!measured} onClick={() => runTransition(() => { setPhase('done'); onComplete() })}>{t('cutover.next')} <span aria-hidden="true">→</span></button>

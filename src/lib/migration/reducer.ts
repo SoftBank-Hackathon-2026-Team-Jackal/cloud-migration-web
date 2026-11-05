@@ -6,10 +6,13 @@ import type {
   AnalysisFindingData, ApprovalDecisionData, ApprovalRequiredData, DataVerifyData, HandoverData, TrafficReadyData, BackendPhase, BuildCheckData, BuildFixData, BuildResultData, BuildReviewData, PlanPreviewData, PlanReadyData, ProvisionCheckData, CutoverResultData,
   DataProgressData, ErrorData, MigrationEvent, MigrationStatus, PlanStepData, ProvisionResourceData,
   ReportData, TrafficNote, TrafficSnapshotData,
+  DataLsnData, DataPhase, DataPreflightData, DataReadinessData, DataTableData,
   SandboxAttemptData, SandboxDoneData, SandboxEnvData, SandboxStep, SandboxStepData, SandboxTestsData,
 } from './events'
 
 export const LAG_HISTORY_POINTS = 48
+/** 복제 지연 오실로스코프가 그리는 표본 수(data.lsn, 250ms마다 → 약 40초) */
+export const LAG_TRACE_POINTS = 160
 const TRAFFIC_LOG_LIMIT = 30
 
 export type TrafficLogEntry = { id: number; at: string; key: Exclude<TrafficNote['key'], 'restart'>; params: Record<string, string | number> }
@@ -31,7 +34,11 @@ export type MigrationState = {
   /** decision: 승인 결정의 접수·전달·실행 상태(approval.decision 또는 승인 API 응답). 전달 전에는 완료가 아니다. */
   approval: { required: boolean; excluded: string[]; rollbackPolicy: string; cutoverRequired: boolean; decision: ApprovalDecisionData | null }
   provision: { resources: ProvisionResourceData[]; checks: ProvisionCheckData[] }
-  data: { current: DataProgressData | null; lagHistory: number[]; verify: DataVerifyData[] }
+  /** preflight·phase·lsn·lagTrace·tables·readiness: 데이터 이전 단계 상세(사전 검사 → 스키마 → 초기 복사 → CDC → 스트리밍) [가정] */
+  data: {
+    current: DataProgressData | null; lagHistory: number[]; verify: DataVerifyData[]
+    preflight: DataPreflightData | null; phase: DataPhase | null; lsn: DataLsnData | null; lagTrace: number[]; tables: DataTableData[]; readiness: DataReadinessData | null
+  }
   traffic: { snapshot: TrafficSnapshotData | null; logs: TrafficLogEntry[]; logCounter: number; ready: TrafficReadyData | null }
   cutover: { doneSteps: number; verifying: boolean; results: CutoverResultData[]; handover: HandoverData[] }
   report: ReportData | null
@@ -50,7 +57,7 @@ export const initialState: MigrationState = {
   plan: { steps: [], ready: false, meta: null, preview: null },
   approval: { required: false, excluded: [], rollbackPolicy: '', cutoverRequired: false, decision: null },
   provision: { resources: [], checks: [] },
-  data: { current: null, lagHistory: [], verify: [] },
+  data: { current: null, lagHistory: [], verify: [], preflight: null, phase: null, lsn: null, lagTrace: [], tables: [], readiness: null },
   traffic: { snapshot: null, logs: [], logCounter: 0, ready: null },
   cutover: { doneSteps: 0, verifying: false, results: [], handover: [] },
   report: null,
@@ -177,6 +184,24 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
       if (index < 0) verify.push(event.data); else verify[index] = event.data
       return { ...next, data: { ...next.data, verify } }
     }
+    // ---- 데이터 이전 단계 상세 ----
+    case 'data.preflight':
+      return { ...next, data: { ...next.data, preflight: event.data } }
+    case 'data.phase':
+      return { ...next, data: { ...next.data, phase: event.data.phase } }
+    case 'data.lsn': {
+      const lag = event.data.lag_ms
+      const lagTrace = lag === null ? next.data.lagTrace : [...next.data.lagTrace.slice(-(LAG_TRACE_POINTS - 1)), lag]
+      return { ...next, data: { ...next.data, lsn: event.data, lagTrace } }
+    }
+    case 'data.table': {
+      const tables = next.data.tables.slice()
+      const index = tables.findIndex(item => item.name === event.data.name)
+      if (index < 0) tables.push(event.data); else tables[index] = event.data
+      return { ...next, data: { ...next.data, tables } }
+    }
+    case 'data.readiness':
+      return { ...next, data: { ...next.data, readiness: event.data } }
     case 'traffic.ready':
       return { ...next, traffic: { ...next.traffic, ready: event.data } }
     case 'traffic.snapshot':

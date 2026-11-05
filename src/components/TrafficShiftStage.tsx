@@ -4,6 +4,7 @@ import StageShell from './StageShell'
 import ProposalTag from './ProposalTag'
 import LiveRequests from './LiveRequests'
 import TrafficCanvas from './TrafficCanvas'
+import MigrationLanes from './MigrationLanes'
 import type { Target } from '../lib/stages'
 import { useT, type MsgKey } from '../lib/i18n'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
@@ -164,6 +165,7 @@ function TrafficBody({ ready, target, onNext }: { ready: boolean; target: Target
       </div>
     </aside>
 
+    <MigrationLanes stage="traffic" />
     <div className="flow-footer flow-footer-wide traffic-actions">
       <div className="traffic-actions-left">
         <button type="button" className="flow-secondary" onClick={rollback} disabled={phase === 'rolledback'}>{t('traffic.btn.rollback')}</button>

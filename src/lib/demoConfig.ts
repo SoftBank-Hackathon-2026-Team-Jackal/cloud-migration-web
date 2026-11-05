@@ -36,6 +36,18 @@ export function digestMismatchDemo(): boolean {
   return flag('digest', 'mismatch')
 }
 
+export type PreflightDemo = 'pass' | 'route' | 'unknown'
+/**
+ * 시연용 ?preflight=…: 데이터 이전 전 네트워크 사전 검사 결과를 고른다(기본 pass).
+ *  pass 통과 → 초기 복사·CDC 시작 · route 복제 경로가 터널 밖(ROUTE_NOT_TUNNEL)이라 시작 차단
+ *  unknown DB 연결 사슬의 TLS를 확인할 수 없어(UNKNOWN) 시작 차단
+ */
+export function preflightScenario(): PreflightDemo {
+  if (typeof window === 'undefined') return 'pass'
+  const value = new URLSearchParams(window.location.search).get('preflight')
+  return value === 'route' || value === 'unknown' ? value : 'pass'
+}
+
 /** 시연용 ?delivery=fail: 승인은 기록되지만 첫 전달이 실패한다(다시 전달하면 성공). */
 export function deliveryFailDemo(): boolean {
   return flag('delivery', 'fail')
