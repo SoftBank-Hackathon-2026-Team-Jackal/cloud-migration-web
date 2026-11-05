@@ -11,7 +11,7 @@
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:net'
 
-const ALL = ['flow', 'opening', 'review', 'agent', 'github']
+const ALL = ['flow', 'opening', 'review', 'agent', 'github', 'settings']
 const asked = process.argv.slice(2)
 const suites = asked.length === 0 || asked.includes('all') ? ALL : asked
 const unknown = suites.filter(name => !ALL.includes(name) && name !== 'sse-states')
