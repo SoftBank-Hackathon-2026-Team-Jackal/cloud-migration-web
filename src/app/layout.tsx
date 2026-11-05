@@ -3,6 +3,7 @@ import './globals.css'
 import './flow.css'
 import './voice.css'
 import './polish.css'
+import './data.css'
 import './plan.css'
 import { I18nProvider } from '../lib/i18n'
 
