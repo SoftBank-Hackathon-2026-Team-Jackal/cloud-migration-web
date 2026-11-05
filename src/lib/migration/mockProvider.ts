@@ -3,7 +3,7 @@ import type { EnterContext, MigrationProvider, ProviderHost } from './provider'
 import { TRAFFIC_READY_EVENTS, trafficPrepareTimeline, approvalTimeline, reportFor, timelineFor, type ScriptedPhase, type TimedDraft } from './script'
 import { DATA_LSN_TICK_MS, dataTickAt, dataTimeline } from './dataScript'
 import { TrafficSim } from './trafficSim'
-import { aiFixCount, deliveryFailDemo, digestMismatchDemo, preflightScenario, reviewDemo, sandboxScenario } from '../demoConfig'
+import { aiFixCount, analysisItemsDemo, deliveryFailDemo, digestMismatchDemo, preflightScenario, reviewDemo, sandboxScenario } from '../demoConfig'
 
 /**
  * 백엔드 없이 지금까지와 똑같이 움직이게 하는 공급자. 단계 화면이 준비되면 그 단계의 대본(script.ts)을
@@ -45,7 +45,7 @@ export class MockProvider implements MigrationProvider {
   }
 
   private scripted(phase: ScriptedPhase) {
-    return timelineFor(phase, { target: this.target, aiFixes: aiFixCount(), revision: this.revision, review: this.reviewPending, retried: this.retried, digestMismatch: digestMismatchDemo(), sandbox: sandboxScenario() })
+    return timelineFor(phase, { target: this.target, aiFixes: aiFixCount(), revision: this.revision, review: this.reviewPending, retried: this.retried, digestMismatch: digestMismatchDemo(), sandbox: sandboxScenario(), analysisItems: analysisItemsDemo() })
   }
 
   start(request: StartRequest) {

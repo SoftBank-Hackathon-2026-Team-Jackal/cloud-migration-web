@@ -195,3 +195,11 @@
   .plan-foot{flex-wrap:wrap}
 }
 @media(prefers-reduced-motion:reduce){.plan-reveal,.topo-reveal{transition:none}}
+
+/* 백엔드 Preview의 applied_defaults 줄 · 정해야 할 값 · 비용 탭 */
+.plan-default{margin-left:6px;padding:0 6px;border:1px solid #d2d2d2;border-radius:999px;color:#6b6b6b;font-size:10px;font-style:normal;font-weight:600}
+.plan-issue.is-pending{color:#444;border-left:2px dashed #9a9a9a;padding-left:8px}
+.plan-cost{max-width:640px;padding:4px 2px 0;overflow-y:auto}
+.plan-chip.is-EXISTING{border-color:#cfcfcf;color:#5c5c5c}
+.plan-chip.is-UPDATE{border-color:#141414;color:#141414}
+.plan-chip.is-DELETE{border:1px solid #141414;color:#141414;text-decoration:line-through}

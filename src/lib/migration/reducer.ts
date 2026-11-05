@@ -1,14 +1,16 @@
 /**
- * 이벤트를 화면이 읽는 상태로 바꾸는 reducer. 순수 함수만 두고 React에 의존하지 않는다(런타임 import 없음).
+ * 이벤트를 화면이 읽는 상태로 바꾸는 reducer. 순수 함수만 두고 React에 의존하지 않는다(런타임 import는 순수 모듈 events·previewAdapter뿐).
  * 같은 id의 이벤트는 덮어쓰므로(upsert) 재접속·단계 재전송으로 같은 이벤트가 다시 와도 결과가 같다.
  */
 import type {
-  AnalysisFindingData, ApprovalDecisionData, ApprovalRequiredData, DataVerifyData, HandoverData, TrafficReadyData, BackendPhase, BuildCheckData, BuildFixData, BuildResultData, BuildReviewData, PlanPreviewData, PlanReadyData, ProvisionCheckData, CutoverResultData,
+  AnalysisFindingData, AnalysisScanData, BackendPreviewData, ApprovalDecisionData, ApprovalRequiredData, DataVerifyData, HandoverData, TrafficReadyData, BackendPhase, BuildCheckData, BuildFixData, BuildResultData, BuildReviewData, PlanPreviewData, PlanReadyData, ProvisionCheckData, CutoverResultData,
   DataProgressData, ErrorData, MigrationEvent, MigrationStatus, PlanStepData, ProvisionResourceData,
   ReportData, TrafficNote, TrafficPrepareData, TrafficSnapshotData,
   DataLsnData, DataPhase, DataPreflightData, DataReadinessData, DataTableData,
   SandboxAttemptData, SandboxDoneData, SandboxEnvData, SandboxStep, SandboxStepData, SandboxTestsData,
 } from './events'
+import { isBackendPreview, normalizeEvidence } from './events.ts'
+import { adaptBackendPreview } from './previewAdapter.ts'
 
 export const LAG_HISTORY_POINTS = 48
 /** 복제 지연 오실로스코프가 그리는 표본 수(data.lsn, 250ms마다 → 약 40초) */
@@ -27,15 +29,18 @@ export type MigrationState = {
   /** 연결이 끊겨 다시 연결하는 중이면 reconnecting */
   connection: 'connected' | 'reconnecting'
   lastSeq: number
-  analysis: { findings: AnalysisFindingData[]; done: boolean }
+  /** findings: 예전 방식(항목마다 한 건) · scans: 스캔 Activity가 끝날 때마다 한 건(백엔드 방식, 개수 묶음) */
+  analysis: { findings: AnalysisFindingData[]; scans: AnalysisScanData[]; done: boolean }
   /** attempt: 지금 몇 번째 시도인지(build.check·build.result에서). review: 사람 검토 대기 */
   build: { checks: Record<string, BuildCheckData>; lastCheck: BuildCheckData | null; fixes: BuildFixData[]; attempt: number | null; result: BuildResultData | null; review: BuildReviewData | null }
   /** 샌드박스 검증 루프: steps[트랙 순번][단계], attempts는 판정이 끝난 트랙들 */
   sandbox: { env: SandboxEnvData | null; steps: Record<number, Partial<Record<SandboxStep, SandboxStepData['state']>>>; tests: SandboxTestsData | null; attempts: SandboxAttemptData[]; done: SandboxDoneData | null }
   /** preview: 계획 미리보기(만들 리소스·재매핑·보안 규칙·검증). 없으면 화면은 매핑 항목만 보인다. */
-  plan: { steps: PlanStepData[]; ready: boolean; meta: PlanReadyData | null; preview: PlanPreviewData | null }
+  /** backend: 백엔드 Preview 원본. 오면 preview는 이 값과 매핑·계획 완료 값으로 다시 만든다(previewAdapter). */
+  plan: { steps: PlanStepData[]; ready: boolean; meta: PlanReadyData | null; preview: PlanPreviewData | null; backend: BackendPreviewData | null }
   /** decision: 승인 결정의 접수·전달·실행 상태(approval.decision 또는 승인 API 응답). 전달 전에는 완료가 아니다. */
-  approval: { required: boolean; excluded: string[]; rollbackPolicy: string; cutoverRequired: boolean; decision: ApprovalDecisionData | null }
+  /** pendingDecisions: 승인 요청이 보낸 정해야 할 값(code). 계획 미리보기의 pending_decisions와 함께 요약에 쓴다. */
+  approval: { required: boolean; excluded: string[]; rollbackPolicy: string; pendingDecisions: string[]; cutoverRequired: boolean; decision: ApprovalDecisionData | null }
   provision: { resources: ProvisionResourceData[]; checks: ProvisionCheckData[] }
   /** preflight·phase·lsn·lagTrace·tables·readiness: 데이터 이전 단계 상세(사전 검사 → 스키마 → 초기 복사 → CDC → 스트리밍) [가정] */
   data: {
@@ -55,11 +60,11 @@ export const initialState: MigrationState = {
   status: 'idle',
   connection: 'connected',
   lastSeq: 0,
-  analysis: { findings: [], done: false },
+  analysis: { findings: [], scans: [], done: false },
   build: { checks: {}, lastCheck: null, fixes: [], attempt: null, result: null, review: null },
   sandbox: { env: null, steps: {}, tests: null, attempts: [], done: null },
-  plan: { steps: [], ready: false, meta: null, preview: null },
-  approval: { required: false, excluded: [], rollbackPolicy: '', cutoverRequired: false, decision: null },
+  plan: { steps: [], ready: false, meta: null, preview: null, backend: null },
+  approval: { required: false, excluded: [], rollbackPolicy: '', pendingDecisions: [], cutoverRequired: false, decision: null },
   provision: { resources: [], checks: [] },
   data: { current: null, lagHistory: [], verify: [], preflight: null, phase: null, lsn: null, lagTrace: [], tables: [], readiness: null },
   traffic: { snapshot: null, logs: [], logCounter: 0, ready: null, prepare: null, trace: [], startedAt: null },
@@ -134,6 +139,11 @@ export function mergeDecision(current: ApprovalDecisionData | null, incoming: Ap
   return DELIVERY_RANK[incoming.delivery_status] >= DELIVERY_RANK[current.delivery_status] ? incoming : { ...current, execution_status: incoming.execution_status }
 }
 
+/** 백엔드 Preview가 와 있으면 매핑·계획 완료 값이 바뀔 때마다 화면 미리보기를 다시 만든다(원본 유지·Digest 고정을 매핑에서 채우므로). */
+function withPreview(plan: MigrationState['plan'], digest: string | null | undefined): MigrationState['plan'] {
+  return plan.backend ? { ...plan, preview: adaptBackendPreview(plan.backend, { steps: plan.steps, meta: plan.meta, digest }) } : plan
+}
+
 function fail(state: MigrationState, phase: BackendPhase, failure: Failure): MigrationState {
   return { ...state, status: 'failed', failures: { ...state.failures, [phase]: failure } }
 }
@@ -151,6 +161,10 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
       return next
     case 'analysis.finding':
       return { ...next, analysis: { ...next.analysis, findings: upsert(next.analysis.findings, event.data) } }
+    case 'analysis.scan': {
+      const scan = { ...event.data, items: event.data.items ?? [], evidence: (event.data.evidence ?? []).map(normalizeEvidence) }
+      return { ...next, analysis: { ...next.analysis, scans: upsert(next.analysis.scans, scan) } }
+    }
     case 'analysis.done':
       return { ...next, analysis: { ...next.analysis, done: true } }
     case 'build.check':
@@ -175,16 +189,20 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
     case 'build.fix':
       return { ...next, build: { ...next.build, fixes: upsert(next.build.fixes, event.data) } }
     case 'plan.step':
-      return { ...next, plan: { ...next.plan, steps: upsert(next.plan.steps, event.data) } }
-    case 'plan.preview':
-      return { ...next, plan: { ...next.plan, preview: event.data } }
+      return { ...next, plan: withPreview({ ...next.plan, steps: upsert(next.plan.steps, event.data) }, next.build.result?.digest) }
+    case 'plan.preview': {
+      const data = event.data
+      return { ...next, plan: isBackendPreview(data)
+        ? withPreview({ ...next.plan, backend: data }, next.build.result?.digest)
+        : { ...next.plan, backend: null, preview: data } }
+    }
     case 'plan.ready':
-      return { ...next, plan: { ...next.plan, ready: true, meta: Object.keys(event.data).length > 0 ? event.data : next.plan.meta } }
+      return { ...next, plan: withPreview({ ...next.plan, ready: true, meta: Object.keys(event.data).length > 0 ? event.data : next.plan.meta }, next.build.result?.digest) }
     case 'approval.required': {
       const data: ApprovalRequiredData = event.data
       const approval = data.gate === 'cutover'
         ? { ...next.approval, cutoverRequired: true }
-        : { ...next.approval, required: true, excluded: data.excluded, rollbackPolicy: data.rollback_policy }
+        : { ...next.approval, required: true, excluded: data.excluded ?? [], rollbackPolicy: data.rollback_policy ?? '', pendingDecisions: (data.pending_decisions ?? []).map(issue => issue.code) }
       return { ...next, status: 'waiting', approval }
     }
     case 'approval.decision':

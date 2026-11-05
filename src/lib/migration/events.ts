@@ -44,6 +44,39 @@ export type AnalysisFindingData = {
   detail: string
 }
 
+/* ==== 분석 스캔 배치(analysis.scan) · 근거 종류 [백엔드 정렬] ====
+ * 백엔드는 항목마다 이벤트를 내지 못한다(매핑은 submit_mapping으로 한 번에 온다). 대신 스캔 Activity
+ * (fetch_source · scan_manifests · scan_code · scan_aws_infra · scan_network)가 끝날 때마다 한 번, 찾은 개수를 묶어 보낼 수 있다.
+ * 진행률은 n/m(끝난 스캔 수 / 전체 스캔 수)으로만 정확하다. 근거 종류는 cmp_contracts.analysis.Evidence.kind와 같다.
+ */
+export type EvidenceKind = 'CODE' | 'MANIFEST' | 'CLOUD_RESOURCE' | 'IAM_POLICY' | 'CLOUDTRAIL' | 'CONFIG'
+export const EVIDENCE_KINDS: EvidenceKind[] = ['CODE', 'MANIFEST', 'CONFIG', 'CLOUD_RESOURCE', 'IAM_POLICY', 'CLOUDTRAIL']
+/** 백엔드가 늘 verified=false로 두는 근거(읽기 전용 조회 결과라 실제 사용을 확인하지 않는다) */
+export const ALWAYS_UNVERIFIED: EvidenceKind[] = ['CLOUD_RESOURCE', 'IAM_POLICY', 'CLOUDTRAIL']
+/** locator: 파일:줄 · ARN · 매니페스트 경로처럼 언어와 무관한 위치 값 */
+export type Evidence = { kind: EvidenceKind; locator: string; verified: boolean }
+/** 스캔이 찾은 것 하나의 개수. sku는 인스턴스 유형처럼 요금 추정에 쓰는 값(있을 때만). */
+export type ScanItem = { key: string; n: number; sku?: string }
+export type AnalysisScanData = {
+  /** 스캔 Activity 실행 id(같은 id가 다시 오면 덮어쓴다) */
+  id: string
+  /** Temporal Activity 이름. 화면은 이 이름으로 자기 문구를 고른다(모르는 이름은 그대로). */
+  activity: string
+  stream: 'infrastructure' | 'code'
+  /** n/m: 이 흐름에서 끝난 스캔 수 / 전체 스캔 수 */
+  completed: number
+  total: number
+  items: ScanItem[]
+  evidence: Evidence[]
+}
+/** 예전 방식(항목마다 한 건)의 근거 칩 → Evidence.kind */
+export const KIND_OF_METHOD: Record<ScanMethod, EvidenceKind> = { code: 'CODE', iam: 'IAM_POLICY', trail: 'CLOUDTRAIL', config: 'CONFIG' }
+/** 서버가 보낸 근거를 맞춘다: CLOUD_RESOURCE·IAM_POLICY·CLOUDTRAIL은 언제나 미확인이다. */
+export function normalizeEvidence(evidence: Evidence): Evidence {
+  return { kind: evidence.kind, locator: evidence.locator ?? '', verified: ALWAYS_UNVERIFIED.includes(evidence.kind) ? false : !!evidence.verified }
+}
+/* ==== 분석 스캔 배치 끝 ==== */
+
 export type CheckState = 'running' | 'failed' | 'fixing' | 'recheck' | 'done'
 export type BuildCheckData = { id: string; state: CheckState; fixed?: number; attempt?: number }
 
@@ -127,8 +160,8 @@ export type PlanStepData = {
 /** 원본·대상 환경 이름(예: AWS · EKS · ap-northeast-2). 문구가 아니라 값이다. */
 export type PlanEnvironment = { provider: string; platform: string; location: string }
 export type PlanResourceGroup = 'network' | 'compute' | 'data' | 'other'
-/** 새로 만듦 · Digest 고정(검증한 이미지) · 원본 유지 */
-export type PlanResourceChange = 'CREATE' | 'PINNED' | 'KEEP_SOURCE'
+/** 새로 만듦 · Digest 고정(검증한 이미지) · 원본 유지 · 바꿈 · 지움 · 기존 사용(대상에 이미 있다) */
+export type PlanResourceChange = 'CREATE' | 'PINNED' | 'KEEP_SOURCE' | 'UPDATE' | 'DELETE' | 'EXISTING'
 /** 만들 리소스 한 줄. name·detail이 비면 화면이 id로 자기 문구를 쓴다. size·size_detail은 값 그대로 보인다. */
 export type PlanResource = {
   id: string
@@ -141,6 +174,13 @@ export type PlanResource = {
   kind?: PlanNodeKind
   /** 이 리소스에 걸린 경고(검증 경고와 같은 값이면 하나로 합쳐 보인다) */
   warning?: string
+  /** 백엔드 Preview의 resource_type·quantity(어댑터가 옮긴 값). 요금 추정이 읽는다. */
+  resource_type?: string
+  quantity?: number
+  /** 백엔드 ResourceChange.name(예: demo-gke). 화면 사전에 설명이 없을 때 보조 설명으로 보인다. */
+  backend_name?: string
+  /** Preview의 applied_defaults에서 온 줄(사용자가 정하지 않아 기본값을 쓴 리소스) */
+  defaulted?: boolean
 }
 /** 환경변수 재매핑. 비밀값은 원문 없이 참조(to)만 온다. */
 export type EnvRemap = { key: string; from: string; to: string; secret: boolean; keep?: boolean }
@@ -166,18 +206,56 @@ export type PlanRollout = {
 export type CostLine = { id: string; label?: string; source_usd: number | null; target_usd: number | null; excluded?: boolean }
 /** 고정 요금 추정 [가정]. credits_usd는 대상 쪽에 적용되는 월 크레딧(예: GKE 클러스터 하나 무료), basis는 가격 조회 근거. */
 export type CostEstimate = { currency: 'USD'; lines: CostLine[]; credits_usd?: number; basis?: string }
+/**
+ * 화면이 읽는 계획 미리보기. 백엔드 Preview(BackendPreviewData)는 previewAdapter가 이 모양으로 옮긴다.
+ * source·target·env_remap·security_rules는 Preview에 없고 앱 Values·계획 입력에서 오므로 비어 있을 수 있다(화면은 그 칸을 숨긴다).
+ */
 export type PlanPreviewData = {
   plan_id: string
   revision: number
-  source: PlanEnvironment
-  target: PlanEnvironment
+  source?: PlanEnvironment
+  target?: PlanEnvironment
   resources: PlanResource[]
   env_remap: EnvRemap[]
   security_rules: SecurityRule[]
   validation: { errors: PlanIssue[]; warnings: PlanIssue[] }
+  /** 사람이 정해야 승인할 수 있는 값(Preview pending_decisions, id = code) */
+  pending_decisions?: PlanIssue[]
+  manifest_digest?: string
   rollout?: PlanRollout
   cost?: CostEstimate
 }
+
+/* ==== 백엔드 Preview(cmp_contracts.plan.Preview) ==== */
+export type PreviewResourceType = 'NETWORK' | 'CLUSTER' | 'NODE' | 'APP' | 'DATABASE' | 'STORAGE' | 'INGRESS'
+export type PreviewAction = 'CREATE' | 'UPDATE' | 'DELETE' | 'READ' | 'NO_CHANGE'
+/** ResourceChange. size는 검토된 표시용 문자열(비밀값·Terraform 원문 없음). */
+export type PreviewChange = { resource_type: PreviewResourceType | (string & {}); action: PreviewAction | (string & {}); name: string; quantity?: number | null; size?: string | null }
+/** ValidationIssue: code(예: CLEANUP_POLICY_REQUIRED) · path · message */
+export type ValidationIssue = { code: string; path: string; message: string }
+/**
+ * 백엔드 Preview 그대로 + 프론트 감싸기 [가정]: plan_id·revision·source·target·env_remap·security_rules는
+ * Preview에 없어 계획 입력·앱 Values에서 따로 채운다(없어도 된다).
+ */
+export type BackendPreviewData = {
+  contract_version?: '1'
+  manifest_digest: string
+  changes: PreviewChange[]
+  applied_defaults: PreviewChange[]
+  warnings: ValidationIssue[]
+  errors: ValidationIssue[]
+  pending_decisions: ValidationIssue[]
+  plan_id?: string
+  revision?: number
+  source?: PlanEnvironment
+  target?: PlanEnvironment
+  env_remap?: EnvRemap[]
+  security_rules?: SecurityRule[]
+}
+export function isBackendPreview(data: PlanPreviewData | BackendPreviewData): data is BackendPreviewData {
+  return Array.isArray((data as BackendPreviewData).changes)
+}
+/* ==== 백엔드 Preview 끝 ==== */
 
 const LEGACY_GRADE: Record<string, Grade> = { direct: 'DIRECT', convert: 'API_DIFF', partial: 'PARTIAL', none: 'NONE' }
 const GRADES: Grade[] = ['DIRECT', 'API_DIFF', 'PARTIAL', 'NONE']
@@ -210,6 +288,8 @@ export type PlanReadyData = { plan_id?: string; revision?: number; template_vers
 export type ApprovalRequiredData = {
   excluded: string[]
   rollback_policy: string
+  /** 승인 전에 정해야 할 값(백엔드 Preview pending_decisions와 같은 모양). 제외 범위·롤백 정책 문구의 근거다. */
+  pending_decisions?: ValidationIssue[]
   /** 두 번째 승인(DB 전환)이면 'cutover'. 비어 있으면 계획 승인이다. */
   gate?: 'cutover'
 }
@@ -425,6 +505,7 @@ type Base<Type extends string, Data> = {
 export type MigrationEvent =
   | Base<'snapshot', SnapshotData>
   | Base<'analysis.finding', AnalysisFindingData>
+  | Base<'analysis.scan', AnalysisScanData>
   | Base<'analysis.done', Record<string, never>>
   | Base<'build.check', BuildCheckData>
   | Base<'build.fix', BuildFixData>
@@ -437,7 +518,7 @@ export type MigrationEvent =
   | Base<'sandbox.attempt', SandboxAttemptData>
   | Base<'sandbox.done', SandboxDoneData>
   | Base<'plan.ready', PlanReadyData>
-  | Base<'plan.preview', PlanPreviewData>
+  | Base<'plan.preview', PlanPreviewData | BackendPreviewData>
   | Base<'approval.required', ApprovalRequiredData>
   | Base<'approval.decision', ApprovalDecisionData>
   | Base<'provision.resource', ProvisionResourceData>

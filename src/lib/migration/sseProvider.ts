@@ -1,4 +1,4 @@
-import { normalizePlanStep, startRequestFor, type ApprovalDecisionData, type BackendPhase, type ErrorData, type MigrationEvent, type PlanReadyData, type StartRequest } from './events.ts'
+import { isBackendPreview, normalizePlanStep, startRequestFor, type ApprovalDecisionData, type BackendPhase, type ErrorData, type MigrationEvent, type PlanReadyData, type StartRequest } from './events.ts'
 import type { EnterContext, MigrationProvider, ProviderHost } from './provider'
 import type { ReportData } from './events'
 import type { SseStartMode } from './config'
@@ -293,7 +293,7 @@ export class SseProvider implements MigrationProvider {
 /**
  * 서버 값을 화면이 읽는 모양으로 맞춘다 [가정: 백엔드 계약 미정].
  * - plan.step: 예전 등급(direct/convert/none)과 빠진 처리·원본 유지·검증 상태를 채운다.
- * - plan.preview: 빠진 목록은 빈 목록으로.
+ * - plan.preview: 빠진 목록은 빈 목록으로(백엔드 Preview 모양도 받는다).
  * - traffic.prepare·traffic.snapshot [가정]: 빠진 목록은 빈 목록으로.
  * - snapshot 안의 이벤트도 같은 규칙으로.
  */
@@ -303,6 +303,8 @@ export function normalizeEvent(event: MigrationEvent): MigrationEvent {
       return { ...event, data: normalizePlanStep(event.data) }
     case 'plan.preview': {
       const data = event.data
+      // 백엔드 Preview 모양은 reducer가 매핑과 함께 옮긴다(previewAdapter). 빠진 목록만 채운다.
+      if (isBackendPreview(data)) return { ...event, data: { ...data, changes: data.changes ?? [], applied_defaults: data.applied_defaults ?? [], warnings: data.warnings ?? [], errors: data.errors ?? [], pending_decisions: data.pending_decisions ?? [] } }
       return { ...event, data: {
         ...data,
         resources: data.resources ?? [],

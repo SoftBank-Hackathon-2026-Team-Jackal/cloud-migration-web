@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useT, useTOr, type MsgKey } from '../lib/i18n'
 import type { Target } from '../lib/stages'
-import { approvalFacts, planWarnings } from '../lib/migration/planModel'
+import { SOURCE_FALLBACK, approvalFacts, costViewOf, planWarnings, targetEnvOf } from '../lib/migration/planModel'
 import CostCompare from './CostCompare'
 import GovernanceMatrix from './GovernanceMatrix'
 import PlanTopology from './PlanTopology'
@@ -50,8 +50,8 @@ export default function ApprovalStage({ target, onApprove, onCancel, onRevise }:
   const plan = state.plan.meta
   const preview = state.plan.preview
   const facts = approvalFacts(state)
-  const source = placeText(tOr, preview?.source ?? { provider: 'AWS', platform: 'EKS', location: 'ap-northeast-2' })
-  const destination = preview ? placeText(tOr, preview.target) : { provider: targetName, place: '' }
+  const source = placeText(tOr, preview?.source ?? SOURCE_FALLBACK)
+  const destination = preview?.target ? placeText(tOr, preview.target) : { provider: targetName, place: preview ? placeText(tOr, targetEnvOf(preview, target)).place : '' }
   const route = (side: { provider: string; place: string }) => [side.provider, side.place].filter(Boolean).join(' · ')
 
   // ---- 요약(모두 받은 데이터에서) ----
@@ -68,21 +68,26 @@ export default function ApprovalStage({ target, onApprove, onCancel, onRevise }:
   // '이름 · 보조 설명' 중 이름만(요약 한 줄이 길어지지 않게)
   const dbName = facts.database ? stepText(tOr, facts.database, target, 'before').split(' · ')[0] : ''
   const data = !facts.database ? (facts.hasPlan ? t('approval.val.noData') : none)
-    : facts.dataMethod === 'DUMP_CDC' ? t('approval.val.dataCdc', { db: dbName })
-      : facts.dataMethod ? dbName + ' · ' + facts.dataMethod : t('approval.val.dataUnknown', { db: dbName })
+    : facts.dataMethod.value === 'DUMP_CDC' ? t('approval.val.dataCdc', { db: dbName })
+      : facts.dataMethod.value ? dbName + ' · ' + facts.dataMethod.value : t('approval.val.dataUnknown', { db: dbName })
   const method = facts.traffic.method ? tOr('approval.method.' + facts.traffic.method, facts.traffic.method) : ''
   const traffic = t('approval.val.traffic', { steps: facts.traffic.steps.join(' → ') }) + (method ? ' · ' + method : '')
-  const pause = facts.writePauseMs === null ? t('approval.val.pauseUnknown')
-    : t('approval.val.pauseMs', { s: facts.writePauseMs < 1000 ? (facts.writePauseMs / 1000).toFixed(1) : Math.round(facts.writePauseMs / 1000) })
+  const pauseMs = facts.writePause.ms
+  const pause = t('approval.val.pauseMs', { s: pauseMs < 1000 ? (pauseMs / 1000).toFixed(1) : Math.round(pauseMs / 1000) })
+  // 롤백: 승인 요청의 정책 문구 → 정해야 할 값(pending_decisions code의 사전 문구) → 정책 기본값
+  const decisionText = (code: string) => tOr('approval.pending.' + code, code)
+  const rollback = state.approval.rollbackPolicy || (facts.pending.rollback.length > 0 ? facts.pending.rollback.map(decisionText).join(' · ') : t('approval.val.rollback'))
+  const rollbackDefaulted = !state.approval.rollbackPolicy && facts.pending.rollback.length === 0
 
-  const rows: Array<[string, string]> = [
+  // [이름, 값, 정책 기본값인가(계획이 보내지 않아 policy.ts 값을 썼다)]
+  const rows: Array<[string, string, boolean?]> = [
     [t('approval.row.route'), preview ? route(source) + ' → ' + route(destination) : t('approval.val.route', { target: targetName })],
     [t('approval.row.summary'), changes],
     [t('approval.row.sandbox'), sandbox],
-    [t('approval.row.data'), data],
-    [t('approval.row.traffic'), traffic],
-    [t('approval.row.rollback'), state.approval.rollbackPolicy || t('approval.val.rollback')],
-    [t('approval.row.pause'), pause],
+    [t('approval.row.data'), data, !!facts.database && facts.dataMethod.defaulted],
+    [t('approval.row.traffic'), traffic, facts.traffic.defaulted],
+    [t('approval.row.rollback'), rollback, rollbackDefaulted],
+    [t('approval.row.pause'), pause, facts.writePause.defaulted],
   ]
   // 이미지 Digest 대조: 빌드한 이미지 = 검증한 이미지 = 배포할 이미지. 다르면 경고하고 승인을 막는다.
   const digest = checkDigests({ built: state.build.result?.digest ?? plan?.built_digest, verified: plan?.verified_digest, deploy: plan?.built_digest })
@@ -93,6 +98,7 @@ export default function ApprovalStage({ target, onApprove, onCancel, onRevise }:
   const derivedExcluded = [
     ...facts.keepSteps.filter(step => step.group === 'infrastructure').map(step => t('approval.ex.keep', { name: stepText(tOr, step, target, 'before') })),
     ...planWarnings(preview).map(issue => issueText(tOr, issue)),
+    ...facts.pending.excluded.map(decisionText),
   ]
   const excluded = state.approval.excluded.length > 0 ? state.approval.excluded
     : facts.hasPlan || preview ? derivedExcluded : [t('approval.ex1'), t('approval.ex2')]
@@ -150,7 +156,7 @@ export default function ApprovalStage({ target, onApprove, onCancel, onRevise }:
         <h2 aria-level={1}>{t('approval.title')}</h2>
         <p className="approval-lead">{t('approval.lead')}</p>
         <dl className="approval-rows">
-          {rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+          {rows.map(([label, value, defaulted]) => <div key={label}><dt>{label}</dt><dd>{value}{defaulted && <small className="flow-pill policy-tag" title={t('approval.policyNote')}>{t('approval.policyDefault')}</small>}</dd></div>)}
           {digest.status !== 'unknown' && <div className={digest.status === 'mismatch' ? 'approval-digest is-warn' : 'approval-digest'} role={digest.status === 'mismatch' ? 'alert' : undefined}><dt>{t('approval.row.digest')}</dt><dd>{digestValue}</dd></div>}
         </dl>
         {excluded.length > 0 && <div className="approval-excluded">
@@ -198,7 +204,7 @@ export default function ApprovalStage({ target, onApprove, onCancel, onRevise }:
             </ul>}
           </div>}
           {side === 'governance' && <GovernanceMatrix target={target} steps={state.plan.steps} preview={preview} />}
-          {side === 'cost' && <CostCompare target={target} cost={preview?.cost} />}
+          {side === 'cost' && <CostCompare target={target} cost={costViewOf(state, target)} />}
         </div>
       </aside>
     </div>

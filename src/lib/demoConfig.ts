@@ -52,3 +52,8 @@ export function preflightScenario(): PreflightDemo {
 export function deliveryFailDemo(): boolean {
   return flag('delivery', 'fail')
 }
+
+/** 시연용 ?analysis=items: 분석 결과를 예전 방식(발견 항목마다 한 건)으로 받는다. 기본은 백엔드 방식(스캔 Activity마다 개수 묶음). */
+export function analysisItemsDemo(): boolean {
+  return flag('analysis', 'items')
+}
