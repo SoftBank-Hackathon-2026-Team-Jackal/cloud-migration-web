@@ -35,6 +35,9 @@
       "$ref": "#/$defs/event:approval.required"
     },
     {
+      "$ref": "#/$defs/event:approval.decision"
+    },
+    {
       "$ref": "#/$defs/event:provision.resource"
     },
     {
@@ -1310,6 +1313,9 @@
           "$ref": "#/$defs/event:approval.required"
         },
         {
+          "$ref": "#/$defs/event:approval.decision"
+        },
+        {
           "$ref": "#/$defs/event:provision.resource"
         },
         {
@@ -2452,6 +2458,93 @@
             "warnings"
           ],
           "additionalProperties": false
+        },
+        "rollout": {
+          "type": "object",
+          "description": "전환 방법 [가정: 백엔드 계약 없음]. traffic_method는 정해졌을 때만 온다(Route 53 가중치·중계 프록시 미정).",
+          "properties": {
+            "traffic_steps": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 100
+              },
+              "minItems": 1
+            },
+            "traffic_method": {
+              "type": "string"
+            },
+            "expected_write_pause_ms": {
+              "type": "number",
+              "minimum": 0
+            },
+            "data_method": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "traffic_steps"
+          ],
+          "additionalProperties": false
+        },
+        "cost": {
+          "type": "object",
+          "description": "고정 요금 추정(USD/월) [가정]. 값이 null이면 그쪽은 아직 추정하지 못했다.",
+          "properties": {
+            "currency": {
+              "const": "USD"
+            },
+            "lines": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "source_usd": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": 0
+                  },
+                  "target_usd": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": 0
+                  },
+                  "excluded": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "id",
+                  "source_usd",
+                  "target_usd"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "credits_usd": {
+              "type": "number",
+              "minimum": 0
+            },
+            "basis": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "currency",
+            "lines"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -2494,6 +2587,109 @@
         },
         "data": {
           "$ref": "#/$defs/data:plan.preview"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "phase",
+        "type",
+        "status",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "data:approval.decision": {
+      "type": "object",
+      "description": "승인 결정의 접수·전달·실행 상태 [가정: SSE 이벤트 이름]. 필드는 백엔드 ApprovalResponse와 같다. 전달(DELIVERED) 전에는 완료로 보이지 않는다(ADR-002).",
+      "properties": {
+        "approval_id": {
+          "type": "string"
+        },
+        "plan_id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "decision": {
+          "enum": [
+            "APPROVE",
+            "REJECT"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "INFRASTRUCTURE",
+            "WORKLOADS",
+            "FULL"
+          ]
+        },
+        "delivery_status": {
+          "enum": [
+            "PENDING",
+            "DELIVERED",
+            "FAILED"
+          ]
+        },
+        "delivery_attempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "execution_status": {
+          "enum": [
+            "NOT_STARTED",
+            "RUNNING",
+            "SUCCEEDED",
+            "FAILED",
+            "UNKNOWN"
+          ]
+        },
+        "workflow_state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "approval_id",
+        "plan_id",
+        "revision",
+        "decision",
+        "scope",
+        "delivery_status",
+        "delivery_attempts",
+        "execution_status"
+      ],
+      "additionalProperties": false
+    },
+    "event:approval.decision": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "type": {
+          "const": "approval.decision"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/data:approval.decision"
         }
       },
       "required": [

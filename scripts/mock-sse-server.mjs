@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DATA_TICK_MS, DATA_VERIFY_TOTAL_MS, PLAN_REVEAL_MS, REPORT_SECONDS, TRAFFIC_READY_EVENTS, dataProgressAt, dueDataVerify, timelineEnd, timelineFor } from '../src/lib/migration/script.ts'
+import { APPROVAL_ID, DATA_TICK_MS, DATA_VERIFY_TOTAL_MS, PLAN_ID, PLAN_REVEAL_MS, approvalTimeline, REPORT_SECONDS, TRAFFIC_READY_EVENTS, dataProgressAt, dueDataVerify, timelineEnd, timelineFor } from '../src/lib/migration/script.ts'
 import { targetOfRequest } from '../src/lib/migration/events.ts'
 import { TrafficSim } from '../src/lib/migration/trafficSim.ts'
 
@@ -169,6 +169,8 @@ const phaseRunners = {
     record.status = 'waiting'
     await waitApproval(record, 'plan')
     record.status = 'running'
+    // 결정 기록(PENDING) → 실행 엔진에 전달(DELIVERED). 전달이 끝난 뒤에 구축을 시작한다(ADR-002).
+    await play(record, approvalTimeline(record.revision))
   },
   async provisioning(record) {
     await play(record, timelineFor('provisioning', context(record)))
@@ -323,7 +325,9 @@ const server = http.createServer(async (req, res) => {
       void run(record, 'planning')
       return send(res, 200, { decision: 'REJECT', revision: approvals[2] })
     }
-    return approve(record, 'plan') ? send(res, 200, { decision: 'APPROVE', revision: approvals[2] }) : send(res, 409, { error: 'ALREADY_DECIDED' })
+    // 응답은 백엔드 ApprovalResponse 모양: 기록은 됐지만 아직 전달 전(PENDING). 전달 완료는 approval.decision 이벤트로 온다.
+    if (!approve(record, 'plan')) return send(res, 409, { error: 'ALREADY_DECIDED' })
+    return send(res, 201, { approval_id: APPROVAL_ID, plan_id: PLAN_ID, revision: record.revision, decision: 'APPROVE', approver_id: 'demo', scope: body.scope, delivery_status: 'PENDING', delivery_attempts: 1, execution_status: 'NOT_STARTED', workflow_state: 'WAITING_FOR_APPROVAL' })
   }
 
   const match = path.match(/^\/migrations\/([^/]+)(\/.*)?$/)

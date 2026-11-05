@@ -3,7 +3,7 @@
  * 같은 id의 이벤트는 덮어쓰므로(upsert) 재접속·단계 재전송으로 같은 이벤트가 다시 와도 결과가 같다.
  */
 import type {
-  AnalysisFindingData, ApprovalRequiredData, DataVerifyData, HandoverData, TrafficReadyData, BackendPhase, BuildCheckData, BuildFixData, BuildResultData, BuildReviewData, PlanPreviewData, PlanReadyData, ProvisionCheckData, CutoverResultData,
+  AnalysisFindingData, ApprovalDecisionData, ApprovalRequiredData, DataVerifyData, HandoverData, TrafficReadyData, BackendPhase, BuildCheckData, BuildFixData, BuildResultData, BuildReviewData, PlanPreviewData, PlanReadyData, ProvisionCheckData, CutoverResultData,
   DataProgressData, ErrorData, MigrationEvent, MigrationStatus, PlanStepData, ProvisionResourceData,
   ReportData, TrafficNote, TrafficSnapshotData,
   SandboxAttemptData, SandboxDoneData, SandboxEnvData, SandboxStep, SandboxStepData, SandboxTestsData,
@@ -28,7 +28,8 @@ export type MigrationState = {
   sandbox: { env: SandboxEnvData | null; steps: Record<number, Partial<Record<SandboxStep, SandboxStepData['state']>>>; tests: SandboxTestsData | null; attempts: SandboxAttemptData[]; done: SandboxDoneData | null }
   /** preview: 계획 미리보기(만들 리소스·재매핑·보안 규칙·검증). 없으면 화면은 매핑 항목만 보인다. */
   plan: { steps: PlanStepData[]; ready: boolean; meta: PlanReadyData | null; preview: PlanPreviewData | null }
-  approval: { required: boolean; excluded: string[]; rollbackPolicy: string; cutoverRequired: boolean }
+  /** decision: 승인 결정의 접수·전달·실행 상태(approval.decision 또는 승인 API 응답). 전달 전에는 완료가 아니다. */
+  approval: { required: boolean; excluded: string[]; rollbackPolicy: string; cutoverRequired: boolean; decision: ApprovalDecisionData | null }
   provision: { resources: ProvisionResourceData[]; checks: ProvisionCheckData[] }
   data: { current: DataProgressData | null; lagHistory: number[]; verify: DataVerifyData[] }
   traffic: { snapshot: TrafficSnapshotData | null; logs: TrafficLogEntry[]; logCounter: number; ready: TrafficReadyData | null }
@@ -47,7 +48,7 @@ export const initialState: MigrationState = {
   build: { checks: {}, lastCheck: null, fixes: [], attempt: null, result: null, review: null },
   sandbox: { env: null, steps: {}, tests: null, attempts: [], done: null },
   plan: { steps: [], ready: false, meta: null, preview: null },
-  approval: { required: false, excluded: [], rollbackPolicy: '', cutoverRequired: false },
+  approval: { required: false, excluded: [], rollbackPolicy: '', cutoverRequired: false, decision: null },
   provision: { resources: [], checks: [] },
   data: { current: null, lagHistory: [], verify: [] },
   traffic: { snapshot: null, logs: [], logCounter: 0, ready: null },
@@ -66,6 +67,8 @@ export type Action =
   | { type: 'connection'; value: MigrationState['connection'] }
   | { type: 'report'; report: ReportData }
   | { type: 'cancelled' }
+  /** 승인 API 응답(ApprovalResponse)을 이벤트와 같은 자리에 넣는다. */
+  | { type: 'approvalDecision'; data: ApprovalDecisionData }
   /** 공급자가 직접 알리는 실패(요청 실패, 이전을 찾을 수 없음 등) */
   | { type: 'fail'; error: ErrorData }
 
@@ -86,6 +89,18 @@ function addTrafficLogs(state: MigrationState, data: TrafficSnapshotData, at: st
     logs = [{ id: counter, at, key: note.key, params: note.params ?? {} }, ...logs].slice(0, TRAFFIC_LOG_LIMIT)
   }
   return { logs, logCounter: counter }
+}
+
+/**
+ * 같은 승인(approval_id)의 상태는 뒤로 가지 않는다: 이벤트와 API 응답이 엇갈려 와도 DELIVERED가 PENDING으로 돌아가지 않게 한다.
+ * 다시 전달(재시도)로 시도 횟수가 늘면 FAILED → PENDING/DELIVERED는 받아들인다.
+ */
+const DELIVERY_RANK = { PENDING: 0, FAILED: 1, DELIVERED: 2 } as const
+export function mergeDecision(current: ApprovalDecisionData | null, incoming: ApprovalDecisionData): ApprovalDecisionData {
+  if (!current || current.approval_id !== incoming.approval_id) return incoming
+  if (incoming.delivery_attempts > current.delivery_attempts) return incoming
+  if (incoming.delivery_attempts < current.delivery_attempts) return current
+  return DELIVERY_RANK[incoming.delivery_status] >= DELIVERY_RANK[current.delivery_status] ? incoming : { ...current, execution_status: incoming.execution_status }
 }
 
 function fail(state: MigrationState, phase: BackendPhase, failure: Failure): MigrationState {
@@ -141,6 +156,8 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
         : { ...next.approval, required: true, excluded: data.excluded, rollbackPolicy: data.rollback_policy }
       return { ...next, status: 'waiting', approval }
     }
+    case 'approval.decision':
+      return { ...next, approval: { ...next.approval, decision: mergeDecision(next.approval.decision, event.data) } }
     case 'provision.resource':
       return { ...next, provision: { ...next.provision, resources: upsert(next.provision.resources, event.data) } }
     case 'provision.check': {
@@ -220,6 +237,8 @@ export function reducer(state: MigrationState, action: Action): MigrationState {
       return { ...state, report: action.report }
     case 'cancelled':
       return { ...state, status: 'cancelled' }
+    case 'approvalDecision':
+      return { ...state, approval: { ...state.approval, decision: mergeDecision(state.approval.decision, action.data) } }
     case 'fail':
       return { ...fail(state, action.error.phase ?? 'analysis', { code: action.error.code, message: action.error.message, retryable: action.error.retryable }), error: action.error }
     case 'event': {
