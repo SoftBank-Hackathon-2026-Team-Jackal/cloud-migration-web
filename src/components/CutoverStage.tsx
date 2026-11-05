@@ -12,6 +12,7 @@ import { runTransition } from '../lib/particleHandoff'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
 import type { MigrationState } from '../lib/migration/reducer'
 import type { CutoverPlanData, CutoverStepData, CutoverStepPlan } from '../lib/migration/events'
+import { useVoiceActions } from '../lib/voice/actions'
 import type { Target } from '../lib/stages'
 import { useT, useTOr, type MsgKey } from '../lib/i18n'
 
@@ -77,6 +78,8 @@ function CutoverApproval({ onApprove }: { onApprove: () => void }) {
   const [checked, setChecked] = useState(false)
   const plan = state.cutover.plan
   const allPass = !plan || plan.preconditions.every(item => item.state === 'pass')
+  // 음성: "승인해"는 전제 조건이 모두 통과했을 때만 받는다(체크도 함께 켠다).
+  useVoiceActions({ approve: allPass && (() => runTransition(() => { setChecked(true); provider.approveCutover(); onApprove() })) })
   const preview = timedTrace(plan?.steps ?? [], [], tOr)
   const topology = plan?.topology ?? EMPTY_TOPOLOGY
   const maxRehearsal = Math.max(1, ...(plan?.rehearsal.methods.map(item => item.pause_ms) ?? [1]))
@@ -220,6 +223,7 @@ function CutoverRun({ stale, onView, onRetry, onNext }: { stale: number; onView:
   const dest = refused || stage !== 'after' ? topology.source_db : topology.target_db
 
   const finishedOk = view === 'done' && state.status === 'done'
+  useVoiceActions({ next: finishedOk && onNext, retry: refused && onRetry })
   useEffect(() => { onView(view) }, [view, onView])
   return <div className="cx-run">
     <ReadyGauge cutover={cutover} passed={stage !== 'wait'} />

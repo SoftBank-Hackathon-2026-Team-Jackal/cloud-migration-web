@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import voiceClips from './voiceClips.json'
 import { RECORDED_CLIPS } from './voiceRecorded'
+import { ttsAudio, warmTts } from './voice/ttsClient'
 
 type RecognitionResult = { results: ArrayLike<ArrayLike<{ transcript: string }>> }
 type RecognitionError = { error: string }
@@ -22,15 +23,24 @@ type SpeechWindow = Window & {
   webkitSpeechRecognition?: RecognitionConstructor
 }
 
+/** 한글이 있으면 ko, 가나가 있으면 ja, 아니면 화면 언어 */
+function scriptLang(text: string, fallback: 'ko' | 'en' | 'ja'): 'ko' | 'en' | 'ja' {
+  if (/[\uac00-\ud7a3]/.test(text)) return 'ko'
+  if (/[\u3040-\u30ff]/.test(text)) return 'ja'
+  return fallback
+}
+const RECOGNITION_LANG = { ko: 'ko-KR', en: 'en-US', ja: 'ja-JP' } as const
 const normalize = (value: string) => value.toLowerCase().replace(/[\s.,!?~·]/g, '')
 const recorded = new Set(RECORDED_CLIPS)
 const clipByText = new Map(Object.entries(voiceClips).filter(([id]) => recorded.has(id)).map(([id, text]) => [text, id]))
 
-export function useVoiceGuide({ started, active, ask = false, onWake, onStart, onIntent, onCommand, onAsk, onSay, onHeard }: {
+export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWake, onStart, onIntent, onCommand, onAsk, onSay, onHeard }: {
   started: boolean
   active: boolean
   /** 시연이 시작된 뒤(첫 화면이 아닐 때): "헤이 자칼, …" 질문을 onAsk로 보낸다. */
   ask?: boolean
+  /** 화면 언어: 음성 인식 언어와 말하는 언어 */
+  lang?: 'ko' | 'en' | 'ja'
   onWake: () => void
   onStart: () => void
   /** 호출 뒤 첫 화면에서 들은 말(이전 의도). 있으면 onStart 대신 이쪽으로 보낸다. */
@@ -72,10 +82,17 @@ export function useVoiceGuide({ started, active, ask = false, onWake, onStart, o
   const micStreamRef = useRef<MediaStream | null>(null)
   const micFrameRef = useRef(0)
   const speakRef = useRef<((text: string) => void) | null>(null)
+  const utterToken = useRef(0)
+  const langRef = useRef(lang)
 
   useEffect(() => { startedRef.current = started }, [started])
   useEffect(() => { callbacksRef.current = { onWake, onStart, onIntent, onCommand, onAsk, onSay, onHeard } }, [onWake, onStart, onIntent, onCommand, onAsk, onSay, onHeard])
   useEffect(() => { askRef.current = ask }, [ask])
+  useEffect(() => {
+    langRef.current = lang
+    if (recognitionRef.current) recognitionRef.current.lang = RECOGNITION_LANG[lang]
+  }, [lang])
+  useEffect(() => { warmTts() }, [])
   useEffect(() => {
     activeRef.current = active
     if (!active) {
@@ -189,45 +206,36 @@ export function useVoiceGuide({ started, active, ask = false, onWake, onStart, o
     synth.speak(utterance)
   }, [listen, stopAudio])
 
-  const speak = useCallback((text: string, options?: { ripple?: boolean; onEnd?: () => void; lang?: 'ko' | 'en' | 'ja' }) => {
-    setMessage(text)
-    callbacksRef.current.onSay?.(text, { kind: 'report' })
-    stopListening()
-    stopAudio()
-
-    if (!soundRef.current) {
-      options?.onEnd?.()
-      window.setTimeout(listen, 150)
-      return
-    }
-    const clip = clipByText.get(text)
-    if (!clip) { synthesize(text, options?.lang ?? 'ko', options); return }
-
-    armAudio()
+  /** 소리 파일 하나를 분석기에 연결해 재생한다(구체가 실제 음량에 반응한다). 재생할 수 없으면 onFail. */
+  const playFile = useCallback(function play(src: string, token: number, options: { ripple?: boolean; onEnd?: () => void } | undefined, onFail: () => void, retries = 1): void {
     const audio = audioRef.current
     const analyser = analyserRef.current
-    if (!audio || !analyser) return
-    speakingRef.current = true
-    audio.src = `/voice/${clip}.mp3`
-    audio.load()
+    if (!audio || !analyser) { onFail(); return }
     let finished = false
+    const current = () => !finished && token === utterToken.current
     const finish = () => {
-      if (finished) return
+      if (!current()) return
       finished = true
       stopAudio()
       options?.onEnd?.()
       window.setTimeout(listen, 180)
     }
+    const fail = () => {
+      if (!current()) return
+      finished = true
+      window.cancelAnimationFrame(frameRef.current)
+      audio.onended = null
+      audio.onerror = null
+      audio.pause()
+      // 재생이 잠깐 끊긴 경우(다른 load와 겹침 등)가 있어 같은 소리를 한 번 더 시도한 뒤에 다음 방법으로 넘어간다.
+      if (retries > 0) play(src, token, options, onFail, retries - 1)
+      else onFail()
+    }
     finishRef.current = finish
     audio.onended = finish
-    // 녹음 파일이 아직 없거나(새 문구) 재생이 막히면 같은 문장을 음성 합성으로 읽는다.
-    const fallback = () => {
-      if (finished) return
-      finished = true
-      stopAudio()
-      synthesize(text, options?.lang ?? 'ko', options)
-    }
-    audio.onerror = fallback
+    audio.onerror = fail
+    audio.src = src
+    audio.load()
     const samples = new Uint8Array(analyser.fftSize)
     const measure = () => {
       analyser.getByteTimeDomainData(samples)
@@ -241,35 +249,66 @@ export function useVoiceGuide({ started, active, ask = false, onWake, onStart, o
       frameRef.current = window.requestAnimationFrame(measure)
     }
     void audio.play().then(() => {
+      if (!current()) return
       setSpeaking(true)
       voiceActive.current = Boolean(options?.ripple)
       measure()
-    }).catch(fallback)
-  }, [armAudio, listen, stopAudio, stopListening, synthesize])
+    }).catch(fail)
+  }, [listen, stopAudio])
 
-  speakRef.current = speak
-
-  /** 에이전트의 즉석 답변: 미리 녹음한 문구가 아니므로 브라우저 음성 합성으로 읽는다. */
-  const speakText = useCallback((text: string, language: 'ko' | 'en' | 'ja' = 'ko', source?: 'model' | 'local') => {
-    setMessage(text)
-    callbacksRef.current.onSay?.(text, { kind: 'answer', source })
+  /**
+   * 자칼의 목소리 하나로 읽는다: 서버 TTS(Supertonic 3, /api/tts) → (서버를 못 쓰면) 같은 목소리로 미리 녹음한 파일 →
+   * (그것도 없으면) 마지막으로 브라우저 음성 합성. 서버 음성과 녹음 파일은 분석기에 연결돼 구체가 실제 음량에 반응한다.
+   */
+  const utter = useCallback((text: string, language: 'ko' | 'en' | 'ja', options?: { ripple?: boolean; onEnd?: () => void }) => {
     stopListening()
     stopAudio()
-    const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined
-    if (!soundRef.current || !synth) {
+    if (!soundRef.current) {
+      options?.onEnd?.()
       window.setTimeout(listen, 150)
       return
     }
-    synth.cancel()
-    const utterance = new SpeechSynthesisUtterance(text)
-    utterance.lang = { ko: 'ko-KR', en: 'en-US', ja: 'ja-JP' }[language]
+    armAudio()
+    utterToken.current += 1
+    const token = utterToken.current
     speakingRef.current = true
     setSpeaking(true)
-    const finish = () => { speakingRef.current = false; setSpeaking(false); window.setTimeout(listen, 180) }
-    utterance.onend = finish
-    utterance.onerror = finish
-    synth.speak(utterance)
-  }, [listen, stopAudio, stopListening])
+    // 음성을 받는 동안 소리를 끄면(toggleSound) 이 문구를 끝낸다.
+    let waiting = true
+    finishRef.current = () => {
+      if (!waiting || token !== utterToken.current) return
+      waiting = false
+      stopAudio()
+      options?.onEnd?.()
+      window.setTimeout(listen, 150)
+    }
+    // 문장의 글자로 언어를 고른다(한국어 안내를 영어 화면에서 읽을 때 등). 
+    language = scriptLang(text, language)
+    const clip = language === 'ko' ? clipByText.get(text) : undefined
+    const viaSynth = () => { if (token === utterToken.current) synthesize(text, language, options) }
+    const viaClip = clip ? () => playFile(`/voice/${clip}.mp3`, token, options, viaSynth) : viaSynth
+    void ttsAudio(text, language).then(url => {
+      if (!waiting || token !== utterToken.current) return
+      waiting = false
+      if (url) playFile(url, token, options, viaClip)
+      else viaClip()
+    })
+  }, [armAudio, listen, playFile, stopAudio, stopListening, synthesize])
+
+  const speak = useCallback((text: string, options?: { ripple?: boolean; onEnd?: () => void; lang?: 'ko' | 'en' | 'ja' }) => {
+    setMessage(text)
+    callbacksRef.current.onSay?.(text, { kind: 'report' })
+    utter(text, options?.lang ?? langRef.current, options)
+  }, [utter])
+
+  speakRef.current = speak
+
+  /** 에이전트의 즉석 답변도 같은 목소리(서버 TTS)로 읽는다. */
+  const speakText = useCallback((text: string, language: 'ko' | 'en' | 'ja' = 'ko', source?: 'model' | 'local') => {
+    setMessage(text)
+    callbacksRef.current.onSay?.(text, { kind: 'answer', source })
+    utter(text, language)
+  }, [utter])
 
   const stopMicMeter = useCallback(() => {
     window.cancelAnimationFrame(micFrameRef.current)
@@ -322,7 +361,7 @@ export function useVoiceGuide({ started, active, ask = false, onWake, onStart, o
     }
     armAudio()
     const recognition = new Constructor()
-    recognition.lang = 'ko-KR'
+    recognition.lang = RECOGNITION_LANG[langRef.current]
     recognition.continuous = false
     recognition.interimResults = false
     recognition.onresult = event => {
@@ -332,7 +371,7 @@ export function useVoiceGuide({ started, active, ask = false, onWake, onStart, o
       if (callbacksRef.current.onCommand?.(transcript)) { callbacksRef.current.onHeard?.(transcript.trim()); return }
       if (askRef.current && callbacksRef.current.onAsk) {
         // 시연 중에는 호출어(헤이 자칼) 뒤의 말만 질문으로 받는다. 호출어만 말하면 10초 동안 다음 말을 질문으로 받는다.
-        const wake = transcript.match(/헤이\s*(자칼|재칼|쟈칼)\s*[,.!?]?\s*(.*)$/i) || transcript.match(/hey\s*jackal\s*[,.!?]?\s*(.*)$/i)
+        const wake = transcript.match(/헤이\s*(자칼|재칼|쟈칼)\s*[,.!?]?\s*(.*)$/i) || transcript.match(/hey\s*jackal\s*[,.!?]?\s*(.*)$/i) || transcript.match(/ヘイ\s*ジャッカル\s*[、,.!?]?\s*(.*)$/i)
         if (wake) {
           const rest = (wake[wake.length - 1] || '').trim()
           if (rest.length > 1) { askUntil.current = 0; callbacksRef.current.onHeard?.(rest); callbacksRef.current.onAsk(rest) }
@@ -345,7 +384,7 @@ export function useVoiceGuide({ started, active, ask = false, onWake, onStart, o
         return
       }
       const intent = callbacksRef.current.onIntent
-      const wakeWord = transcript.match(/헤이\s*(?:자칼|재칼|쟈칼)\s*[,.!?]?\s*(.*)$/i) || transcript.match(/hey\s*jackal\s*[,.!?]?\s*(.*)$/i)
+      const wakeWord = transcript.match(/헤이\s*(?:자칼|재칼|쟈칼)\s*[,.!?]?\s*(.*)$/i) || transcript.match(/hey\s*jackal\s*[,.!?]?\s*(.*)$/i) || transcript.match(/ヘイ\s*ジャッカル\s*[、,.!?]?\s*(.*)$/i)
       if (wakeWord) {
         callbacksRef.current.onHeard?.('헤이 자칼')
         callbacksRef.current.onWake()

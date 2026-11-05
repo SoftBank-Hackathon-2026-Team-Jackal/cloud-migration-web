@@ -27,24 +27,26 @@ import { pathOf, type Target as SetupTarget } from '../lib/migration/events'
 import { useVoiceGuide } from '../lib/useVoiceGuide'
 import { buildAgentFacts } from '../lib/agent/context'
 import { askAgent } from '../lib/agent/ask'
-import voiceClips from '../lib/voiceClips.json'
 import { FoldIcon, MicIcon, SpeakerIcon } from './JackalIcons'
 import { isStartCommand, targetFromUtterance } from '../lib/agent/intent'
+import { useStageVoice } from '../lib/voice/useStageVoice'
+import { voiceText, type VoiceKey } from '../lib/voice/messages'
+import VoiceHints from './VoiceHints'
 
 // 실제 환경을 바꾸기 전(입력~승인)까지만 이전 단계로 돌아갈 수 있다. 승인 이후는 되돌림이 아니라 롤백 정책을 따른다.
 const BACK: Partial<Record<Stage, Stage>> = { setup: 'intro', analysis: 'setup', rehearsal: 'analysis', planning: 'rehearsal', approval: 'planning' }
 
 // 이 복제본의 보고 문구는 화면의 데모 단계 전환에만 바인딩한다. 실제 백엔드 결과로 해석하지 않는다.
 // 설정 화면은 첫 화면에서 자칼이 의도를 되짚으며 들어가므로 따로 안내하지 않는다.
-const REPORT: Partial<Record<Stage, string>> = {
-  analysis: voiceClips.analysis_start,
-  rehearsal: voiceClips.sandbox_start,
-  planning: voiceClips.planning_start,
-  approval: voiceClips.approval_required,
-  provisioning: voiceClips.provisioning_start,
-  data: voiceClips.data_start,
-  traffic: voiceClips.traffic_start,
-  cutover: voiceClips.cutover_start,
+const REPORT: Partial<Record<Stage, VoiceKey>> = {
+  analysis: 'r.start.analysis',
+  rehearsal: 'r.start.rehearsal',
+  planning: 'r.start.planning',
+  approval: 'r.start.approval',
+  provisioning: 'r.start.provisioning',
+  data: 'r.start.data',
+  traffic: 'r.start.traffic',
+  cutover: 'r.start.cutover',
 }
 
 type ChatMessage = { id: number; role: 'user' | 'agent'; text: string; tag?: 'report' | 'model' | 'local' }
@@ -133,6 +135,7 @@ export default function FlowApp() {
   const voice = useVoiceGuide({
     started,
     active: true,
+    lang,
     ask: stage !== 'intro',
     onWake: () => wake(),
     onStart: () => handleIntent(''),
@@ -230,7 +233,10 @@ export default function FlowApp() {
   const setupStart = useRef<(() => void) | null>(null)
   const kickoff = useRef(false)
   const voiceCommand = useRef<(text: string) => boolean>(() => false)
+  // 모든 단계의 음성 명령(다음·승인해·롤백해·지금 어디야 …)은 useStageVoice가 받는다. 설정 화면의 예전 시작 명령도 그대로 받는다.
+  const stageVoice = useStageVoice({ stage, lang, speaking: voice.speaking, lastLine: voice.message, speak: text => say(text), onSetupStart: () => setupStart.current?.() })
   voiceCommand.current = text => {
+    if (stageVoice.handleUtterance(text)) return true
     if (stage !== 'setup' || !isStartCommand(text)) return false
     setupStart.current?.()
     return true
@@ -254,7 +260,7 @@ export default function FlowApp() {
     // 설정 화면에서 "원본 분석부터 시작할게요."라고 말하고 넘어왔으면 분석 안내를 겹쳐 읽지 않는다.
     if (stage === 'analysis' && kickoff.current) { kickoff.current = false; return }
     const message = REPORT[stage]
-    if (message) voice.speak(message)
+    if (message) say(voiceText(lang, message))
   }, [stage, voice.speak])
 
   // 구체의 '듣는 중' 모양: "네." 뒤부터 시작 명령을 받을 때까지(마이크가 없어도 유지). 발표자는 L 키로 켜고 끌 수 있다.
@@ -264,9 +270,10 @@ export default function FlowApp() {
     listenMode.current = forceListen || (stage === 'intro' && started && !voice.speaking && !voiceStarting.current)
   }, [forceListen, stage, started, voice.speaking])
 
-  const reportAnalysisComplete = useCallback(() => voice.speak(voiceClips.analysis_done), [voice.speak])
-  const reportSandboxComplete = useCallback(() => voice.speak(voiceClips.sandbox_done), [voice.speak])
-  const reportProvisioningComplete = useCallback(() => voice.speak(voiceClips.provisioning_ready), [voice.speak])
+  // 분석·샌드박스·구축의 완료 보고는 이벤트에 묶인 말 보고(useStageVoice)가 한다(같은 말을 두 번 하지 않게 화면 완료 신호로는 말하지 않는다).
+  const reportAnalysisComplete = useCallback(() => {}, [])
+  const reportSandboxComplete = reportAnalysisComplete
+  const reportProvisioningComplete = reportAnalysisComplete
 
   // 주소로 단계를 바로 열 수 있다: ?stage=traffic&target=gcp&demo=1
   useEffect(() => {
@@ -366,7 +373,7 @@ export default function FlowApp() {
     {stage === 'data' && <DataMigrationStage key={round} target={target} onNext={next('traffic')} />}
     {stage === 'traffic' && <TrafficShiftStage key={round + target} target={target} onNext={next('cutover')} />}
     {stage === 'cutover' && <CutoverStage key={round + target} target={target}
-      onComplete={() => voice.speak(voiceClips.migration_done)}
+      onComplete={() => say(voiceText(lang, 'r.migration.done'))}
       onRestart={() => jump('intro')} />}
     <StatusPanel stage={stage} onHome={() => jump('intro')} onSetup={() => jump('setup')} />
     <TransitionLayer />
@@ -423,6 +430,7 @@ export default function FlowApp() {
       <button type="button" className="jv-pill" aria-expanded={chatOpen} title={chatOpen ? t('agent.fold') : t('agent.open')} onClick={() => setChatOpen(open => !open)}>
         <span className="jv-dot" aria-hidden="true" />{t('agent.title')}{!chatOpen && unread > 0 && <b>{unread}</b>}
       </button>
+      {stage !== 'intro' && !dissolving && <VoiceHints label={stageVoice.hintLabel} hints={stageVoice.hints} />}
     </aside>
   </main>
 }

@@ -5,6 +5,7 @@ import ParticleReveal from './ParticleReveal'
 import { useT, useTOr, type MsgKey, type TranslateOr } from '../lib/i18n'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
 import { ALWAYS_UNVERIFIED, EVIDENCE_KINDS, KIND_OF_METHOD, type AnalysisFindingData, type AnalysisScanData, type Evidence, type EvidenceKind, type Target } from '../lib/migration/events'
+import { useVoiceActions } from '../lib/voice/actions'
 
 /** 발견 항목. message·detail이 비어 있으면 화면에서 key로 사전을 찾아 현재 언어로 보여 준다. 백엔드 값은 그대로 쓴다. */
 export type AnalysisUpdate = AnalysisFindingData
@@ -208,6 +209,7 @@ export default function AnalysisStage({ target, onAdvance, onComplete, orbHandof
   const tOr = useTOr()
   const finished = infraStatus.percent === 100 && codeStatus.percent === 100
   useEffect(() => { if (finished) onComplete?.() }, [finished, onComplete])
+  useVoiceActions({ next: finished && ready && !proceed && (() => setProceed(true)) })
   // 피드: 스캔이 오면 스캔 요약, 아니면 예전 항목. 근거는 Evidence.kind로 같은 칩을 쓴다.
   const feed: FeedRow[] = scans.length > 0 ? feedOfScans(tOr, scans)
     : activeUpdates.map(update => ({ id: update.id, stream: update.stream, title: textOf(tOr, update).message, detail: textOf(tOr, update).detail, evidence: evidenceOfFinding(update) }))

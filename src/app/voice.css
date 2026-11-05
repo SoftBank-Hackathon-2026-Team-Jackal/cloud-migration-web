@@ -67,3 +67,11 @@
   .jv.is-speaking .jv-dot, .jv-msg.is-typing p { animation: none; }
   .jv-dot, .jv-pill, .jv-head-actions button, .jv-chips button { transition: none; }
 }
+
+/* 음성 명령 안내: Jackal 알약 아래에 작게(단계 화면의 내용·아래 띠를 가리지 않게). 클릭을 막지 않는다. */
+.jv > .voice-hints { pointer-events: none; }
+.voice-hints { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: baseline; gap: 2px 6px; max-width: 220px; margin: 0; padding: 6px 10px; border-radius: 12px; background: rgba(255, 255, 255, .72); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); color: #6b6b6b; font: 500 11.5px/1.35 var(--font-sans); letter-spacing: -.01em; text-align: right; }
+.voice-hints-label { flex-basis: 100%; color: #8a8a8a; font-size: 10.5px; }
+.voice-hints q { color: #3d3d3d; white-space: nowrap; quotes: '“' '”'; }
+.voice-hints-sep { color: #b0b0b0; }
+@media (max-width: 640px) { .voice-hints { display: none; } }
