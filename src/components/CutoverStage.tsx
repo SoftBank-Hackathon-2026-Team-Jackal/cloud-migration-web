@@ -5,6 +5,7 @@ import StageShell from './StageShell'
 import ProposalTag from './ProposalTag'
 import CutoverDiagram from './CutoverDiagram'
 import LiveRequests from './LiveRequests'
+import PhaseStrip, { STRIP_GATE } from './PhaseStrip'
 import MigrationReport from './MigrationReport'
 import { ArriveMorph } from './ScreenFx'
 import { runTransition } from '../lib/particleHandoff'
@@ -128,6 +129,9 @@ function CutoverBody({ ready, target, phase, setPhase, onRestart, onComplete }: 
           </div>
         : <p className="flow-note">{t('cutover.measureNote')}</p>}
     </aside>
+
+    {/* 데이터 → 트래픽 → DB 전환 띠: 지금은 게이트 2 뒤(PgBouncer 전환 단계만큼) */}
+    <div className="flow-strip"><PhaseStrip compact position={STRIP_GATE.switchover + (Math.min(6, doneSteps) / 6) * (100 - STRIP_GATE.switchover)} gates={['pass', 'pass', 'pass']} /></div>
 
     <div className="flow-footer">
       <span>{measured ? t('cutover.foot.done') : phase === 'verify' ? t('cutover.foot.verify') : t('cutover.foot.running')}</span>

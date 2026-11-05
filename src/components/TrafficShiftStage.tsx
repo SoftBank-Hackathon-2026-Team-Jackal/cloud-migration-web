@@ -4,6 +4,7 @@ import StageShell from './StageShell'
 import ProposalTag from './ProposalTag'
 import LiveRequests from './LiveRequests'
 import TrafficCanvas from './TrafficCanvas'
+import PhaseStrip, { STRIP_GATE } from './PhaseStrip'
 import type { Target } from '../lib/stages'
 import { useT, type MsgKey } from '../lib/i18n'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
@@ -163,6 +164,9 @@ function TrafficBody({ ready, target, onNext }: { ready: boolean; target: Target
         </div>
       </div>
     </aside>
+
+    {/* 데이터 → 트래픽 → DB 전환 띠: 지금은 게이트 1과 2 사이(대상 비율만큼) */}
+    <div className="flow-strip"><PhaseStrip compact position={STRIP_GATE.synced + (weightNew / 100) * (STRIP_GATE.switchover - STRIP_GATE.synced)} gates={['pass', 'pass', drained ? 'pass' : 'wait']} /></div>
 
     <div className="flow-footer flow-footer-wide traffic-actions">
       <div className="traffic-actions-left">
