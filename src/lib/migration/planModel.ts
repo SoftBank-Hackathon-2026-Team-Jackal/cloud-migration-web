@@ -72,3 +72,44 @@ export function reportsStorage(state: Pick<MigrationState, 'analysis' | 'plan'>)
     || steps.some(step => kindOf(step) === 'storage')
     || resources.some(resource => kindOf(resource) === 'storage')
 }
+
+/** 계획이 전환 단계를 보내지 않았을 때 쓰는 기본 단계(trafficSim의 TRAFFIC_STEPS와 같다) */
+export const DEFAULT_TRAFFIC_STEPS = [10, 50, 100]
+
+/**
+ * 승인 화면 요약의 값. 모두 받은 데이터에서 계산하고, 없는 값은 null로 둔다(화면이 '받지 못함'으로 보인다).
+ * - changes: 옮기는 매핑 수(인프라·코드 설정), 원본 유지 수, 처리별 수
+ * - sandbox: 판정이 끝난 마지막 시도의 필수 테스트 결과. 없으면 매핑 항목의 검증 상태로 대신 센다.
+ * - traffic: 계획의 전환 단계(없으면 기본 단계, defaulted로 표시)
+ */
+export function approvalFacts(state: Pick<MigrationState, 'plan' | 'sandbox' | 'traffic'>) {
+  const steps = state.plan.steps
+  const moved = steps.filter(step => !step.keep_source)
+  const summary = planSummary(steps)
+  const last = state.sandbox.attempts[state.sandbox.attempts.length - 1]
+  const sandbox = last
+    ? { kind: 'tests' as const, passed: last.checks.required_passed, total: last.checks.required_total, attempt: last.attempt, ok: last.verdict.passed }
+    : steps.length > 0
+      ? { kind: 'mapping' as const, passed: moved.filter(step => step.verification === 'SANDBOX_VERIFIED').length, total: moved.length, attempt: null, ok: moved.every(step => step.verification !== 'UNVERIFIED') }
+      : null
+  const rollout = state.plan.preview?.rollout
+  const planned = rollout?.traffic_steps?.filter(value => value > 0 && value <= 100) ?? []
+  const live = state.traffic.snapshot?.steps ?? []
+  const trafficSteps = planned.length > 0 ? planned : live.length > 0 ? live : DEFAULT_TRAFFIC_STEPS
+  return {
+    hasPlan: steps.length > 0,
+    changes: {
+      infrastructure: moved.filter(step => step.group === 'infrastructure').length,
+      code: moved.filter(step => step.group === 'code').length,
+      keep: summary.keep,
+      approval: summary.approval,
+      block: summary.block,
+    },
+    sandbox,
+    database: steps.find(step => kindOf(step) === 'database' && !step.keep_source) ?? null,
+    traffic: { steps: trafficSteps, method: rollout?.traffic_method ?? null, defaulted: planned.length === 0 && live.length === 0 },
+    writePauseMs: rollout?.expected_write_pause_ms ?? null,
+    dataMethod: rollout?.data_method ?? null,
+    keepSteps: steps.filter(step => step.keep_source),
+  }
+}
