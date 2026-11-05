@@ -13,3 +13,6 @@ next-env.d.ts
 # Supertonic 음성 캐시(/api/tts가 만든 WAV, 다시 만들 수 있음)와 모델(scripts/download-tts-model.mjs)
 .tts-cache/
 models/
+
+# 로컬 전용 디자인 스킬(저장소에 올리지 않음)
+.claude/skills/
