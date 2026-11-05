@@ -294,6 +294,7 @@ export class SseProvider implements MigrationProvider {
  * 서버 값을 화면이 읽는 모양으로 맞춘다 [가정: 백엔드 계약 미정].
  * - plan.step: 예전 등급(direct/convert/none)과 빠진 처리·원본 유지·검증 상태를 채운다.
  * - plan.preview: 빠진 목록은 빈 목록으로.
+ * - traffic.prepare·traffic.snapshot [가정]: 빠진 목록은 빈 목록으로.
  * - snapshot 안의 이벤트도 같은 규칙으로.
  */
 export function normalizeEvent(event: MigrationEvent): MigrationEvent {
@@ -309,6 +310,14 @@ export function normalizeEvent(event: MigrationEvent): MigrationEvent {
         security_rules: data.security_rules ?? [],
         validation: { errors: data.validation?.errors ?? [], warnings: data.validation?.warnings ?? [] },
       } }
+    }
+    // [가정] 트래픽 사전 확인: 빠진 확인 목록은 빈 목록으로.
+    case 'traffic.prepare':
+      return { ...event, data: { ...event.data, checks: event.data.checks ?? [] } }
+    // [가정] 트래픽 스냅샷: 빠진 notes·results는 빈 목록으로, steps가 비어 있으면 지운다(화면이 기본 단계를 쓴다).
+    case 'traffic.snapshot': {
+      const { steps, ...data } = event.data
+      return { ...event, data: { ...data, ...(steps?.length ? { steps } : {}), notes: data.notes ?? [], results: data.results ?? [] } }
     }
     case 'snapshot':
       return { ...event, data: { ...event.data, events: (event.data.events ?? []).map(normalizeEvent) } }

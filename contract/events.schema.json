@@ -71,6 +71,9 @@
       "$ref": "#/$defs/event:traffic.snapshot"
     },
     {
+      "$ref": "#/$defs/event:traffic.prepare"
+    },
+    {
       "$ref": "#/$defs/event:cutover.step"
     },
     {
@@ -529,6 +532,11 @@
             },
             "observe_left_seconds": {
               "type": "number"
+            },
+            "observe_seconds": {
+              "type": "number",
+              "minimum": 0,
+              "description": "[가정] 관찰 창 길이(초)"
             }
           },
           "required": [
@@ -570,9 +578,12 @@
             "properties": {
               "key": {
                 "enum": [
+                  "prepare",
                   "apply",
+                  "observe",
                   "gatePass",
                   "gateFail",
+                  "rollback",
                   "reached",
                   "manual",
                   "inject",
@@ -588,6 +599,10 @@
                     "number"
                   ]
                 }
+              },
+              "activity": {
+                "type": "string",
+                "description": "[가정] Temporal Activity 이름(예: traffic_set_weight)"
               }
             },
             "required": [
@@ -605,6 +620,119 @@
           },
           "minItems": 1,
           "description": "[가정] 전환 단계(대상 비율 %)"
+        },
+        "backends": {
+          "type": "object",
+          "description": "[가정] 백엔드별 지표",
+          "properties": {
+            "origin": {
+              "type": "object",
+              "properties": {
+                "requests_per_sec": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "p99_ms": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "failed_requests": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "requests_per_sec",
+                "p99_ms",
+                "failed_requests"
+              ],
+              "additionalProperties": false
+            },
+            "target": {
+              "type": "object",
+              "properties": {
+                "requests_per_sec": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "p99_ms": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "failed_requests": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "requests_per_sec",
+                "p99_ms",
+                "failed_requests"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "origin",
+            "target"
+          ],
+          "additionalProperties": false
+        },
+        "results": {
+          "type": "array",
+          "description": "[가정] 끝난 단계의 판정",
+          "items": {
+            "type": "object",
+            "properties": {
+              "step": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "verdict": {
+                "enum": [
+                  "pass",
+                  "rollback"
+                ]
+              },
+              "failed_requests": {
+                "type": "number",
+                "minimum": 0
+              },
+              "p99_ratio": {
+                "type": "number",
+                "minimum": 0
+              },
+              "observed_seconds": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "step",
+              "verdict",
+              "failed_requests",
+              "p99_ratio"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "replication": {
+          "type": "object",
+          "description": "[가정] 논리 복제 지연",
+          "properties": {
+            "lag_ms": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0
+            }
+          },
+          "required": [
+            "lag_ms"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -1362,6 +1490,9 @@
         },
         {
           "$ref": "#/$defs/event:traffic.snapshot"
+        },
+        {
+          "$ref": "#/$defs/event:traffic.prepare"
         },
         {
           "$ref": "#/$defs/event:cutover.step"
@@ -3231,6 +3362,226 @@
         },
         "data": {
           "$ref": "#/$defs/data:data.readiness"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "phase",
+        "type",
+        "status",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "data:traffic.prepare": {
+      "type": "object",
+      "description": "[가정] traffic_prepare 사전 확인과 연결 정보",
+      "properties": {
+        "state": {
+          "enum": [
+            "running",
+            "done",
+            "failed"
+          ]
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "running",
+                  "done",
+                  "failed"
+                ]
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "state"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "reason": {
+          "type": "string"
+        },
+        "entry_host": {
+          "type": "string"
+        },
+        "relay": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "platform": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            },
+            "mode": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        "origin": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "platform": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "platform": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            },
+            "external_endpoint": {
+              "type": "string"
+            },
+            "tunnel": {
+              "type": "object",
+              "properties": {
+                "interface": {
+                  "type": "string"
+                },
+                "mtu": {
+                  "type": "integer",
+                  "minimum": 576
+                }
+              },
+              "required": [
+                "interface",
+                "mtu"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        "data_path": {
+          "type": "object",
+          "properties": {
+            "pooler": {
+              "type": "string"
+            },
+            "source_db": {
+              "type": "string"
+            },
+            "target_db": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pooler",
+            "source_db",
+            "target_db"
+          ],
+          "additionalProperties": false
+        },
+        "policy": {
+          "type": "object",
+          "properties": {
+            "steps": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "minItems": 1
+            },
+            "observe_seconds": {
+              "type": "number",
+              "minimum": 0
+            },
+            "max_failed_requests": {
+              "type": "number",
+              "minimum": 0
+            },
+            "max_p99_ratio": {
+              "type": "number",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "steps",
+            "observe_seconds",
+            "max_failed_requests",
+            "max_p99_ratio"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "state",
+        "checks"
+      ],
+      "additionalProperties": false
+    },
+    "event:traffic.prepare": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "type": {
+          "const": "traffic.prepare"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/data:traffic.prepare"
         }
       },
       "required": [

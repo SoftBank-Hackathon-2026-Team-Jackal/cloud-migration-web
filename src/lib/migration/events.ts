@@ -330,7 +330,42 @@ export type HandoverData = { item: HandoverItem; state: 'running' | 'done' }
 
 export type TrafficPhase = 'applying' | 'observing' | 'gate' | 'complete' | 'rolledback'
 /** 트래픽 피드에 남길 기록. key로 화면이 자기 문구를 고른다. restart는 피드를 비우라는 뜻이다. */
-export type TrafficNote = { key: 'apply' | 'gatePass' | 'gateFail' | 'reached' | 'manual' | 'inject' | 'drained' | 'restart'; params?: Record<string, string | number> }
+/**
+ * 트래픽 피드에 남길 기록. key로 화면이 자기 문구를 고른다. restart는 피드를 비우라는 뜻이다.
+ * [가정] prepare·observe·rollback 키와 activity(백엔드 Temporal Activity 이름, 예: traffic_set_weight)는 프론트 가정이다.
+ * activity가 없으면 화면이 key로 기본 이름을 고른다(trafficModel.ts).
+ */
+export type TrafficNoteKey = 'prepare' | 'apply' | 'observe' | 'gatePass' | 'gateFail' | 'rollback' | 'reached' | 'manual' | 'inject' | 'drained' | 'restart'
+export type TrafficNote = { key: TrafficNoteKey; params?: Record<string, string | number>; activity?: string }
+
+/*
+ * ---- 트래픽 이전 상세 [가정: Traffic #61–#63의 필드 이름이 정해지기 전 프론트 가정] ----
+ * traffic.prepare: traffic_prepare Activity의 사전 확인(인계 상태 READY · ready=true · external_endpoint 있음 · 헬스).
+ * 하나라도 실패하면 실행하지 않고 reason을 보낸다. 노드 이름·연결 정보는 화면이 그대로 보인다(문구가 아니라 값).
+ */
+export type TrafficPrepareCheck = { id: string; state: 'running' | 'done' | 'failed'; value?: string }
+export type TrafficSide = { name: string; platform?: string; location?: string }
+export type TrafficPrepareData = {
+  state: 'running' | 'done' | 'failed'
+  checks: TrafficPrepareCheck[]
+  /** 실행하지 않는 이유(사전 조건 실패) */
+  reason?: string
+  /** 사용자가 들어오는 주소(예: app.example.com) */
+  entry_host?: string
+  /** 중계 서버(예: Envoy · weighted_clusters) */
+  relay?: TrafficSide & { mode?: string }
+  origin?: TrafficSide
+  /** 대상. external_endpoint는 중계 서버가 대상으로 보내는 주소, tunnel은 온프레미스 터널(WireGuard) 정보 */
+  target?: TrafficSide & { external_endpoint?: string; tunnel?: { interface: string; mtu: number } }
+  /** 이 단계의 데이터 경로: 두 앱의 쓰기는 모두 pooler → source_db, target_db는 논리 복제로 따라온다 */
+  data_path?: { pooler: string; source_db: string; target_db: string }
+  /** 정책(단계·관찰 창·게이트 기준). 스냅샷 값이 오면 그 값을 쓴다. */
+  policy?: { steps: number[]; observe_seconds: number; max_failed_requests: number; max_p99_ratio: number }
+}
+/** [가정] 백엔드별 관찰 지표 */
+export type TrafficBackendMetrics = { requests_per_sec: number; p99_ms: number; failed_requests: number }
+/** [가정] 끝난 단계의 판정 기록 */
+export type TrafficStepResult = { step: number; verdict: 'pass' | 'rollback'; failed_requests: number; p99_ratio: number; observed_seconds?: number }
 export type TrafficSnapshotData = {
   phase: TrafficPhase
   weights: { origin: number; target: number }
@@ -344,10 +379,18 @@ export type TrafficSnapshotData = {
     p99_ratio: number
     max_p99_ratio: number
     observe_left_seconds: number
+    /** [가정] 관찰 창 길이(정책 observe_seconds) */
+    observe_seconds?: number
   }
   residual: { requests_per_sec: number; streams: number }
   decision?: 'advance' | 'rollback' | 'done'
   notes?: TrafficNote[]
+  /** [가정] 백엔드별 지표(원본·대상) */
+  backends?: { origin: TrafficBackendMetrics; target: TrafficBackendMetrics }
+  /** [가정] 끝난 단계들의 판정 */
+  results?: TrafficStepResult[]
+  /** [가정] 이 구간에도 계속되는 논리 복제의 지연 */
+  replication?: { lag_ms: number | null }
 }
 
 /** state: running(진행 중) → done(완료) 이고 verify는 6단계가 끝난 뒤 측정 구간에 들어갔다는 표시다. */
@@ -408,6 +451,7 @@ export type MigrationEvent =
   | Base<'data.readiness', DataReadinessData>
   | Base<'traffic.ready', TrafficReadyData>
   | Base<'traffic.snapshot', TrafficSnapshotData>
+  | Base<'traffic.prepare', TrafficPrepareData>
   | Base<'cutover.step', CutoverStepData>
   | Base<'cutover.result', CutoverResultData>
   | Base<'cutover.handover', HandoverData>

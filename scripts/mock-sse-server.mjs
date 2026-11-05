@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { APPROVAL_ID, PLAN_ID, PLAN_REVEAL_MS, approvalTimeline, REPORT_SECONDS, TRAFFIC_READY_EVENTS, timelineEnd, timelineFor } from '../src/lib/migration/script.ts'
+import { APPROVAL_ID, PLAN_ID, PLAN_REVEAL_MS, approvalTimeline, REPORT_SECONDS, TRAFFIC_READY_EVENTS, trafficPrepareTimeline, timelineEnd, timelineFor } from '../src/lib/migration/script.ts'
 import { DATA_END_MS, DATA_LSN_TICK_MS, dataTickAt, dataTimeline } from '../src/lib/migration/dataScript.ts'
 import { targetOfRequest } from '../src/lib/migration/events.ts'
 import { TrafficSim } from '../src/lib/migration/trafficSim.ts'
@@ -200,6 +200,13 @@ const phaseRunners = {
       await wait(record, item.after - readyDone)
       readyDone = item.after
       emit(record, { type: 'traffic.ready', phase: 'traffic', status: 'running', data: item.data })
+    }
+    // [가정] 사전 확인(traffic_prepare)과 연결 정보
+    let prepareDone = 0
+    for (const item of trafficPrepareTimeline(record.target)) {
+      await wait(record, Math.max(0, item.after - prepareDone))
+      prepareDone = item.after
+      emit(record, { type: 'traffic.prepare', phase: 'traffic', status: item.data.state === 'done' ? 'done' : 'running', data: item.data })
     }
     await new Promise((resolve, reject) => {
       const sim = new TrafficSim(data => {
