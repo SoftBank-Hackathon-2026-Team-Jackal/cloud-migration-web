@@ -138,7 +138,8 @@ export function useStageVoice({ stage, lang, speaking, lastLine, speak, onSetupS
         if (current === 'setup') { live.current.onSetupStart(); return }
         // 승인이 필요한 화면에서 "좋아·다음"은 승인이 아니다: 사실을 읽고 승인 방법을 알려 준다.
         if (gate) { enqueueFacts(gateFacts()); return }
-        const handler = voiceAction('next')
+        // "다시 시도할까요?"(샌드박스 사람 검토)에 "좋아·진행해"로 답하면 다시 시도한다.
+        const handler = voiceAction('next') ?? (current === 'rehearsal' ? voiceAction('retry') : null)
         if (!handler) { say('c.notYet'); return }
         handler()
         return
@@ -180,13 +181,10 @@ export function useStageVoice({ stage, lang, speaking, lastLine, speak, onSetupS
   return { handleUtterance, hints, hintLabel: voiceText(lang, 'h.label'), paused, confirming }
 }
 
-/** 상태에서 승인 사실을 다시 센다(이벤트를 놓친 경우: 주소로 승인 화면을 바로 연 SSE 등). 이벤트로 센 값이 있으면 그쪽을 쓴다. */
+/** 상태에서 승인 전 경고를 다시 센다(이벤트를 놓친 경우: 주소로 승인 화면을 바로 연 SSE 등). 이벤트로 센 값이 있으면 그쪽을 쓴다. */
 function approvalFactsFrom(state: MigrationState, counted: ReturnType<ReportEngine['approvalFacts']>) {
-  const changes = counted.changes || state.plan.steps.filter(step => !step.keep_source).length
-  const last = state.sandbox.attempts.at(-1)?.checks
-  return {
-    changes,
-    passed: counted.passed ?? (last?.required_total ? last.required_passed : null),
-    total: counted.total ?? (last?.required_total ? last.required_total : null),
-  }
+  if (counted.warnings > 0) return counted
+  const preview = state.plan.preview
+  const issues = preview ? [...preview.validation.warnings, ...(preview.pending_decisions ?? [])].map(issue => issue.message || 'code:' + issue.id) : []
+  return { warnings: issues.length, first: issues[0] ?? null }
 }

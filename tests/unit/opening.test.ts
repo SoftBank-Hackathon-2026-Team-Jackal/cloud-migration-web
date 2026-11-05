@@ -138,10 +138,8 @@ test('등록 환경 목업은 [가정] 통합 목록 형태를 따른다', async
   assert.equal(agentState(agent, Math.floor(now / 1000)), 'online')
 })
 
-test('자칼의 고정 문구는 한국어 사전과 녹음 목록이 같다(녹음 파일 이름으로 찾는다)', () => {
-  assert.equal(ko['open.jackal.listening'], clips.listening)
-  assert.equal(ko['open.jackal.askTarget'], clips.ask_target)
-  assert.equal(ko['open.jackal.kickoff'], clips.analysis_kickoff)
+test('고정 녹음은 호출 응답(wake)만 남긴다: 나머지 말은 모두 서버 TTS가 읽는다', () => {
+  assert.deepEqual(Object.keys(clips), ['wake'])
 })
 
 test('오프닝 문구는 세 언어에 모두 있고 변수 이름이 같다', () => {

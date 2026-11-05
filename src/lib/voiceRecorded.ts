@@ -3,7 +3,4 @@
  * (없는 파일을 요청하면 콘솔에 404가 남는다). `npm run tts:clips -- <id>`(scripts/generate-voice-clips.ts)로 새 문구를 녹음하면 이 목록에 더한다.
  * tests/unit/opening.test.ts가 폴더 내용과 같은지 확인한다.
  */
-export const RECORDED_CLIPS: readonly string[] = [
-  'analysis_done', 'analysis_start', 'approval_required', 'cutover_start', 'data_start', 'migration_done', 'planning_start',
-  'provisioning_ready', 'provisioning_start', 'sandbox_done', 'sandbox_start', 'setup', 'start', 'traffic_start', 'wake',
-]
+export const RECORDED_CLIPS: readonly string[] = ['wake']

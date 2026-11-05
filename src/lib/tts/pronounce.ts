@@ -104,6 +104,8 @@ const CODES: Record<string, Spoken & { en: string }> = {
   sub_off: { ko: '구독 해제', ja: 'サブスクリプション停止', en: 'subscription off' },
   seq_raise: { ko: '시퀀스 올리기', ja: 'シーケンス引き上げ', en: 'sequence raise' },
   resume_source: { ko: '원본 재개', ja: '移行元の再開', en: 'resume source' },
+  liveness_failed: { ko: '대상 DB 응답 없음', ja: '移行先DBの応答なし', en: 'target DB not responding' },
+  switch_refused: { ko: '전환 거부', ja: '切り替え拒否', en: 'switch refused' },
 }
 
 /** 코드를 낱말로 나눠 읽을 때 쓰는 낱말(소문자). 영어는 그대로 읽되 약어만 대문자로 둔다. */
@@ -201,6 +203,18 @@ function codePhrase(code: string, lang: SpeechLang): string {
   return words.map(word => WORDS[word]?.[lang] ?? (word.length <= 5 ? spell(word, lang) : word)).join(lang === 'ko' ? ' ' : '')
 }
 
+/**
+ * 화면에도 보일 코드 이름(보고 문구의 {reason}·{label}): 아는 코드는 문구, 모르면 낱말 사전으로 옮기고 모르는 낱말은 그대로 둔다.
+ * 약어는 라틴 글자로 남는다(말할 때는 spokenText가 읽어 준다).
+ */
+export function codeLabel(code: string, lang: SpeechLang): string {
+  const known = CODES[code.toLowerCase()]
+  if (known) return known[lang] ?? known.en
+  const words = code.toLowerCase().split(/[_\s-]+/).filter(Boolean)
+  if (lang === 'en') return words.map(word => ACRONYMS_EN.has(word) ? word.toUpperCase() : word).join(' ')
+  return words.map(word => WORDS[word]?.[lang] ?? (ACRONYMS_EN.has(word) ? word.toUpperCase() : word)).join(lang === 'ko' ? ' ' : '')
+}
+
 function regionPhrase(region: string, lang: SpeechLang): string {
   const key = region.toLowerCase()
   const known = REGIONS[key]
@@ -261,5 +275,7 @@ export function spokenText(text: string, lang: SpeechLang): string {
   value = value.replace(TERM_RE, match => TERM_OF.get(match.toLowerCase())![lang])
   // 남은 약어(대문자·숫자 2~5자, 대문자 하나 이상): 철자로
   value = value.replace(/(?<![A-Za-z0-9_])(?=[A-Z0-9]*[A-Z])[A-Z0-9]{2,5}(?![A-Za-z0-9_])/g, token => spell(token, lang))
+  // 소문자·숫자 섞인 짧은 이름(dc1, wg0): 철자로
+  value = value.replace(/(?<![A-Za-z0-9_.])(?=[a-z0-9]*\d)(?=[a-z0-9]*[a-z])[a-z0-9]{2,5}(?![A-Za-z0-9_])/g, token => spell(token, lang))
   return value.replace(/ +([,.!?。、])/g, '$1').replace(/\s+/g, ' ').trim()
 }

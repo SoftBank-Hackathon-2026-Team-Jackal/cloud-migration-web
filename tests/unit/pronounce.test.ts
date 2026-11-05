@@ -1,9 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { spell, spokenText, type SpeechLang } from '../../src/lib/tts/pronounce.ts'
+import { codeLabel, spell, spokenText, type SpeechLang } from '../../src/lib/tts/pronounce.ts'
 import { cacheKey, spokenRequest } from '../../src/lib/tts/service.ts'
-import { VOICE_MESSAGES } from '../../src/lib/voice/messages.ts'
+import { VOICE_MESSAGES, voiceText, type VoiceKey } from '../../src/lib/voice/messages.ts'
 import { ko } from '../../src/lib/i18n/ko.ts'
 import { en } from '../../src/lib/i18n/en.ts'
 import { ja } from '../../src/lib/i18n/ja.ts'
@@ -102,7 +102,7 @@ test('말 다듬기: 캐시 키는 다듬은 말로 만든다(같은 말이 되�
 const SAMPLE_PARAMS: Record<string, string> = {
   n: '3', m: '6', p: '50', s: '0.1', attempt: '2', changes: '4', passed: '24', total: '24', present: '3', expected: '5', missing: '2', count: '4',
   // 이벤트에서 들어오는 실제 값(목업 대본·백엔드 코드)
-  code: 'ROUTE_NOT_TUNNEL', name: 'pods_ready', label: 'orders_lost', value: '12 ms', item: 'f.sdk', cls: 'cls.CODE', phase: 'phase.data_copy',
+  code: 'ROUTE_NOT_TUNNEL', name: 'demo-postgres', label: 'orders_lost', value: '12 ms', cls: 'cls.CODE', phase: 'phase.data_copy', ms: '8', f: '0', direct: '3', diff: '1',
   stage: 'stage.cutover', region: 'ap-northeast-2', source: 'AWS ap-northeast-2', target: 'GCP GKE', targetEnv: 'GCP 프로젝트', found: 'Node.js 20 서비스, Dockerfile, K8s 매니페스트 3개, PostgreSQL, .env.example',
 }
 const fill = (text: string, dict: Record<string, string>) => text.replace(/\{(\w+)\}/g, (_, name: string) => {
@@ -125,11 +125,18 @@ function spokenSources(lang: 'ko' | 'ja'): string[] {
   const dict = ({ ko, ja } as Record<string, Record<string, string>>)[lang]
   const voice = VOICE_MESSAGES[lang] as Record<string, string>
   const lines = Object.values(voice).map(text => fill(text, voice))
+  // 보고 문구에 실제로 채워지는 값: 사전 키 목록·코드 문구(codeLabel)
+  const keys = Object.keys(voice).filter(key => /^(item|res|step|check|stage)\./.test(key))
+  for (const key of Object.keys(voice) as VoiceKey[]) {
+    lines.push(voiceText(lang, key, { items: keys.filter(name => name.startsWith('item.')), name: keys.filter(name => name.startsWith('res.')).slice(0, 2), check: 'check.pods_ready',
+      next: 'stage.cutover', reason: 'code:ROUTE_NOT_TUNNEL', first: 'code:DB_BACKUP_RETENTION_SHORT', label: 'code:orders_lost', n: 3, m: 6, p: 50, s: 4, f: 0, ms: 8, attempt: 2, direct: 3, diff: 1, cls: 'cls.CODE', phase: 'phase.data_copy', stage: 'stage.data', value: '8 ms' }))
+  }
+  for (const key of keys) lines.push(voice[key])
   for (const [key, text] of Object.entries(dict)) {
     if (/^open\.(jackal\.|sample$|source$|target\.|targetEnv\.|found\.)/.test(key) || key.startsWith('region.')) lines.push(fill(text, dict))
   }
-  if (lang === 'ko') lines.push(...Object.values(JSON.parse(readFileSync(new URL('../../src/lib/voiceClips.json', import.meta.url), 'utf8')) as Record<string, string>))
-  lines.push(...RUNTIME_VALUES)
+  lines.push(...Object.values(JSON.parse(readFileSync(new URL('../../src/lib/voiceClips.json', import.meta.url), 'utf8')) as Record<string, string>))
+  lines.push(...RUNTIME_VALUES, ...RUNTIME_VALUES.filter(value => /^[A-Za-z]+(_[A-Za-z]+)*$/.test(value)).map(value => codeLabel(value, lang)))
   return lines
 }
 

@@ -38,9 +38,9 @@ const BACK: Partial<Record<Stage, Stage>> = { setup: 'intro', analysis: 'setup',
 
 // 이 복제본의 보고 문구는 화면의 데모 단계 전환에만 바인딩한다. 실제 백엔드 결과로 해석하지 않는다.
 // 설정 화면은 첫 화면에서 자칼이 의도를 되짚으며 들어가므로 따로 안내하지 않는다.
+// 샌드박스는 테스트 수(sandbox.tests)를 받은 뒤 보고 엔진이 시작을 알린다("샌드박스 검증을 시작합니다. 테스트 n개.").
 const REPORT: Partial<Record<Stage, VoiceKey>> = {
   analysis: 'r.start.analysis',
-  rehearsal: 'r.start.rehearsal',
   planning: 'r.start.planning',
   approval: 'r.start.approval',
   provisioning: 'r.start.provisioning',
