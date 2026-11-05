@@ -146,6 +146,8 @@
 .cx-input:disabled{background:#f5f5f5}
 .cx-invalid{color:var(--cx-neg)}
 .cx-form-row{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:12px}
+.cx-form-row.is-even{grid-template-columns:1fr 1fr}
+select.cx-input{-webkit-appearance:none;appearance:none;padding-right:30px;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23666' stroke-width='1.4'/%3E%3C/svg%3E") no-repeat right 12px center}
 .cx-readonly{min-height:40px;padding:4px 4px 4px 12px;display:flex;align-items:center;justify-content:space-between;gap:10px;border-radius:10px;background:#f5f5f5}
 .cx-readonly code{font:500 13px/1.4 var(--cx-mono);overflow-wrap:anywhere}
 

@@ -3,8 +3,8 @@
 import { useState } from 'react'
 import { useI18n } from '../../lib/i18n'
 import { api } from '../../lib/connections/client'
-import type { ApiErrorCode, Connection } from '../../lib/connections/types'
-import { Ago, Chip, ErrorNote, isoSeconds, MockBadge } from './parts'
+import type { ApiErrorCode, Connection, VerifyResult } from '../../lib/connections/types'
+import { Ago, Chip, ErrorNote, MockBadge } from './parts'
 import { StatusChip } from './AwsSection'
 
 /** GCP: 데모는 우리 프로젝트 하나로 고정(읽기 전용 카드 + 연결 확인). WIF 등록 폼은 "곧 지원" 자리만. */
@@ -14,9 +14,10 @@ function GcpCard({ connection, now, onChanged }: { connection: Connection; now: 
   const [failure, setFailure] = useState<{ error: ApiErrorCode; detail: string | null } | null>(null)
   const verify = async () => {
     setBusy(true); setFailure(null)
-    const result = await api('/api/connections/' + encodeURIComponent(connection.connection_id) + '/verify', { method: 'POST', body: {} })
+    const result = await api<VerifyResult>('/api/connections/' + encodeURIComponent(connection.connection_id) + '/verify', { method: 'POST' })
     setBusy(false)
     if (!result.ok) setFailure(result)
+    else if (result.data.status === 'FAILED') setFailure({ error: 'conflict', detail: result.data.code })
     onChanged()
   }
   return <article className="cx-card" data-kind="GCP_TARGET" data-status={connection.status} aria-busy={busy}>
@@ -24,7 +25,7 @@ function GcpCard({ connection, now, onChanged }: { connection: Connection; now: 
       <div className="cx-card-title"><small>{t('cx.gcp.kind')}</small><strong>{connection.display_name}</strong></div>
       <div className="cx-card-state">
         {busy ? <Chip tone="wait">{t('cx.verifying')}</Chip> : <StatusChip connection={connection} />}
-        <span className="cx-faint">{t('cx.lastChecked')} <Ago at={isoSeconds(connection.last_verified_at)} now={now} /></span>
+        <span className="cx-faint">{t('cx.lastChecked')} <Ago at={connection.last_verified_at} now={now} /></span>
         <button type="button" className="cx-btn" data-action="verify" onClick={() => void verify()} disabled={busy}>{t('cx.verify')}</button>
       </div>
     </div>

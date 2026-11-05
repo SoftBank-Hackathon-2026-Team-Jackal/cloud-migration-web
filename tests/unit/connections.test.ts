@@ -2,7 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { getAgent, issueEnrollment, revokeAgent, PlatformError } from '../../src/lib/connections/platform.ts'
 import {
-  handleAgentStatus, handleEnroll, handleList, handleRevoke, handleScopeAnalyze, handleScopeConfirm, handleScopeOptions, handleVerifyConnection,
+  handleAgentStatus, handleCreateConnection, handleDeleteConnection, handleEnroll, handleList, handleRevoke, handleScopeAnalyze, handleScopeConfirm,
+  handleScopeOptions, handleSetRole, handleVerifyConnection,
   type ConnectionsDeps,
 } from '../../src/lib/connections/handlers.ts'
 import { createMockAgents, createMockConnections, memoryAgentIds, resetMock } from '../../src/lib/connections/mock.ts'
@@ -136,14 +137,27 @@ test('목록: Agent 쪽이 실패해도 연결 목록은 보여 준다', async (
   assert.equal(body.meta.agents.error, 'unavailable')
 })
 
-test('[가정] AWS 확인·범위 선택 목업 흐름', async () => {
+test('[가정 · #23 형태] AWS 연결: 만들기 → 역할 등록 → 확인 → 삭제, 범위 선택 목업 흐름', async () => {
   const d = deps(fakePlatform())
-  const denied = await (await handleVerifyConnection(post({ role_arn: 'arn:aws:iam::111122223333:role/denied' }), d, 'c-1')).json()
-  assert.equal(denied.connection.status, 'FAILED')
-  assert.equal(denied.connection.error_code, 'ASSUME_ROLE_DENIED')
-  assert.equal((await handleVerifyConnection(post({ role_arn: 'nope' }), d, 'c-1')).status, 400)
-  const okay = await (await handleVerifyConnection(post({ role_arn: 'arn:aws:iam::111122223333:role/cmp' }), d, 'c-1')).json()
-  assert.equal(okay.connection.account_id, '111122223333')
+  assert.equal((await handleCreateConnection(post({ kind: 'AWS_SOURCE', display_name: 'x', region: 'mars-1' }), d)).status, 400)
+  const created = await (await handleCreateConnection(post({ kind: 'AWS_SOURCE', display_name: 'prod', region: 'ap-northeast-2' }), d)).json()
+  assert.deepEqual(Object.keys(created).sort(), ['connection_id', 'display_name', 'external_id', 'kind', 'launch_stack_url', 'status'])
+  assert.equal(created.status, 'PENDING')
+  const notSet = await handleVerifyConnection(post({}), d, created.connection_id)
+  assert.deepEqual(await notSet.json(), { error: 'conflict', detail: 'ROLE_NOT_SET' })
+  assert.equal((await handleSetRole(post({ role_arn: 'nope' }), d, created.connection_id)).status, 400)
+  await handleSetRole(post({ role_arn: 'arn:aws:iam::111122223333:role/denied' }), d, created.connection_id)
+  const denied = await (await handleVerifyConnection(post({}), d, created.connection_id)).json()
+  assert.deepEqual([denied.status, denied.code], ['FAILED', 'ASSUME_ROLE_DENIED'])
+  await handleSetRole(post({ role_arn: 'arn:aws:iam::111122223333:role/cmp' }), d, created.connection_id)
+  const okay = await (await handleVerifyConnection(post({}), d, created.connection_id)).json()
+  assert.deepEqual([okay.status, okay.account_id, okay.eks_clusters], ['CONNECTED', '111122223333', ['chat-prod']])
+  assert.equal(typeof okay.checked_at, 'number')
+  const listed = (await (await handleList(get(), d)).json()).connections.find((item: { connection_id: string }) => item.connection_id === created.connection_id)
+  assert.equal(typeof listed.last_verified_at, 'number')
+  const removed = await (await handleDeleteConnection(get(), d, created.connection_id)).json()
+  assert.equal(removed.deleted, true)
+  assert.equal(removed.stack_name, 'cmp-source-role')
   assert.equal((await handleVerifyConnection(post({}), d, 'c-404')).status, 404)
 
   const regions = await (await handleScopeOptions(get('/api/scope/options?level=regions&connection_id=c-1'), d)).json()

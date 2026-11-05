@@ -67,7 +67,8 @@ function AgentCard({ agent: initial, now, onChanged }: { agent: AgentView; now: 
     </div>
     <dl className="cx-ledger">
       <div><dt>{t('cx.agent.cluster')}</dt><dd className="cx-mono cx-wrap">{agent.cluster_uid ?? <span className="cx-faint">{t('cx.agent.clusterAfter')}</span>}</dd></div>
-      <div><dt>{t('cx.agent.version')}</dt><dd className="cx-faint" title={t('cx.agent.versionHint')}>—</dd></div>
+      {/* Agent 버전: 백엔드가 저장하지 않아 늘 null — 값이 올 때만 보인다 */}
+      {agent.version && <div><dt>{t('cx.agent.version')}</dt><dd className="cx-mono">{agent.version}</dd></div>}
     </dl>
     {state === 'pending' && <p className="cx-note">{t('cx.agent.pendingHint')}</p>}
     {!agent.revoked && agent.last_seen_at !== null && <div className="cx-tunnel" aria-label={t('cx.agent.tunnel')}>

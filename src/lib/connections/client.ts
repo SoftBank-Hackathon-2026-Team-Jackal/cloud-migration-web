@@ -8,7 +8,7 @@ export type ApiResult<T> = { ok: true; data: T } | { ok: false; status: number; 
 
 const CODES: ApiErrorCode[] = ['operator_key', 'not_found', 'conflict', 'unavailable', 'bad_request', 'platform_error']
 
-export async function api<T>(path: string, init: { method?: 'GET' | 'POST' | 'DELETE'; body?: object; signal?: AbortSignal } = {}): Promise<ApiResult<T>> {
+export async function api<T>(path: string, init: { method?: 'GET' | 'POST' | 'PUT' | 'DELETE'; body?: object; signal?: AbortSignal } = {}): Promise<ApiResult<T>> {
   let response: Response
   try {
     response = await fetch(path, {

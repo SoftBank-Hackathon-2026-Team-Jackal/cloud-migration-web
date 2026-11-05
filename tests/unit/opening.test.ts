@@ -4,7 +4,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { RECORDED_CLIPS } from '../../src/lib/voiceRecorded.ts'
 import { isStartCommand, targetFromUtterance } from '../../src/lib/agent/intent.ts'
 import { classifyKey, crossCheck, parseEnvKeys } from '../../src/lib/setup/envFile.ts'
-import { detectStack, displayTree, scanPublicSource } from '../../src/lib/github/scan.ts'
+import { detectStack, displayTree, runtimeFromDockerfile, scanPublicSource } from '../../src/lib/github/scan.ts'
 import { createMockAgents, createMockConnections, resetMock } from '../../src/lib/connections/mock.ts'
 import { agentState } from '../../src/lib/connections/types.ts'
 import { ko } from '../../src/lib/i18n/ko.ts'
@@ -65,12 +65,23 @@ test('저장소 구성에서 런타임·Dockerfile·K8s·PostgreSQL·환경 변�
     '.env.example': 'PORT=8080\nDATABASE_URL=postgres://example\n# c\nJWT_SECRET=\n',
   })
   assert.deepEqual(result.detections.map(item => item.kind), ['runtime', 'dockerfile', 'k8s', 'postgres', 'env'])
-  assert.deepEqual(result.detections[0], { kind: 'runtime', name: 'Node.js 20 · TypeScript', evidence: 'package.json' })
+  assert.deepEqual(result.detections[0], { kind: 'runtime', name: 'Node.js 20', evidence: 'Dockerfile' })
+  // Dockerfile이 없으면 의존성 파일로 짐작하고, 언어(TypeScript) 이름은 붙이지 않는다
+  assert.deepEqual(detectStack(['package.json', 'tsconfig.json'], { 'package.json': JSON.stringify({ engines: { node: '20' }, devDependencies: { typescript: '^5' } }) }).detections[0],
+    { kind: 'runtime', name: 'Node.js 20', evidence: 'package.json' })
   assert.deepEqual(result.detections[1], { kind: 'dockerfile', evidence: 'Dockerfile', stages: 2 })
   assert.deepEqual(result.detections[2], { kind: 'k8s', count: 2, evidence: 'k8s/' })
   assert.deepEqual(result.env_keys, ['PORT', 'DATABASE_URL', 'JWT_SECRET'])
   // 탐지 결과에 파일 내용(예: 접속 문자열)이 섞이지 않는다
   assert.ok(!JSON.stringify(result).includes('postgres://example'))
+})
+
+test('Dockerfile 기반 이미지에서 런타임을 짐작한다', () => {
+  assert.equal(runtimeFromDockerfile('FROM golang:1.22 AS build\nFROM gcr.io/distroless/static'), 'Go 1.22')
+  assert.equal(runtimeFromDockerfile('FROM --platform=linux/amd64 python:3.12-slim'), 'Python 3.12')
+  assert.equal(runtimeFromDockerfile('FROM eclipse-temurin:21-jre'), 'Java 21')
+  assert.equal(runtimeFromDockerfile('FROM node:20 AS build\nFROM gcr.io/distroless/nodejs20'), 'Node.js 20')
+  assert.equal(runtimeFromDockerfile('FROM alpine:3.20'), null)
 })
 
 test('파일 목록은 상한까지만, node_modules는 빼고 보여 준다', () => {

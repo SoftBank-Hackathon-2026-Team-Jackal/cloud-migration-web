@@ -3,8 +3,8 @@
 import { useState } from 'react'
 import { useI18n, type MsgKey } from '../../lib/i18n'
 import { api } from '../../lib/connections/client'
-import { isRoleArn, type ApiErrorCode, type Connection, type CreatedConnection } from '../../lib/connections/types'
-import { Ago, CardMenu, Chip, ConfirmDialog, CopyButton, ErrorNote, isoSeconds, MockBadge, Modal, type ChipTone } from './parts'
+import { AWS_REGIONS, isRoleArn, type ApiErrorCode, type Connection, type CreatedConnection, type VerifyResult } from '../../lib/connections/types'
+import { Ago, CardMenu, Chip, ConfirmDialog, CopyButton, ErrorNote, MockBadge, Modal, type ChipTone } from './parts'
 
 type Failure = { error: ApiErrorCode; detail: string | null }
 type Purpose = 'AWS_SOURCE' | 'AWS_TARGET'
@@ -26,7 +26,7 @@ function AwsCard({ connection, now, onChanged, onContinue }: { connection: Conne
   const verify = async () => {
     if (!connection.role_arn) { onContinue(connection); return }
     setBusy('verify'); setFailure(null)
-    const result = await api<{ connection: Connection }>('/api/connections/' + encodeURIComponent(connection.connection_id) + '/verify', { method: 'POST', body: {} })
+    const result = await api<VerifyResult>('/api/connections/' + encodeURIComponent(connection.connection_id) + '/verify', { method: 'POST' })
     setBusy(null)
     if (!result.ok) setFailure(result)
     onChanged()
@@ -48,7 +48,7 @@ function AwsCard({ connection, now, onChanged, onContinue }: { connection: Conne
       </div>
       <div className="cx-card-state">
         {busy === 'verify' ? <Chip tone="wait">{t('cx.verifying')}</Chip> : <StatusChip connection={connection} />}
-        <span className="cx-faint">{t('cx.lastChecked')} <Ago at={isoSeconds(connection.last_verified_at)} now={now} /></span>
+        <span className="cx-faint">{t('cx.lastChecked')} <Ago at={connection.last_verified_at} now={now} /></span>
         <CardMenu label={t('cx.menu')} items={[
           { id: 'verify', text: t('cx.reverify'), disabled: busy !== null, onSelect: () => void verify() },
           { id: 'delete', text: t('cx.delete'), danger: true, disabled: busy !== null, onSelect: () => setConfirmDelete(true) },
@@ -64,7 +64,7 @@ function AwsCard({ connection, now, onChanged, onContinue }: { connection: Conne
         ? <span className="cx-tags">{connection.eks_clusters.map(name => <code key={name}>{name}</code>)}</span>
         : <span className="cx-faint">{connection.status === 'CONNECTED' ? t('cx.aws.eksNone') : t('cx.aws.eksAfter')}</span>}</dd></div>}
     </dl>
-    {connection.status === 'FAILED' && connection.error_code && <ErrorNote error="conflict" title={t('cx.aws.failed')} detail={connection.error_code} />}
+    {connection.status === 'FAILED' && connection.last_code && <ErrorNote error="conflict" title={t('cx.aws.failed')} detail={connection.last_code} />}
     {connection.status === 'PENDING' && !connection.role_arn && <div className="cx-card-foot">
       <span className="cx-faint">{t('cx.aws.pendingHint')}</span>
       <button type="button" className="cx-btn" onClick={() => onContinue(connection)}>{t('cx.aws.continue')}</button>
@@ -75,27 +75,34 @@ function AwsCard({ connection, now, onChanged, onContinue }: { connection: Conne
   </article>
 }
 
-/** AWS 계정 연결: 용도 → CloudFormation Launch Stack → RoleArn 붙여 넣기 → 연결 확인 */
+type Draft = { connection_id: string; kind: Purpose; external_id: string | null; launch_stack_url: string | null }
+
+/** AWS 계정 연결: 용도·이름·리전 → CloudFormation Launch Stack → RoleArn 등록 → 연결 확인 (#23: POST /connections → PUT role → POST verify) */
 function ConnectDialog({ open, resume, onClose, onChanged }: { open: boolean; resume: Connection | null; onClose: () => void; onChanged: () => void }) {
-  const { t } = useI18n()
+  const { t, tOr } = useI18n()
   const [purpose, setPurpose] = useState<Purpose>('AWS_SOURCE')
-  const [created, setCreated] = useState<{ connection: Connection; launch_stack_url: string | null } | null>(null)
+  const [name, setName] = useState('')
+  const [region, setRegion] = useState<string>(AWS_REGIONS[0])
+  const [created, setCreated] = useState<Draft | null>(null)
   const [roleArn, setRoleArn] = useState('')
   const [touched, setTouched] = useState(false)
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<Failure | null>(null)
-  const [verified, setVerified] = useState<Connection | null>(null)
-  const current = created?.connection ?? resume
+  const [verified, setVerified] = useState<VerifyResult | null>(null)
+  const current: Draft | null = created ?? (resume && resume.kind !== 'GCP_TARGET'
+    ? { connection_id: resume.connection_id, kind: resume.kind, external_id: resume.external_id ?? null, launch_stack_url: null } : null)
 
-  const reset = () => { setPurpose('AWS_SOURCE'); setCreated(null); setRoleArn(''); setTouched(false); setBusy(false); setFailure(null); setVerified(null) }
+  const reset = () => { setPurpose('AWS_SOURCE'); setName(''); setRegion(AWS_REGIONS[0]); setCreated(null); setRoleArn(''); setTouched(false); setBusy(false); setFailure(null); setVerified(null) }
   const close = () => { reset(); onClose() }
 
+  const displayName = name.trim() || t(purpose === 'AWS_SOURCE' ? 'cx.aws.namePhSource' : 'cx.aws.namePhTarget')
   const create = async () => {
     setBusy(true); setFailure(null)
-    const result = await api<CreatedConnection>('/api/connections', { method: 'POST', body: { kind: purpose } })
+    const result = await api<CreatedConnection>('/api/connections', { method: 'POST', body: { kind: purpose, display_name: displayName, region } })
     setBusy(false)
     if (!result.ok) { setFailure(result); return }
-    setCreated({ connection: result.data.connection, launch_stack_url: result.data.launch_stack_url })
+    const data = result.data
+    setCreated({ connection_id: data.connection_id, kind: data.kind === 'AWS_TARGET' ? 'AWS_TARGET' : 'AWS_SOURCE', external_id: data.external_id, launch_stack_url: data.launch_stack_url })
     onChanged()
   }
   const valid = isRoleArn(roleArn)
@@ -103,12 +110,15 @@ function ConnectDialog({ open, resume, onClose, onChanged }: { open: boolean; re
     setTouched(true)
     if (!current || !valid) return
     setBusy(true); setFailure(null); setVerified(null)
-    const result = await api<{ connection: Connection }>('/api/connections/' + encodeURIComponent(current.connection_id) + '/verify', { method: 'POST', body: { role_arn: roleArn.trim() } })
+    const path = '/api/connections/' + encodeURIComponent(current.connection_id)
+    const role = await api<{ connection: Connection }>(path + '/role', { method: 'PUT', body: { role_arn: roleArn.trim() } })
+    if (!role.ok) { setBusy(false); setFailure(role); onChanged(); return }
+    const result = await api<VerifyResult>(path + '/verify', { method: 'POST' })
     setBusy(false)
     onChanged()
     if (!result.ok) { setFailure(result); return }
-    if (result.data.connection.status === 'FAILED') setFailure({ error: 'conflict', detail: result.data.connection.error_code ?? null })
-    else setVerified(result.data.connection)
+    if (result.data.status === 'FAILED') setFailure({ error: 'conflict', detail: result.data.code })
+    else setVerified(result.data)
   }
 
   const kind = current?.kind ?? purpose
@@ -124,6 +134,19 @@ function ConnectDialog({ open, resume, onClose, onChanged }: { open: boolean; re
           <code>{value}</code>
         </label>)}
       </fieldset>
+      <div className="cx-form-row is-even">
+        <label className="cx-field">
+          <span>{t('cx.aws.name')}</span>
+          <input name="displayName" className="cx-input" value={name} maxLength={120} autoComplete="off" disabled={busy}
+            placeholder={t(purpose === 'AWS_SOURCE' ? 'cx.aws.namePhSource' : 'cx.aws.namePhTarget')} onChange={event => setName(event.target.value)} />
+        </label>
+        <label className="cx-field">
+          <span>{t('cx.region')}</span>
+          <select name="region" className="cx-input" value={region} disabled={busy} onChange={event => setRegion(event.target.value)}>
+            {AWS_REGIONS.map(value => <option key={value} value={value}>{value} · {tOr('region.' + value, value)}</option>)}
+          </select>
+        </label>
+      </div>
       <p className="cx-note">{t('cx.aws.noKeys')}</p>
       {failure && <ErrorNote error={failure.error} detail={failure.detail} onRetry={() => void create()} />}
       <div className="cx-dialog-actions">
@@ -135,8 +158,8 @@ function ConnectDialog({ open, resume, onClose, onChanged }: { open: boolean; re
       <ol className="cx-howto">
         <li>
           <div><strong>{t('cx.aws.step1')}</strong><span>{t(kind === 'AWS_SOURCE' ? 'cx.aws.step1Source' : 'cx.aws.step1Target')}</span></div>
-          {created?.launch_stack_url
-            ? <a className="cx-primary" href={created.launch_stack_url} target="_blank" rel="noopener noreferrer" data-launch-stack>{t('cx.aws.launch')} ↗</a>
+          {current.launch_stack_url
+            ? <a className="cx-primary" href={current.launch_stack_url} target="_blank" rel="noopener noreferrer" data-launch-stack>{t('cx.aws.launch')} ↗</a>
             : <span className="cx-faint">{t('cx.aws.launchDone')}</span>}
         </li>
         <li>
@@ -154,11 +177,11 @@ function ConnectDialog({ open, resume, onClose, onChanged }: { open: boolean; re
           <div className="cx-readonly"><code data-external-id>{current.external_id ?? '—'}</code>{current.external_id && <CopyButton value={current.external_id} label={t('cx.aws.copyExternal')} />}</div>
         </li>
       </ol>
-      {failure && <ErrorNote error={failure.error} title={failure.detail === 'ASSUME_ROLE_DENIED' ? t('cx.aws.failed') : undefined} detail={failure.detail} />}
+      {failure && <ErrorNote error={failure.error} title={failure.detail?.startsWith('ASSUME_ROLE') ? t('cx.aws.failed') : undefined} detail={failure.detail} />}
       {verified && <div className="cx-pass" role="status">
         <strong>{t('cx.aws.verified')}</strong>
-        <span>{t('cx.aws.verifiedDetail', { account: verified.account_id ?? '—', region: verified.region ?? '—' })}</span>
-        {verified.eks_clusters && <span className="cx-tags">{verified.eks_clusters.map(name => <code key={name}>{name}</code>)}</span>}
+        <span>{t('cx.aws.verifiedDetail', { account: verified.account_id ?? '—', region })}</span>
+        {verified.eks_clusters && <span className="cx-tags">{verified.eks_clusters.map(cluster => <code key={cluster}>{cluster}</code>)}</span>}
       </div>}
       <div className="cx-dialog-actions">
         <button type="button" className="cx-btn" data-step="close" onClick={close} disabled={busy}>{verified ? t('cx.close') : t('cx.later')}</button>

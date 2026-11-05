@@ -1,7 +1,7 @@
 import type { AgentIdStore, AgentsApi, ConnectionsApi } from './adapter.ts'
 import { PlatformError } from './platform.ts'
 import {
-  agentState, installCommand, isAgentId, isRoleArn, ttlSeconds,
+  agentState, AWS_REGIONS, installCommand, isAgentId, isRoleArn, ttlSeconds,
   type AgentView, type ApiErrorCode, type ConnectionsList, type PlatformAgent, type ScopeLevel, type ScopeSelection,
 } from './types.ts'
 
@@ -74,25 +74,31 @@ export async function handleList(_request: Request, deps: ConnectionsDeps): Prom
   return json(200, body)
 }
 
-/** POST /api/connections {kind} [가정] */
+/** POST /api/connections {kind, display_name, region} [가정 · #23] */
 export async function handleCreateConnection(request: Request, deps: ConnectionsDeps): Promise<Response> {
   const body = await readJson(request)
   const kind = body?.kind
-  if (kind !== 'AWS_SOURCE' && kind !== 'AWS_TARGET') return fail(400, 'bad_request')
-  try { return json(201, await deps.connections.createConnection(kind)) } catch (error) { return fromError(error) }
+  const name = typeof body?.display_name === 'string' ? body.display_name.trim() : ''
+  const region = body?.region
+  if ((kind !== 'AWS_SOURCE' && kind !== 'AWS_TARGET') || !name || name.length > 120 || !(AWS_REGIONS as readonly unknown[]).includes(region)) return fail(400, 'bad_request')
+  try { return json(201, await deps.connections.createConnection({ kind, display_name: name, region: region as string })) } catch (error) { return fromError(error) }
 }
 
-/** POST /api/connections/{id}/verify {role_arn?} [가정] */
-export async function handleVerifyConnection(request: Request, deps: ConnectionsDeps, connectionId: string): Promise<Response> {
-  const body = await readJson(request) ?? {}
-  const roleArn = body.role_arn
-  if (roleArn !== undefined && !isRoleArn(roleArn)) return fail(400, 'bad_request', 'INVALID_ROLE_ARN')
-  try { return json(200, { connection: await deps.connections.verifyConnection(connectionId, { role_arn: roleArn as string | undefined }) }) } catch (error) { return fromError(error) }
+/** PUT /api/connections/{id}/role {role_arn} [가정 · #23] */
+export async function handleSetRole(request: Request, deps: ConnectionsDeps, connectionId: string): Promise<Response> {
+  const body = await readJson(request)
+  if (!isRoleArn(body?.role_arn)) return fail(400, 'bad_request', 'INVALID_ROLE_ARN')
+  try { return json(200, { connection: await deps.connections.setRole(connectionId, (body!.role_arn as string).trim()) }) } catch (error) { return fromError(error) }
 }
 
-/** DELETE /api/connections/{id} [가정] */
+/** POST /api/connections/{id}/verify [가정 · #23] → 늘 200 {status, code, checked_at, account_id?, eks_clusters?} */
+export async function handleVerifyConnection(_request: Request, deps: ConnectionsDeps, connectionId: string): Promise<Response> {
+  try { return json(200, await deps.connections.verifyConnection(connectionId)) } catch (error) { return fromError(error) }
+}
+
+/** DELETE /api/connections/{id} [가정 · #23] */
 export async function handleDeleteConnection(_request: Request, deps: ConnectionsDeps, connectionId: string): Promise<Response> {
-  try { await deps.connections.deleteConnection(connectionId); return json(200, { deleted: connectionId }) } catch (error) { return fromError(error) }
+  try { return json(200, await deps.connections.deleteConnection(connectionId)) } catch (error) { return fromError(error) }
 }
 
 /**
@@ -146,6 +152,7 @@ export async function handleForget(_request: Request, deps: ConnectionsDeps, age
 }
 
 const LEVELS: ScopeLevel[] = ['regions', 'clusters', 'namespaces', 'workloads']
+// 클러스터 단계는 #23의 GET /connections/{id}/eks-clusters?region= 로 바꿔 끼울 자리다(지금은 목업 어댑터가 같은 값을 준다).
 const NAME = /^[\w.\-:/]{1,128}$/
 const field = (value: unknown) => (typeof value === 'string' && NAME.test(value) ? value : undefined)
 

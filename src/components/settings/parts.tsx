@@ -26,11 +26,6 @@ export function Ago({ at, now }: { at: number | null; now: number }) {
   return <time dateTime={new Date(at * 1000).toISOString()} title={new Date(at * 1000).toLocaleString(lang)}>{text}</time>
 }
 
-export const isoSeconds = (iso: string | null | undefined) => {
-  const ms = iso ? Date.parse(iso) : NaN
-  return Number.isFinite(ms) ? Math.floor(ms / 1000) : null
-}
-
 export type ChipTone = 'ok' | 'live' | 'wait' | 'off' | 'bad'
 export function Chip({ tone, children }: { tone: ChipTone; children: ReactNode }) {
   return <span className={'cx-chip is-' + tone} data-tone={tone}><i aria-hidden="true" />{children}</span>

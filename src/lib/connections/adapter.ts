@@ -1,11 +1,12 @@
 import type {
-  Connection, ConnectionKind, CreatedConnection, PlatformAgent, ScopeAnalysis, ScopeConfirmation, ScopeLevel, ScopeSelection, TunnelStatus,
+  ClusterList, Connection, CreateConnectionInput, CreatedConnection, DeletedConnection, PlatformAgent, ScopeAnalysis, ScopeConfirmation,
+  ScopeLevel, ScopeSelection, TunnelStatus, VerifyResult,
 } from './types.ts'
 
 /**
  * 웹 서버가 플랫폼에 묻는 일의 함수 시그니처. 실제 API와 [가정] 목업이 같은 모양을 따르므로 나중에 구현만 바꿔 끼운다.
  * - AgentsApi: 실제 API(platform.ts)가 있다. 운영자 키가 없는 목업 데모 모드에서만 목업을 쓴다.
- * - ConnectionsApi: [가정] 백엔드 미구현. 지금은 mock.ts가 답한다.
+ * - ConnectionsApi: [가정] 백엔드 #23(미병합)과 같은 경로·형태. 지금은 mock.ts가 답하고, #23 병합 뒤 실제 구현으로 바꾼다.
  */
 export interface AgentsApi {
   readonly mock: boolean
@@ -16,15 +17,19 @@ export interface AgentsApi {
 
 export interface ConnectionsApi {
   readonly mock: boolean
-  /** [가정] GET /connections */
+  /** [가정 · #23] GET /connections 의 connections[] */
   listConnections(): Promise<Connection[]>
-  /** [가정] POST /connections {kind} → external_id, launch_stack_url */
-  createConnection(kind: Extract<ConnectionKind, 'AWS_SOURCE' | 'AWS_TARGET'>): Promise<CreatedConnection>
-  /** [가정] POST /connections/{id}/verify {role_arn?} */
-  verifyConnection(connectionId: string, input: { role_arn?: string }): Promise<Connection>
-  /** [가정] DELETE /connections/{id} — 플랫폼의 연결 정보만 지운다(계정의 IAM 역할은 남는다) */
-  deleteConnection(connectionId: string): Promise<void>
-  /** [가정] 터널 상태(tunnel_ip, last_handshake_at, 앱 헬스·DB 확인) — 백엔드 조회 API 없음 */
+  /** [가정 · #23] POST /connections {kind, display_name, region} → external_id, launch_stack_url */
+  createConnection(input: CreateConnectionInput): Promise<CreatedConnection>
+  /** [가정 · #23] PUT /connections/{id}/role {role_arn} — 스택 출력 RoleArn 등록 */
+  setRole(connectionId: string, roleArn: string): Promise<Connection>
+  /** [가정 · #23] POST /connections/{id}/verify — 늘 200, status·code로 결과 */
+  verifyConnection(connectionId: string): Promise<VerifyResult>
+  /** [가정 · #23] DELETE /connections/{id} — 플랫폼의 연결 정보만 지운다(계정의 IAM 역할은 남는다) */
+  deleteConnection(connectionId: string): Promise<DeletedConnection>
+  /** [가정 · #23] GET /connections/{id}/eks-clusters?region= */
+  listEksClusters(connectionId: string, region?: string): Promise<ClusterList>
+  /** [가정] 터널 상태(tunnel_ip, last_handshake_at, 앱 헬스·DB 확인) — #23 병합 뒤에는 GET /agent-admin/agents의 tunnel 필드로 대신한다 */
   tunnelStatus(agentId: string, agent: PlatformAgent): Promise<TunnelStatus | null>
   /** [가정] 범위 선택 단계별 목록: 리전 → EKS 클러스터 → Namespace → Deployment */
   listScopeOptions(level: ScopeLevel, selection: Partial<ScopeSelection>): Promise<string[]>
@@ -34,7 +39,7 @@ export interface ConnectionsApi {
   confirmScope(analysisId: string, included: string[]): Promise<ScopeConfirmation>
 }
 
-/** 웹이 등록한 agent_id 기억. [가정] GET /agent-admin/agents 목록 API가 생기면 이것을 지운다. */
+/** 웹이 등록한 agent_id 기억. [가정] #23의 GET /agent-admin/agents(터널 상태 포함)가 병합되면 이것을 지운다. */
 export interface AgentIdStore {
   list(): string[]
   add(agentId: string): void

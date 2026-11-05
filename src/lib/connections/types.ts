@@ -2,39 +2,59 @@
  * 연결 관리(/settings)·설정 화면·이전 범위 선택이 함께 쓰는 형태와 순수 함수.
  * 브라우저와 웹 서버(BFF)가 모두 import하므로 비밀값·환경변수·런타임 import를 두지 않는다(단위 테스트가 직접 읽는다).
  *
- * [가정] 표시가 붙은 형태는 백엔드에 아직 없다. 웹 서버의 목업 어댑터(mock.ts)가 같은 형태로 답하고,
- * 백엔드가 생기면 어댑터만 바꿔 끼운다.
+ * [가정] 표시가 붙은 형태는 아직 백엔드 main에 없다. 백엔드 티켓 #23(provisioning/feat/23-connections, 미병합)의
+ * 필드 이름·응답 형태를 따라 두었고, 웹 서버의 목업 어댑터(mock.ts)가 같은 형태로 답한다. #23이 병합되면 어댑터만 바꿔 끼운다
+ * (최종 필드 이름은 병합 때 다시 확인).
  */
 
 export type ConnectionKind = 'AWS_SOURCE' | 'AWS_TARGET' | 'GCP_TARGET'
 export type ConnectionStatus = 'PENDING' | 'CONNECTED' | 'FAILED'
 
-/** [가정] GET /connections 의 connections[] 항목 */
+/** [가정 · #23 AwsConnectionSummary/GcpConnectionSummary + ConnectionDetail 일부] GET /connections 의 connections[] 항목 */
 export type Connection = {
   connection_id: string
   kind: ConnectionKind
   display_name: string
   status: ConnectionStatus
-  last_verified_at: string | null
+  /** epoch 초(#23) */
+  last_verified_at: number | null
   /** AWS: 확인에 성공하면 채워진다 */
-  account_id?: string
-  region?: string
+  account_id?: string | null
+  region: string
   /** AWS: 사용자가 붙여 넣은 역할 ARN */
   role_arn?: string
   /** AWS: 신뢰 정책에 넣을 External ID. 비밀값이 아니라 "혼동된 대리인" 방지용 식별자라 화면에 보여 준다. */
   external_id?: string
-  /** AWS_SOURCE: 확인 때 읽어 온 EKS 클러스터 */
+  /** AWS_SOURCE: 확인 때 읽어 온 EKS 클러스터(#23 목록 응답에는 없고 verify·eks-clusters 응답에 있다) */
   eks_clusters?: string[]
   /** GCP */
-  project_id?: string
-  /** FAILED일 때 */
-  error_code?: string
+  project_id?: string | null
+  /** 마지막 확인 결과 코드(#23 ConnectionDetail.last_code). FAILED일 때 오류 코드 */
+  last_code?: string | null
 }
 
-/** [가정] POST /connections 응답 */
-export type CreatedConnection = { connection: Connection; external_id: string; launch_stack_url: string }
+/** [가정 · #23 CreateConnectionRequest] POST /connections — GCP는 데모 프로젝트 고정이라 웹에서 만들지 않는다 */
+export type CreateConnectionInput = { kind: 'AWS_SOURCE' | 'AWS_TARGET'; display_name: string; region: string }
+/** [가정 · #23 CreateConnectionResponse] */
+export type CreatedConnection = { connection_id: string; kind: ConnectionKind; display_name: string; status: ConnectionStatus; external_id: string | null; launch_stack_url: string | null }
+/** [가정 · #23 VerifyResponse] POST /connections/{id}/verify — 연결이 있으면 늘 200, 결과는 status·code로 */
+export type VerifyResult = {
+  status: 'CONNECTED' | 'FAILED'
+  code: string
+  checked_at: number
+  account_id?: string | null
+  project_id?: string | null
+  principal?: string | null
+  eks_clusters?: string[] | null
+}
+/** [가정 · #23 DeleteResponse] */
+export type DeletedConnection = { connection_id: string; deleted: true; stack_name: string | null; notice: string }
+/** [가정 · #23 ClusterList] GET /connections/{id}/eks-clusters?region= */
+export type ClusterList = { connection_id: string; region: string; eks_clusters: string[] }
 
-/** [가정] 터널 상태. 백엔드 DB에는 있지만 조회 API가 아직 없다. */
+export const AWS_REGIONS = ['ap-northeast-2', 'ap-northeast-1', 'us-east-1', 'us-west-2'] as const
+
+/** [가정 · #23 TunnelSummary] 터널 상태. 값은 #16이 저장하고 실제 보고는 #17, 조회는 #23(미병합)에서 온다. */
 export type TunnelStatus = {
   tunnel_ip: string | null
   last_handshake_at: number | null
@@ -58,7 +78,7 @@ export type AgentView = {
   last_seen_at: number | null
   online: boolean
   revoked: boolean
-  /** 백엔드가 아직 저장하지 않는다: 늘 null */
+  /** 백엔드가 저장하지 않는다: 늘 null. 화면에는 표시하지 않는다. */
   version: string | null
   /** [가정] 목업 */
   tunnel: TunnelStatus | null

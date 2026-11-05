@@ -37,12 +37,31 @@ export function displayTree(paths: string[], limit = TREE_LIMIT): { tree: string
   return { tree: picked, truncated: sorted.length > limit }
 }
 
+/**
+ * Dockerfile의 기반 이미지(FROM)에서 런타임을 읽는다. 마지막 단계(실행 이미지)부터 본다.
+ * 백엔드에는 사전 탐지 API와 language 필드가 없다 [가정]: 언어 이름은 보여 주지 않고 런타임만 Dockerfile·드라이버로 짐작한다.
+ */
+export function runtimeFromDockerfile(text: string): string | null {
+  const images = [...text.matchAll(/^\s*FROM\s+(?:--platform=\S+\s+)?(\S+)/gim)].map(match => match[1].toLowerCase()).reverse()
+  for (const image of images) {
+    const name = image.split('/').pop() ?? image
+    let found: RegExpMatchArray | null
+    if ((found = name.match(/^node(?:js)?(?::|-)?(\d+)?/))) return 'Node.js' + (found[1] ? ' ' + found[1] : '')
+    if ((found = name.match(/^python(?::(\d+(?:\.\d+)?))?/))) return 'Python' + (found[1] ? ' ' + found[1] : '')
+    if ((found = name.match(/^golang(?::(\d+\.\d+))?/))) return 'Go' + (found[1] ? ' ' + found[1] : '')
+    if ((found = name.match(/^(?:openjdk|eclipse-temurin|amazoncorretto)(?::(\d+))?/))) return 'Java' + (found[1] ? ' ' + found[1] : '')
+  }
+  return null
+}
+
 /** 파일 목록과 구성 파일 내용에서 탐지한다. 내용은 이 함수 안에서만 쓰고 돌려주지 않는다. */
 export function detectStack(paths: string[], files: Record<string, string>): Omit<RepoScan, 'tree' | 'truncated'> {
   const detections: Detection[] = []
   const has = (name: string) => paths.find(path => path === name || path.endsWith('/' + name))
   const read = (name: string) => { const path = has(name); return path ? files[path] ?? '' : '' }
 
+  const dockerfile = paths.find(path => /(^|\/)Dockerfile$/.test(path))
+  const fromImage = dockerfile ? runtimeFromDockerfile(files[dockerfile] ?? '') : null
   const pkg = read('package.json')
   let deps: Record<string, string> = {}
   let engine = ''
@@ -52,8 +71,11 @@ export function detectStack(paths: string[], files: Record<string, string>): Omi
       deps = { ...json.dependencies, ...json.devDependencies }
       engine = (json.engines?.node ?? '').match(/\d+/)?.[0] ?? ''
     } catch { /* 깨진 package.json은 이름만으로 판단 */ }
-    const ts = Boolean(deps.typescript || has('tsconfig.json'))
-    detections.push({ kind: 'runtime', name: 'Node.js' + (engine ? ' ' + engine : '') + (ts ? ' · TypeScript' : ''), evidence: has('package.json')! })
+  }
+  // 런타임: Dockerfile 기반 이미지가 있으면 그것을, 없으면 의존성 파일로 짐작한다(언어 이름은 붙이지 않는다).
+  if (fromImage) detections.push({ kind: 'runtime', name: fromImage, evidence: dockerfile! })
+  else if (pkg) {
+    detections.push({ kind: 'runtime', name: 'Node.js' + (engine ? ' ' + engine : ''), evidence: has('package.json')! })
   } else if (has('go.mod')) {
     const version = read('go.mod').match(/^go\s+(\d+\.\d+)/m)?.[1]
     detections.push({ kind: 'runtime', name: 'Go' + (version ? ' ' + version : ''), evidence: has('go.mod')! })
@@ -61,7 +83,6 @@ export function detectStack(paths: string[], files: Record<string, string>): Omi
   else if (has('requirements.txt') || has('pyproject.toml')) detections.push({ kind: 'runtime', name: 'Python', evidence: (has('pyproject.toml') || has('requirements.txt'))! })
   else if (has('pom.xml') || has('build.gradle') || has('build.gradle.kts')) detections.push({ kind: 'runtime', name: 'Java', evidence: (has('pom.xml') || has('build.gradle') || has('build.gradle.kts'))! })
 
-  const dockerfile = paths.find(path => /(^|\/)Dockerfile$/.test(path))
   if (dockerfile) detections.push({ kind: 'dockerfile', evidence: dockerfile, stages: Math.max(1, (files[dockerfile]?.match(/^\s*FROM\s/gim) ?? []).length) })
 
   const manifests = paths.filter(path => K8S.test(path))

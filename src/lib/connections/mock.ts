@@ -1,7 +1,7 @@
 import type { AgentIdStore, AgentsApi, ConnectionsApi } from './adapter.ts'
 import { PlatformError } from './platform.ts'
 import {
-  isRoleArn, type Connection, type PlatformAgent, type ScopeAnalysis, type ScopeCandidate, type ScopeConfirmation, type ScopeLevel, type ScopeSelection,
+  isRoleArn, type Connection, type ConnectionKind, type PlatformAgent, type ScopeAnalysis, type ScopeCandidate, type ScopeConfirmation, type ScopeLevel, type ScopeSelection,
 } from './types.ts'
 
 /**
@@ -20,17 +20,17 @@ type MockState = {
 const KEY = Symbol.for('jackal.connections.mock')
 type Global = typeof globalThis & { [KEY]?: MockState }
 
-const iso = (ms: number) => new Date(ms).toISOString()
+const sec = (ms: number) => Math.floor(ms / 1000)
 
 function seed(now: number): MockState {
   const connections = new Map<string, Connection>()
   connections.set('c-1', {
-    connection_id: 'c-1', kind: 'AWS_SOURCE', display_name: 'chat-production', status: 'CONNECTED', last_verified_at: iso(now - 3600_000),
+    connection_id: 'c-1', kind: 'AWS_SOURCE', display_name: 'chat-production', status: 'CONNECTED', last_verified_at: sec(now - 3600_000),
     account_id: '123456789012', region: 'ap-northeast-2', role_arn: 'arn:aws:iam::123456789012:role/cmp-source-readonly',
     external_id: 'cmp-ext-7f3a9c21', eks_clusters: ['chat-prod'],
   })
   connections.set('c-2', {
-    connection_id: 'c-2', kind: 'GCP_TARGET', display_name: 'jackal-demo-gcp', status: 'CONNECTED', last_verified_at: iso(now - 3600_000),
+    connection_id: 'c-2', kind: 'GCP_TARGET', display_name: 'jackal-demo-gcp', status: 'CONNECTED', last_verified_at: sec(now - 3600_000),
     project_id: 'cmp-demo', region: 'asia-northeast3',
   })
   const agents = new Map<string, { agent: PlatformAgent; enrolledAt: number }>()
@@ -52,7 +52,7 @@ export function resetMock(now = Date.now()) {
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 const randomHex = (bytes: number) => Array.from(crypto.getRandomValues(new Uint8Array(bytes)), b => b.toString(16).padStart(2, '0')).join('')
 
-function launchStackUrl(kind: 'AWS_SOURCE' | 'AWS_TARGET', externalId: string): string {
+function launchStackUrl(kind: ConnectionKind, externalId: string): string {
   const template = kind === 'AWS_SOURCE' ? 'cmp-source-readonly.yaml' : 'cmp-target-eks-admin.yaml'
   const params = new URLSearchParams({
     templateURL: 'https://cmp-public-templates.s3.ap-northeast-2.amazonaws.com/' + template,
@@ -108,42 +108,60 @@ export function createMockConnections(options: { delayMs?: number; now?: () => n
       await wait(delay / 2)
       return [...state().connections.values()]
     },
-    async createConnection(kind) {
+    async createConnection({ kind, display_name, region }) {
       await wait(delay)
       const s = state()
       s.seq += 1
       const externalId = 'cmp-ext-' + randomHex(4)
-      const connection: Connection = {
-        connection_id: 'c-' + s.seq, kind, display_name: (kind === 'AWS_SOURCE' ? 'aws-source-' : 'aws-target-') + s.seq, status: 'PENDING',
-        last_verified_at: null, external_id: externalId,
-      }
+      const connection: Connection = { connection_id: 'c-' + s.seq, kind, display_name, region, status: 'PENDING', last_verified_at: null, external_id: externalId, last_code: null }
       s.connections.set(connection.connection_id, connection)
-      return { connection, external_id: externalId, launch_stack_url: launchStackUrl(kind, externalId) }
+      return { connection_id: connection.connection_id, kind, display_name, status: 'PENDING', external_id: externalId, launch_stack_url: launchStackUrl(kind, externalId) }
     },
-    async verifyConnection(id, input) {
-      await wait(delay * 3)
+    async setRole(id, roleArn) {
+      await wait(delay)
       const current = find(id)
-      const next: Connection = { ...current, last_verified_at: iso(now()), error_code: undefined }
-      if (current.kind === 'GCP_TARGET') { next.status = 'CONNECTED'; state().connections.set(id, next); return next }
-      const roleArn = input.role_arn?.trim() || current.role_arn
+      if (current.kind === 'GCP_TARGET') throw new PlatformError(409, 'conflict', 'ROLE_NOT_APPLICABLE')
       if (!isRoleArn(roleArn)) throw new PlatformError(400, 'bad_request', 'INVALID_ROLE_ARN')
-      next.role_arn = roleArn
-      // 목업 규칙: 역할 이름에 denied·notrust가 들어가면 실패로 답한다(오류 화면 시연용).
-      if (/denied|notrust/i.test(roleArn)) {
-        Object.assign(next, { status: 'FAILED', error_code: 'ASSUME_ROLE_DENIED', account_id: undefined, region: undefined, eks_clusters: undefined })
-      } else {
-        next.status = 'CONNECTED'
-        next.account_id = roleArn.split(':')[4]
-        next.region = 'ap-northeast-2'
-        if (current.kind === 'AWS_SOURCE') next.eks_clusters = ['chat-prod']
-      }
+      // #23처럼 확인을 마친 연결의 역할은 바꾸지 않는다(새 연결로 다시 만든다).
+      if (current.status === 'CONNECTED' && current.role_arn && current.role_arn !== roleArn) throw new PlatformError(409, 'conflict', 'ROLE_ALREADY_SET')
+      const next = { ...current, role_arn: roleArn.trim() }
       state().connections.set(id, next)
       return next
     },
+    async verifyConnection(id) {
+      await wait(delay * 3)
+      const current = find(id)
+      const checked = sec(now())
+      if (current.kind === 'GCP_TARGET') {
+        state().connections.set(id, { ...current, status: 'CONNECTED', last_code: 'OK', last_verified_at: checked })
+        return { status: 'CONNECTED', code: 'OK', checked_at: checked, project_id: current.project_id ?? null, principal: 'cmp-platform@' + current.project_id + '.iam.gserviceaccount.com' }
+      }
+      if (!current.role_arn) throw new PlatformError(409, 'conflict', 'ROLE_NOT_SET')
+      // 목업 규칙: 역할 이름에 denied·notrust가 들어가면 실패로 답한다(오류 화면 시연용).
+      if (/denied|notrust/i.test(current.role_arn)) {
+        state().connections.set(id, { ...current, status: 'FAILED', last_code: 'ASSUME_ROLE_DENIED' })
+        return { status: 'FAILED', code: 'ASSUME_ROLE_DENIED', checked_at: checked }
+      }
+      const account = current.role_arn.split(':')[4]
+      const eks = current.kind === 'AWS_SOURCE' ? Object.keys(TREE[current.region] ?? {}) : undefined
+      state().connections.set(id, { ...current, status: 'CONNECTED', last_code: 'OK', last_verified_at: checked, account_id: account, eks_clusters: eks })
+      return { status: 'CONNECTED', code: 'OK', checked_at: checked, account_id: account, principal: current.role_arn, ...(eks ? { eks_clusters: eks } : {}) }
+    },
     async deleteConnection(id) {
       await wait(delay)
-      find(id)
+      const current = find(id)
       state().connections.delete(id)
+      const aws = current.kind !== 'GCP_TARGET'
+      return { connection_id: id, deleted: true, stack_name: aws ? (current.kind === 'AWS_SOURCE' ? 'cmp-source-role' : 'cmp-target-role') : null,
+        notice: aws ? 'Platform data removed. Delete the CloudFormation stack in your AWS account.' : 'Platform data removed.' }
+    },
+    async listEksClusters(id, region) {
+      await wait(delay)
+      const current = find(id)
+      if (current.kind !== 'AWS_SOURCE') throw new PlatformError(409, 'conflict', 'SOURCE_CONNECTION_REQUIRED')
+      if (current.status !== 'CONNECTED') throw new PlatformError(409, 'conflict', 'CONNECTION_NOT_READY')
+      const chosen = region ?? current.region
+      return { connection_id: id, region: chosen, eks_clusters: Object.keys(TREE[chosen] ?? {}) }
     },
     async tunnelStatus(_agentId, agent) {
       if (agent.revoked || agent.last_seen_at === null) return null
@@ -155,7 +173,7 @@ export function createMockConnections(options: { delayMs?: number; now?: () => n
       if (level === 'regions') return Object.keys(TREE)
       const region = TREE[selection.region ?? '']
       if (!region) throw new PlatformError(404, 'not_found', 'REGION_NOT_FOUND')
-      if (level === 'clusters') return Object.keys(region)
+      if (level === 'clusters') return Object.keys(region) // #23: GET /connections/{id}/eks-clusters?region=
       const cluster = region[selection.cluster ?? '']
       if (!cluster) throw new PlatformError(404, 'not_found', 'CLUSTER_NOT_FOUND')
       if (level === 'namespaces') return Object.keys(cluster)
@@ -168,6 +186,7 @@ export function createMockConnections(options: { delayMs?: number; now?: () => n
       const s = state()
       const source = find(selection.connection_id)
       if (source.status !== 'CONNECTED') throw new PlatformError(409, 'conflict', 'CONNECTION_NOT_READY')
+      // [가정] 범위 후보는 백엔드가 아직 못 만든다(앵커 목록 API·RDS/S3/SQS 스캔 없음, Evidence.kind는 매핑 뒤에만) — 목업 유지.
       const workloads = TREE[selection.region]?.[selection.cluster]?.[selection.namespace]
       if (!workloads?.includes(selection.workload)) throw new PlatformError(404, 'not_found', 'WORKLOAD_NOT_FOUND')
       s.seq += 1
@@ -183,7 +202,7 @@ export function createMockConnections(options: { delayMs?: number; now?: () => n
       if (!included.length || included.some(id => !ids.has(id))) throw new PlatformError(400, 'bad_request', 'INVALID_SCOPE')
       const s = state()
       s.seq += 1
-      return { scope_id: 'scope-' + s.seq, analysis_id: analysisId, included, excluded: [...ids].filter(id => !included.includes(id)), confirmed_at: iso(now()) } satisfies ScopeConfirmation
+      return { scope_id: 'scope-' + s.seq, analysis_id: analysisId, included, excluded: [...ids].filter(id => !included.includes(id)), confirmed_at: new Date(now()).toISOString() } satisfies ScopeConfirmation
     },
   }
 }

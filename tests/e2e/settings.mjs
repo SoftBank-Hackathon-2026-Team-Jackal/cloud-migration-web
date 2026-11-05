@@ -115,6 +115,8 @@ try {
   await page.click('[data-action=aws-connect]')
   await page.waitForSelector('.cx-dialog')
   await page.click('.cx-option:has(input[value=AWS_SOURCE])')
+  check(await page.locator('.cx-dialog input[name=displayName]').count() === 1 && await page.locator('.cx-dialog select[name=region]').count() === 1, '#23 요청 형태: 표시 이름·리전')
+  await page.fill('input[name=displayName]', 'e2e-source')
   await page.click('[data-step=create]')
   await page.waitForSelector('[data-launch-stack]')
   const launch = page.locator('[data-launch-stack]')
@@ -194,6 +196,7 @@ try {
   await card.locator('[data-action=check]').click()
   await page.waitForFunction(() => document.querySelector('.cx-card[data-agent=laptop-k3s]')?.getAttribute('data-state') === 'online')
   check((await card.innerText()).includes('e2e-cluster-uid') && await card.locator('.cx-tunnel').count() === 1, '등록 후: 온라인 · 클러스터 UID · 터널 상태(목업)')
+  check(!(await card.innerText()).includes('Agent 버전'), 'Agent 버전(늘 null)은 자리도 보이지 않는다')
   await shot('settings-6-agent-online')
 
   await card.locator('.cx-menu-btn').click()
