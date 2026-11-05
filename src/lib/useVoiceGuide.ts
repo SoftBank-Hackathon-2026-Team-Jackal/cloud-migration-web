@@ -153,7 +153,7 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
 
   const listen = useCallback(() => {
     if (!micRef.current || !activeRef.current || speakingRef.current || !recognitionRef.current) return
-    try { recognitionRef.current.start() } catch { /* 이미 듣는 중 */ }
+    try { recognitionRef.current.start(); console.info('[jackal-voice]', JSON.stringify({ event: 'listen-start', t: Date.now() % 100000 })) } catch { /* 이미 듣는 중 */ }
   }, [])
 
   const stopListening = useCallback(() => {
@@ -451,6 +451,7 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
       else if (startedRef.current && /(마이그레이션|이전).*(시작|진행)/.test(command)) { callbacksRef.current.onHeard?.(transcript.trim()); callbacksRef.current.onStart() }
     }
     recognition.onerror = event => {
+      console.info('[jackal-voice]', JSON.stringify({ event: 'error', error: event.error, t: Date.now() % 100000 }))
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
         micRef.current = false
         setMicEnabled(false)
@@ -460,6 +461,7 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
       }
     }
     recognition.onend = () => {
+      console.info('[jackal-voice]', JSON.stringify({ event: 'listen-end', speaking: speakingRef.current, t: Date.now() % 100000 }))
       if (micRef.current && activeRef.current && !speakingRef.current) restartTimer.current = window.setTimeout(listen, 350)
     }
     recognitionRef.current = recognition
