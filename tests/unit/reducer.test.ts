@@ -298,3 +298,23 @@ test('데이터 이전: 경로 실패면 시작 차단이고 이전 자체는 �
   assert.equal(state.data.tables.length, 0)
   assert.equal(state.failures.data_copy, undefined)
 })
+
+test('승인 결정: 전달 상태는 뒤로 가지 않고, 다시 전달하면 새 시도로 바뀐다 [가정: approval.decision]', () => {
+  seq = 0
+  const base = { approval_id: 'a1', plan_id: 'p', revision: 1, decision: 'APPROVE' as const, scope: 'FULL' as const, delivery_attempts: 1, execution_status: 'NOT_STARTED' as 'NOT_STARTED' | 'RUNNING' }
+  const decision = (data: Partial<typeof base> & { delivery_status: 'PENDING' | 'DELIVERED' | 'FAILED'; execution_status?: 'NOT_STARTED' | 'RUNNING' }): DraftEvent =>
+    ({ type: 'approval.decision', phase: 'awaiting_approval', status: 'waiting', data: { ...base, ...data } })
+  let state = run(initialState, ev(decision({ delivery_status: 'PENDING' })))
+  assert.equal(state.approval.decision?.delivery_status, 'PENDING')
+  assert.notEqual(state.status, 'failed')
+  // 이벤트(DELIVERED)가 API 응답(PENDING)보다 먼저 와도 PENDING으로 돌아가지 않는다.
+  state = run(state, ev(decision({ delivery_status: 'DELIVERED', execution_status: 'RUNNING' })))
+  state = reducer(state, { type: 'approvalDecision', data: { ...base, delivery_status: 'PENDING' } })
+  assert.equal(state.approval.decision?.delivery_status, 'DELIVERED')
+  // 전달 실패 → 다시 전달(시도 2)은 받아들인다. 전달 실패는 이전 실패가 아니다.
+  state = reducer(initialState, { type: 'approvalDecision', data: { ...base, delivery_status: 'FAILED' } })
+  assert.equal(state.status, 'idle')
+  state = reducer(state, { type: 'approvalDecision', data: { ...base, delivery_attempts: 2, delivery_status: 'PENDING' } })
+  assert.equal(state.approval.decision?.delivery_status, 'PENDING')
+  assert.equal(reducer(state, { type: 'resetPhase', phase: 'awaiting_approval' }).approval.decision, null)
+})

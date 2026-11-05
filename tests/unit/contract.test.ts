@@ -5,7 +5,7 @@ import { readFileSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Ajv from 'ajv/dist/2020.js'
-import { DATA_VERIFY_TOTAL_MS, TRAFFIC_READY_EVENTS, dataProgressAt, dueDataVerify, reportFor, timelineFor, type ScriptedPhase } from '../../src/lib/migration/script.ts'
+import { APPROVAL_ID, DATA_VERIFY_TOTAL_MS, PLAN_ID, TRAFFIC_READY_EVENTS, approvalTimeline, dataProgressAt, planPreviewFor, dueDataVerify, reportFor, timelineFor, type ScriptedPhase } from '../../src/lib/migration/script.ts'
 import { TrafficSim } from '../../src/lib/migration/trafficSim.ts'
 import { DATA_END_MS, DATA_READY_AT, dataTickAt, dataTimeline, type PreflightScenario } from '../../src/lib/migration/dataScript.ts'
 import { startRequestFor, type Target } from '../../src/lib/migration/events.ts'
@@ -65,6 +65,32 @@ test('사람 검토·이미지 불일치 데모 대본도 스키마를 통과한
     }
   }
   assert.equal(reviews, 2, 'build.review 이벤트')
+})
+
+test('승인 결정(접수 → 전달) 이벤트와 승인 API 응답이 스키마를 통과한다 [가정: approval.decision]', () => {
+  const ok = approvalTimeline(2)
+  const failed = approvalTimeline(1, { fail: true })
+  for (const { event } of [...ok, ...failed, ...approvalTimeline(1, { attempt: 2 })]) assertValid(validateEvent, stamp(event), 'approval.decision')
+  assert.deepEqual(ok.map(item => item.event.type === 'approval.decision' && item.event.data.delivery_status), ['PENDING', 'DELIVERED'], '전달 완료는 마지막에 온다')
+  const last = failed[failed.length - 1].event
+  assert.equal(last.type === 'approval.decision' && last.data.delivery_status, 'FAILED')
+  assert.notEqual(last.status, 'failed', '전달 실패는 이전 실패가 아니다(이벤트 status가 failed면 화면이 이전 전체를 실패로 본다)')
+  const response = { approval_id: APPROVAL_ID, plan_id: PLAN_ID, revision: 1, decision: 'APPROVE', approver_id: 'demo', scope: 'FULL', delivery_status: 'PENDING', delivery_attempts: 1, execution_status: 'NOT_STARTED', workflow_state: 'WAITING_FOR_APPROVAL' }
+  assertValid(validateRest('ApprovalResponse'), response, 'ApprovalResponse')
+  assert.equal(validateRest('ApprovalResponse')({ ...response, delivery_status: 'DONE' }), false, 'delivery_status 값')
+  assert.equal(validateEvent(stamp({ type: 'approval.decision', phase: 'awaiting_approval', status: 'waiting', data: { ...response, approver_id: undefined, delivery_status: 'SENT' } })), false, '모르는 전달 상태')
+})
+
+test('계획 미리보기의 전환 방법·요금 추정은 선택 필드다 [가정]', () => {
+  for (const target of ['gcp', 'onprem'] as Target[]) {
+    const preview = planPreviewFor(target, 1)
+    assert.ok(preview.rollout && preview.rollout.traffic_steps.length > 0, '목업은 전환 단계를 보낸다')
+    assert.equal(preview.rollout?.traffic_method, undefined, '트래픽 방식(Route 53·Envoy)은 미정이라 보내지 않는다')
+    const { rollout: _r, cost: _c, ...bare } = preview
+    assertValid(validateEvent, stamp({ type: 'plan.preview', phase: 'planning', status: 'running', data: bare }), 'plan.preview(없음) ' + target)
+    assert.equal(validateEvent(stamp({ type: 'plan.preview', phase: 'planning', status: 'running', data: { ...bare, rollout: { traffic_steps: [] } } })), false, '빈 전환 단계')
+    assert.equal(validateEvent(stamp({ type: 'plan.preview', phase: 'planning', status: 'running', data: { ...bare, cost: { currency: 'USD', lines: [{ id: 'lb', source_usd: -1, target_usd: null }] } } })), false, '음수 요금')
+  }
 })
 
 test('정합성 확인·전환 조건 확인 이벤트가 스키마를 통과한다', () => {
@@ -221,7 +247,7 @@ test('목업 서버가 SSE로 보내는 이벤트(snapshot 포함)가 스키마�
         if (cancelled && event.type === 'error') break outer
       }
     }
-    for (const type of ['snapshot', 'analysis.finding', 'analysis.done', 'sandbox.env', 'sandbox.step', 'sandbox.attempt', 'sandbox.done', 'build.fix', 'build.result', 'plan.step', 'plan.ready', 'approval.required', 'provision.resource', 'provision.check', 'error']) {
+    for (const type of ['snapshot', 'analysis.finding', 'analysis.done', 'sandbox.env', 'sandbox.step', 'sandbox.attempt', 'sandbox.done', 'build.fix', 'build.result', 'plan.step', 'plan.ready', 'approval.required', 'approval.decision', 'provision.resource', 'provision.check', 'error']) {
       assert.ok(seen.includes(type), type + ' 이벤트를 받지 못했습니다')
     }
     const report = await (await fetch(`${base}/migrations/${id}/report`)).json()

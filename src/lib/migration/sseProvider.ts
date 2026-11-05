@@ -1,4 +1,4 @@
-import { normalizePlanStep, startRequestFor, type BackendPhase, type ErrorData, type MigrationEvent, type PlanReadyData, type StartRequest } from './events.ts'
+import { normalizePlanStep, startRequestFor, type ApprovalDecisionData, type BackendPhase, type ErrorData, type MigrationEvent, type PlanReadyData, type StartRequest } from './events.ts'
 import type { EnterContext, MigrationProvider, ProviderHost } from './provider'
 import type { ReportData } from './events'
 import type { SseStartMode } from './config'
@@ -44,6 +44,8 @@ export class SseProvider implements MigrationProvider {
   private lastId = ''
   /** 가장 최근 plan.ready 값: 승인 API가 계획 ID·버전·digest를 요구한다. */
   private plan: PlanReadyData | null = null
+  /** 가장 최근 승인 결정(API 응답·approval.decision). 전달이 실패했으면 다시 전달할 때 approval_id를 쓴다. */
+  private decision: ApprovalDecisionData | null = null
 
   constructor(host: ProviderHost, options: Options) {
     this.host = host
@@ -58,8 +60,9 @@ export class SseProvider implements MigrationProvider {
     this.host.dispatch({ type: 'fail', error })
   }
 
-  private async post(path: string, body?: object, absolute = false): Promise<boolean> {
-    if (!this.migrationId) return false
+  /** POST를 보내고 응답 본문(JSON이 아니면 null)을 돌려준다. 실패하면 화면에 요청 실패를 알리고 undefined. */
+  private async post(path: string, body?: object, absolute = false): Promise<unknown> {
+    if (!this.migrationId) return undefined
     try {
       const response = await fetch(this.options.baseUrl + (absolute ? '' : '/migrations/' + this.migrationId) + path, {
         method: 'POST',
@@ -67,11 +70,19 @@ export class SseProvider implements MigrationProvider {
         body: body ? JSON.stringify(body) : undefined,
       })
       if (!response.ok) throw new Error('HTTP ' + response.status)
-      return true
+      return await response.json().catch(() => null)
     } catch (error) {
       this.fail({ code: 'request_failed', message: error instanceof Error ? error.message : String(error), phase: null, retryable: true })
-      return false
+      return undefined
     }
+  }
+
+  /** 승인 API 응답(ApprovalResponse)이면 상태에 넣는다. 전달 상태가 없는 응답(옛 경로)은 넣지 않는다: 그때는 구축 이벤트가 진행을 알려 준다. */
+  private takeDecision(body: unknown) {
+    const data = body as Partial<ApprovalDecisionData> | null | undefined
+    if (!data || typeof data !== 'object' || !data.approval_id || !data.delivery_status) return
+    this.decision = data as ApprovalDecisionData
+    this.host.dispatch({ type: 'approvalDecision', data: this.decision })
   }
 
   /** 시연용 쿼리(?review=1 · ?preflight=route|unknown)를 목업 서버에 넘긴다. 실제 백엔드는 무시한다. */
@@ -146,10 +157,16 @@ export class SseProvider implements MigrationProvider {
     const plan = this.plan
     if (!plan?.plan_id || plan.revision === undefined || !plan.manifest_digest || !plan.preview_digest) { fallback(); return }
     const path = '/provisioning/plans/' + encodeURIComponent(plan.plan_id) + '/revisions/' + plan.revision + '/approvals'
-    void this.post(path, { decision, scope: 'FULL', manifest_digest: plan.manifest_digest, preview_digest: plan.preview_digest }, true)
+    // 같은 계획 버전의 승인이 기록됐지만 전달에 실패했으면, 새로 결정하지 않고 같은 승인을 다시 전달한다(openapi: POST …/approvals/{approval_id}/delivery).
+    const last = this.decision
+    const redeliver = decision === 'APPROVE' && last && last.decision === 'APPROVE' && last.plan_id === plan.plan_id && last.revision === plan.revision && last.delivery_status === 'FAILED'
+    const request = redeliver
+      ? this.post(path + '/' + encodeURIComponent(last.approval_id) + '/delivery', undefined, true)
+      : this.post(path, { decision, scope: 'FULL', manifest_digest: plan.manifest_digest, preview_digest: plan.preview_digest }, true)
+    void request.then(body => this.takeDecision(body))
   }
 
-  approve(revision?: number) { this.decide('APPROVE', () => { void this.post('/approve', revision === undefined ? undefined : { revision }) }) }
+  approve(revision?: number) { this.decide('APPROVE', () => { void this.post('/approve', revision === undefined ? undefined : { revision }).then(body => this.takeDecision(body)) }) }
   /**
    * 계획 수정 요청. [가정] 백엔드는 재계획 의미를 아직 정하지 않았다(openapi: REJECT만 구현, revision 요청은 undecided).
    * 그래서 거절(REJECT)로 보내고 revision + 1의 plan.ready가 다시 온다고 기대한다. 계획 정보가 없으면 [가정] POST /plan/revise.
@@ -262,8 +279,12 @@ export class SseProvider implements MigrationProvider {
     if (id) this.lastId = id
     event = normalizeEvent(event)
     if (event.type === 'plan.ready') this.plan = event.data
+    if (event.type === 'approval.decision') this.decision = event.data
     if (event.type === 'snapshot') {
-      for (const item of event.data.events) if (item.type === 'plan.ready') this.plan = item.data
+      for (const item of event.data.events) {
+        if (item.type === 'plan.ready') this.plan = item.data
+        if (item.type === 'approval.decision') this.decision = item.data
+      }
     }
     this.host.dispatch({ type: 'event', event })
   }

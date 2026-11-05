@@ -4,7 +4,7 @@
  * 대본의 시각(after)은 "그 단계 화면이 준비된 순간"부터 센 ms이다.
  * Node가 그대로 읽으므로 런타임 import가 없고, 타입 문법만 쓴다(enum·네임스페이스 금지).
  */
-import type { AnalysisFindingData, BuildErrorCode, BuildFixData, DataProgressData, DataVerifyData, DraftEvent, TrafficReadyData, EnvRemap, FixLine, FlowPath, Grade, PlanEnvironment, PlanPreviewData, PlanResource, PlanStepData, SecurityRule, ReportData, SandboxChecks, SandboxDoneData, SandboxEnvData, SandboxFailureClass, SandboxStep, SandboxTestsData, Target } from './events'
+import type { AnalysisFindingData, ApprovalDecisionData, CostEstimate, PlanRollout, BuildErrorCode, BuildFixData, DataProgressData, DataVerifyData, DraftEvent, TrafficReadyData, EnvRemap, FixLine, FlowPath, Grade, PlanEnvironment, PlanPreviewData, PlanResource, PlanStepData, SecurityRule, ReportData, SandboxChecks, SandboxDoneData, SandboxEnvData, SandboxFailureClass, SandboxStep, SandboxTestsData, Target } from './events'
 import type { SandboxScenario } from '../demoConfig'
 
 /** events.ts의 pathOf와 같다(이 모듈은 런타임 import가 없어야 Node가 그대로 읽는다). */
@@ -233,6 +233,36 @@ const PREVIEW_TARGET: Record<FlowPath, PlanEnvironment> = {
 }
 export const PLAN_ID = 'pln-7f2c9a'
 
+/** 전환 방법(데모 값). 트래픽 방식(Route 53 가중치·중계 프록시)은 아직 정해지지 않아 보내지 않는다. 단계는 trafficSim의 TRAFFIC_STEPS와 같다. */
+const PREVIEW_ROLLOUT: PlanRollout = { traffic_steps: [10, 50, 100], expected_write_pause_ms: 1000, data_method: 'DUMP_CDC' }
+
+/**
+ * 고정 요금 추정(데모 값, USD/월 = 시간당 요금 × 730). 공개 요금표 기준(2026-11-03 조회):
+ * EKS·GKE 클러스터 관리 $0.10/시간(GKE는 청구 계정당 클러스터 하나에 월 $74.40 크레딧), ALB 고정 $0.0225/시간(서울),
+ * NAT 게이트웨이 고정 $0.059/시간(서울), GCP 전달 규칙 $0.025/시간(처음 5개), Cloud NAT VM당 $0.0014/시간(노드 2대).
+ * 노드·스토리지·전송은 사양·사용량에 따라 달라 넣지 않는다.
+ */
+const PREVIEW_COST: Record<FlowPath, CostEstimate> = {
+  gcp: {
+    currency: 'USD', credits_usd: 74.4, basis: '2026-11-03',
+    lines: [
+      { id: 'control', source_usd: 73.0, target_usd: 73.0 },
+      { id: 'lb', source_usd: 16.4, target_usd: 18.3 },
+      { id: 'nat', source_usd: 43.1, target_usd: 2.0 },
+      { id: 'nodes', source_usd: null, target_usd: null, excluded: true },
+    ],
+  },
+  onprem: {
+    currency: 'USD', basis: '2026-11-03',
+    lines: [
+      { id: 'control', source_usd: 73.0, target_usd: 0 },
+      { id: 'lb', source_usd: 16.4, target_usd: 0 },
+      { id: 'nat', source_usd: 43.1, target_usd: 0 },
+      { id: 'nodes', source_usd: null, target_usd: null, excluded: true },
+    ],
+  },
+}
+
 export function planPreviewFor(target: Target, revision: number): PlanPreviewData {
   const path = pathOf(target)
   return {
@@ -245,7 +275,31 @@ export function planPreviewFor(target: Target, revision: number): PlanPreviewDat
     security_rules: PREVIEW_RULES,
     // 경고 하나: 대상 DB의 자동 백업 보존 기간이 원본보다 짧다(문구는 화면이 id로 찾는다).
     validation: { errors: [], warnings: [{ id: 'db-backup', resource: 'db', message: '' }] },
+    rollout: PREVIEW_ROLLOUT,
+    cost: PREVIEW_COST[path],
   }
+}
+
+// ---- 승인 결정(접수 → 전달 → 실행) ----
+
+/** 결정을 기록한 뒤 실행 엔진에 전달되기까지 걸리는 시간(데모 값) */
+export const APPROVAL_DELIVERY_MS = 1400
+export const APPROVAL_ID = 'apr-3c81e0'
+
+/**
+ * 승인 버튼을 누른 뒤의 대본: 결정 기록(PENDING) → 전달 완료(DELIVERED, 실행 시작).
+ * fail이면 전달이 실패한다(FAILED). 전달 실패는 이전 실패가 아니므로(API도 201 + FAILED) 이벤트 status는 waiting이다. attempt는 전달 시도 횟수(다시 전달할 때마다 +1).
+ */
+export function approvalTimeline(revision: number, options: { attempt?: number; fail?: boolean } = {}): TimedDraft[] {
+  const attempt = options.attempt ?? 1
+  const base: ApprovalDecisionData = { approval_id: APPROVAL_ID, plan_id: PLAN_ID, revision, decision: 'APPROVE', scope: 'FULL', delivery_status: 'PENDING', delivery_attempts: attempt, execution_status: 'NOT_STARTED', workflow_state: 'WAITING_FOR_APPROVAL' }
+  const done: ApprovalDecisionData = options.fail
+    ? { ...base, delivery_status: 'FAILED', workflow_state: 'UNAVAILABLE' }
+    : { ...base, delivery_status: 'DELIVERED', execution_status: 'RUNNING', workflow_state: 'PROVISIONING' }
+  return [
+    { after: 0, event: { type: 'approval.decision', phase: 'awaiting_approval', status: 'waiting', data: base } },
+    { after: APPROVAL_DELIVERY_MS, event: { type: 'approval.decision', phase: 'awaiting_approval', status: options.fail ? 'waiting' : 'done', data: done } },
+  ]
 }
 
 /** 계획 화면이 항목을 하나씩 드러내는 연출(화면이 쓴다): 첫 항목까지의 시간, 항목 간격, 전체 길이. 서버는 연출이 끝난 뒤 승인을 요청한다. */
