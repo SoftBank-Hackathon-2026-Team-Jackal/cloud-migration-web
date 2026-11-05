@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import Ajv from 'ajv/dist/2020.js'
 import { DATA_VERIFY_TOTAL_MS, TRAFFIC_READY_EVENTS, dataProgressAt, dueDataVerify, reportFor, timelineFor, type ScriptedPhase } from '../../src/lib/migration/script.ts'
 import { TrafficSim } from '../../src/lib/migration/trafficSim.ts'
+import { DATA_END_MS, DATA_READY_AT, dataTickAt, dataTimeline, type PreflightScenario } from '../../src/lib/migration/dataScript.ts'
 import { startRequestFor, type Target } from '../../src/lib/migration/events.ts'
 
 const read = (path: string) => JSON.parse(readFileSync(new URL('../../' + path, import.meta.url), 'utf8'))
@@ -80,6 +81,40 @@ test('데이터 복제 진행 값(0~30초)이 스키마를 통과한다', () => 
     const data = dataProgressAt(tick / 4)
     assertValid(validateEvent, stamp({ type: 'data.progress', phase: 'data_copy', status: 'running', data }), 'data.progress ' + tick)
   }
+})
+
+// ---- 데이터 이전 단계 상세 [가정] ----
+test('데이터 이전 대본(사전 검사 3가지 × 대상)과 250ms 틱이 스키마를 통과한다', () => {
+  const start = Date.UTC(2026, 10, 5, 9, 0, 0)
+  for (const target of ['gcp', 'onprem'] as Target[]) {
+    for (const scenario of ['pass', 'route', 'unknown'] as PreflightScenario[]) {
+      const items = dataTimeline(target, scenario, start)
+      for (const { event } of items) assertValid(validateEvent, stamp(event), `data/${target}/${scenario}/${event.type}`)
+      const verdict = items.filter(item => item.event.type === 'data.preflight').map(item => item.event.data as { status: string; may_start: boolean; input_fingerprint: string | null }).at(-1)!
+      assert.equal(verdict.status, scenario === 'pass' ? 'PASS' : scenario === 'route' ? 'FAIL' : 'UNKNOWN', 'verdict ' + scenario)
+      assert.equal(verdict.may_start, scenario === 'pass', '시작 허용은 PASS일 때만')
+      assert.ok(verdict.input_fingerprint, '입력 지문')
+      const phases = items.filter(item => item.event.type === 'data.phase').map(item => (item.event.data as { phase: string }).phase)
+      assert.deepEqual(phases, scenario === 'pass' ? ['preflight', 'schema', 'copy', 'catchup', 'streaming'] : ['preflight', 'blocked'], 'phase 순서 ' + scenario)
+      // 시작 차단이면 테이블 복사·LSN이 없다(초기 복사·CDC를 시작하지 않는다).
+      if (scenario !== 'pass') {
+        assert.equal(items.some(item => item.event.type === 'data.table' || item.event.type === 'data.readiness'), false, '차단 뒤 복제 없음')
+        assert.equal(dataTickAt(DATA_END_MS, scenario).some(event => event.type === 'data.lsn'), false, '차단 뒤 LSN 없음')
+      } else {
+        const ready = items.filter(item => item.event.type === 'data.readiness').map(item => item.event.data as { ready: boolean })
+        assert.equal(ready.at(-1)?.ready, true, '게이트 1 통과')
+        assert.ok(items.filter(item => item.event.type === 'data.table').every(item => item.after <= DATA_READY_AT), '테이블 이벤트는 게이트 1까지')
+      }
+      for (let ms = 0; ms <= DATA_END_MS + 2000; ms += 250) {
+        for (const event of dataTickAt(ms, scenario)) assertValid(validateEvent, stamp(event), `tick/${scenario}/${ms}/${event.type}`)
+      }
+    }
+  }
+  const lsn = dataTickAt(DATA_END_MS, 'pass').find(event => event.type === 'data.lsn')!.data as { lag_bytes: number; source_lsn: string; target_lsn: string }
+  assert.equal(lsn.lag_bytes, 0, '스트리밍 뒤 지연 0 B')
+  assert.equal(lsn.source_lsn, lsn.target_lsn, '원본 쓰기 위치 = 대상 재생 위치')
+  assert.equal(validateEvent(stamp({ type: 'data.preflight', phase: 'data_copy', status: 'running', data: { status: 'MAYBE', checks: [], probe_location: 'x', input_fingerprint: null, checked_at: null, may_start: false, network: dataTimeline('onprem', 'pass', start)[1].event.data } })), false, 'preflight status')
+  assert.equal(validateEvent(stamp({ type: 'data.phase', phase: 'data_copy', status: 'running', data: { phase: 'dump' } })), false, 'data.phase 값')
 })
 
 test('트래픽 시뮬레이터의 스냅샷(적용·장애 주입·롤백·재시도)이 스키마를 통과한다', async () => {

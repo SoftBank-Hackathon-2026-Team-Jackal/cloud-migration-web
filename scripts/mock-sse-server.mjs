@@ -15,7 +15,8 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DATA_TICK_MS, DATA_VERIFY_TOTAL_MS, PLAN_REVEAL_MS, REPORT_SECONDS, TRAFFIC_READY_EVENTS, dataProgressAt, dueDataVerify, timelineEnd, timelineFor } from '../src/lib/migration/script.ts'
+import { PLAN_REVEAL_MS, REPORT_SECONDS, TRAFFIC_READY_EVENTS, timelineEnd, timelineFor } from '../src/lib/migration/script.ts'
+import { DATA_END_MS, DATA_LSN_TICK_MS, dataTickAt, dataTimeline } from '../src/lib/migration/dataScript.ts'
 import { targetOfRequest } from '../src/lib/migration/events.ts'
 import { TrafficSim } from '../src/lib/migration/trafficSim.ts'
 
@@ -174,23 +175,20 @@ const phaseRunners = {
     await play(record, timelineFor('provisioning', context(record)))
   },
   async data_copy(record) {
+    // 사전 검사 → (PASS면) 스키마 → 초기 복사 → CDC → 스트리밍. 대본과 250ms 틱(data.lsn·data.progress)을 함께 흘린다.
+    // 사전 검사가 PASS가 아니면(?preflight=route|unknown) 시작 차단에서 멈춘다(다음 단계로 넘어가지 않는다).
+    const scenario = record.preflight ?? 'pass'
     const began = Date.now()
-    let reachedAt = 0
-    let verifyCursor = 0
+    let finished = false
+    const script = play(record, dataTimeline(record.target, scenario, began)).finally(() => { finished = true })
     for (;;) {
-      await wait(record, DATA_TICK_MS)
-      const data = dataProgressAt((Date.now() - began) / 1000)
-      emit(record, { type: 'data.progress', phase: 'data_copy', status: data.step === 'ready' ? 'done' : 'running', data })
-      if (data.step === 'ready' && !reachedAt) reachedAt = Date.now()
-      // 준비되면 정합성 확인(행 수 → 체크섬)을 이어서 보낸다.
-      if (reachedAt) {
-        const due = dueDataVerify(Date.now() - reachedAt, verifyCursor)
-        verifyCursor = due.cursor
-        for (const event of due.events) emit(record, event)
-      }
-      // 준비 상태가 된 뒤에도 정합성 확인이 끝날 때까지 흘려 보낸다(화면의 숫자가 계속 움직인다).
-      if (reachedAt && Date.now() - reachedAt > DATA_VERIFY_TOTAL_MS + 800) return
+      await wait(record, DATA_LSN_TICK_MS)
+      for (const event of dataTickAt(Date.now() - began, scenario)) emit(record, event)
+      if (scenario === 'pass' && finished && Date.now() - began > DATA_END_MS) break
+      // 시작 차단: 판정 뒤에는 더 보낼 것이 없다. 취소될 때까지 기다린다.
+      if (scenario !== 'pass' && finished) await wait(record, 2 ** 31 - 1)
     }
+    await script
   },
   async traffic(record) {
     const state = runtime(record.id)
@@ -289,6 +287,7 @@ const server = http.createServer(async (req, res) => {
     const record = {
       id: 'm-' + randomUUID().slice(0, 8), target: targetOfRequest(body), status: 'running', phase: 'analysis',
       revision: 1, review: url.searchParams.get('review') === '1', retried: false,
+      preflight: ['route', 'unknown'].includes(url.searchParams.get('preflight')) ? url.searchParams.get('preflight') : 'pass',
       seq: 0, history: [], approved: { plan: false, cutover: false, review: false }, aiFixes: Number(body.ai_fixes) >= 1 && Number(body.ai_fixes) <= 4 ? Number(body.ai_fixes) : 1, pending: 'analysis',
     }
     migrations.set(record.id, record)

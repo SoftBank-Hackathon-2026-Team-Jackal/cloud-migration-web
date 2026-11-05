@@ -74,9 +74,16 @@ export class SseProvider implements MigrationProvider {
     }
   }
 
-  /** 시연용 쿼리(?review=1)를 목업 서버에 넘긴다. 실제 백엔드는 무시한다. */
+  /** 시연용 쿼리(?review=1 · ?preflight=route|unknown)를 목업 서버에 넘긴다. 실제 백엔드는 무시한다. */
   private demoQuery() {
-    return typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('review') === '1' ? '?review=1' : ''
+    if (typeof window === 'undefined') return ''
+    const search = new URLSearchParams(window.location.search)
+    const query = new URLSearchParams()
+    if (search.get('review') === '1') query.set('review', '1')
+    const preflight = search.get('preflight')
+    if (preflight === 'route' || preflight === 'unknown') query.set('preflight', preflight)
+    const text = query.toString()
+    return text ? '?' + text : ''
   }
 
   private get startMode(): SseStartMode {
