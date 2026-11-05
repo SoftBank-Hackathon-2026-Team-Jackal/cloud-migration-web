@@ -107,7 +107,7 @@ try {
     page.on('response', async response => {
       if (new URL(response.url()).origin === BASE && /^\/api\//.test(new URL(response.url()).pathname)) bodies.push(await response.text().catch(() => ''))
     })
-    await page.goto(BASE + '/?stage=setup&target=gcp&lang=ko')
+    await page.goto(BASE + '/?stage=setup&target=gcp&lang=ko&speed=' + (process.env.E2E_SPEED ?? '10'))
     await page.waitForSelector('.migration-setup')
     return { context, page, bodies }
   }
@@ -197,6 +197,11 @@ try {
       return route.fulfill({ status: 404, body: '' })
     })
     await page.click('.migration-next')
+    // 목업·SSE source: 이전 범위를 확정해야 시작한다(SSE wait는 범위 선택 전에 대기 안내).
+    if (MODE === 'mock' || START !== 'wait') {
+      await page.click('.scope [data-scope-action=analyze]:not([disabled])')
+      await page.click('.scope [data-scope-action=confirm]:not([disabled])')
+    }
     if (MODE === 'mock') {
       await page.waitForSelector('.analysis-discovery-item', { timeout: 20000 })
       check(posts.length === 0, '목업: 분석 화면으로 넘어가고 백엔드는 부르지 않는다')
@@ -221,7 +226,7 @@ try {
     const page = await context.newPage()
     const posts = []
     await page.route(API + '/**', route => { if (route.request().method() === 'POST') posts.push(route.request().url()); return route.fulfill({ status: 404, body: '' }) })
-    await page.goto(BASE + '/?stage=analysis&target=gcp&lang=ko')
+    await page.goto(BASE + '/?stage=analysis&target=gcp&lang=ko&speed=' + (process.env.E2E_SPEED ?? '10'))
     await page.waitForSelector('[role="alert"][aria-label="백엔드 연결 대기"]')
     await page.waitForTimeout(500)
     check(posts.length === 0, '저장소 없이 단계를 열면 POST /migrations 없이 대기 안내를 보여 준다')

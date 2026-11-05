@@ -37,7 +37,7 @@ const text = () => page.evaluate(() => document.querySelector('main')?.innerText
 
 try {
   console.log(`흐름 시험: ${BASE_URL} (lang=${LANG})`)
-  await page.goto(`${BASE_URL}/?lang=${LANG}&target=gcp`)
+  await page.goto(`${BASE_URL}/?lang=${LANG}&target=gcp&speed=${process.env.E2E_SPEED ?? '10'}`)
 
   // 소개 화면은 클릭하면 입자가 구로 모이고, 문장이 다 쓰이면 "예" 버튼이 나온다.
   // 개발 서버처럼 느린 첫 로드에서는 하이드레이션 전의 클릭이 무시되므로 "예" 버튼이 나올 때까지 클릭을 되풀이한다.
@@ -57,6 +57,12 @@ try {
   await page.locator('.senv-card.is-selected[data-target=gcp]').waitFor()
   check((await page.locator('.senv-card.is-selected').innerText()).includes('asia-northeast3'), 'GCP 선택 시 대상 리전 기본값 asia-northeast3')
   await press('.migration-next')
+  // 이전 범위 선택: 기본값(첫 워크로드)으로 분석 → 후보 확인 → 범위 확정해야 분석 단계로 넘어간다.
+  await page.locator('.scope [data-scope-action=analyze]:not([disabled])').click()
+  await page.locator('.scope-row').first().waitFor()
+  check(await page.locator('.analysis-discovery-item').count() === 0, '범위 확정 전에는 다음 단계로 넘어가지 않는다')
+  check(await page.locator('.scope-evi b[data-evidence=MANIFEST]').count() > 0, '범위 후보에 근거 배지가 보인다')
+  await press('.scope [data-scope-action=confirm]')
 
   await press('.analysis-next-area button')
   note('분석 완료')
@@ -96,7 +102,9 @@ try {
   await page.locator('.approval-check input').check()
   await press('.approval-actions .flow-primary')
   note('두 번째 승인(DB 전환)')
-  await page.waitForFunction(() => document.querySelectorAll('.cutover-tile').length === 3)
+  // 전환 → 쓰기 중단 구간 재생 → 테이블 검증·합계 → 인계가 끝나면 리포트 버튼이 켜진다(합계 개수는 서버가 정한다).
+  await page.waitForFunction(() => document.querySelectorAll('.cutover-tile').length >= 3)
+  await page.waitForSelector('.flow-footer .flow-primary:not([disabled])')
   await press('.flow-footer .flow-primary')
 
   await page.waitForSelector('.report-panel')

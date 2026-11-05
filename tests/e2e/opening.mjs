@@ -32,7 +32,7 @@ async function open(size, lang = 'ko') {
   page.setDefaultTimeout(30000)
   page.on('pageerror', error => problems.push('pageerror: ' + error))
   page.on('console', message => { consoleText.push(message.text()); if (message.type() === 'error' && !/favicon/.test(message.text() + (message.location()?.url ?? ''))) problems.push('console.error: ' + message.text().slice(0, 200)) })
-  await page.goto(`${BASE_URL}/?lang=${lang}`)
+  await page.goto(`${BASE_URL}/?lang=${lang}&speed=${process.env.E2E_SPEED ?? '10'}`)
   // 하이드레이션 전의 키 입력은 무시되므로 첫 화면 버튼이 나올 때까지 L을 되풀이한다.
   for (let attempt = 0; attempt < 8; attempt++) {
     await page.keyboard.press('l')
@@ -62,6 +62,7 @@ try {
     if (!(await page.locator('.jv-panel').count())) await page.click('.jv-pill')
     const envText = await page.locator('.senv').innerText()
     check(/연결됨/.test(envText) && /온라인/.test(envText) && envText.includes('office-seoul-01'), '등록된 원본·대상이 읽기 전용으로 보인다(에이전트 온라인)')
+    check(await page.locator('.setup2 a[href="/settings"]').count() === 1, '등록·수정은 /settings 링크로만')
     check(await page.locator('.setup2 input[type=text], .setup2 input[type=password], .setup2 select').count() === 0, '설정 화면에 키·리전·에이전트 입력칸이 없다')
     await page.waitForTimeout(1200)
     await shot(page, `3-setup-${tag}`)
@@ -83,6 +84,16 @@ try {
     await page.waitForTimeout(800)
     await shot(page, `5-env-${tag}`)
 
+    // S: 이전 범위 선택으로 → S: 분석 시작(기본 워크로드) → S: 범위 확정 → 분석 단계
+    await page.keyboard.press('s')
+    await page.waitForSelector('.scope [data-scope-action=analyze]:not([disabled])', { timeout: 20000 })
+    check((await page.locator('.jv-log').innerText()).includes('옮길 앱을 골라 주세요'), '자칼: 옮길 앱을 골라 달라고 안내한다')
+    await shot(page, `6-scope-${tag}`)
+    await page.keyboard.press('s')
+    await page.waitForSelector('.scope [data-scope-action=confirm]', { timeout: 20000 })
+    check(await page.locator('.scope-row').count() >= 5, '분석 결과: 이전 범위 후보와 근거')
+    await page.waitForFunction(() => document.querySelector('.jv-log')?.textContent?.includes('근거를 보고 확정해 주세요'))
+    await shot(page, `7-scope-review-${tag}`)
     await page.keyboard.press('s')
     await page.waitForFunction(() => document.querySelector('.jv-log')?.textContent?.includes('원본 분석부터 시작할게요'))
     await page.waitForSelector('.analysis-discovery-item', { timeout: 30000 })

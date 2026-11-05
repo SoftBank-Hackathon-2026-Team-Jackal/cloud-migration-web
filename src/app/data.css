@@ -132,7 +132,8 @@
 .ps-gate.is-pass b{background:var(--ps-ink);color:#fff}
 .ps-gate.is-sync.is-pass b{background:#b08a2e;border-color:#b08a2e}
 .ps-gate.is-fail b{background:#c4242a;border-color:#c4242a;color:#fff}
-.ps-now{position:absolute;top:-2px;bottom:-2px;width:2px;margin-left:-1px;background:#b08a2e;transition:left .4s linear}
+/* 지금 위치 선은 두 줄(레인) 사이에만 그어 위·아래 구간 이름(예: 50:50 → 0:100)과 겹치지 않게 한다 */
+.ps-now{position:absolute;top:12px;bottom:12px;width:2px;margin-left:-1px;background:#b08a2e;transition:left .4s linear}
 .ps-side{display:flex;flex-direction:column;align-items:flex-end;gap:6px;max-width:300px}
 .ps-side small{color:var(--ps-muted);font-size:11px;line-height:1.35;text-align:right}
 .ps.is-compact{padding:6px 14px}

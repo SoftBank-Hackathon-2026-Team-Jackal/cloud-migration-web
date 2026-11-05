@@ -45,7 +45,11 @@ export class TrafficSim {
   /** 전환 단계(대상 비율 %). 서버가 정한 단계(예: [50, 100])를 줄 수 있고, 없으면 10 · 50 · 100이다. */
   private steps: number[]
 
-  constructor(emit: (data: TrafficSnapshotData) => void, steps: readonly number[] = TRAFFIC_STEPS) {
+  /** 시계 배속(시험용). 1이면 실제 시간 그대로다. 화면에 보이는 관찰 시간 값은 바꾸지 않는다. */
+  private speed = 1
+
+  constructor(emit: (data: TrafficSnapshotData) => void, steps: readonly number[] = TRAFFIC_STEPS, speed = 1) {
+    this.speed = speed >= 1 ? speed : 1
     this.emitSnapshot = emit
     this.steps = steps.length > 0 ? [...steps] : [...TRAFFIC_STEPS]
   }
@@ -116,7 +120,7 @@ export class TrafficSim {
   }
 
   private after(ms: number, run: () => void) {
-    this.timers.push(setTimeout(run, ms))
+    this.timers.push(setTimeout(run, ms / this.speed))
   }
 
   private emit(notes?: TrafficNote[]) {
@@ -196,7 +200,7 @@ export class TrafficSim {
       } else {
         this.emit()
       }
-    }, OBSERVE_TICK * 1000)
+    }, OBSERVE_TICK * 1000 / this.speed)
     this.intervals.push(timer)
   }
 
@@ -246,7 +250,7 @@ export class TrafficSim {
       const drained = this.residual.requests === 0 && this.residual.streams === 0
       if (drained) clearInterval(timer)
       this.emit(drained ? [{ key: 'drained' }] : undefined)
-    }, 500)
+    }, 500 / this.speed)
     this.intervals.push(timer)
   }
 }

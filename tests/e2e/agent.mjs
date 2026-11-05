@@ -59,7 +59,7 @@ async function ask(port, text) {
   const page = await browser.newPage({ viewport: { width: 1536, height: 800 } })
   const browserRequests = []
   page.on('request', request => browserRequests.push({ url: request.url(), headers: request.headers(), body: request.postData() }))
-  await page.goto(`http://127.0.0.1:${port}/?lang=ko&stage=traffic&target=gcp`)
+  await page.goto(`http://127.0.0.1:${port}/?lang=ko&stage=traffic&target=gcp&speed=${process.env.E2E_SPEED ?? '10'}`)
   await page.waitForTimeout(4000)
   // 시연 중에는 위젯이 접혀 있다: 눌러서 열고, 입력창에 질문을 쓴다.
   await page.locator('.jv-pill').click()

@@ -48,6 +48,21 @@ export function preflightScenario(): PreflightDemo {
   return value === 'route' || value === 'unknown' ? value : 'pass'
 }
 
+export type CutoverDemo = 'fast' | 'classic' | 'kill' | 'tamper' | 'tamper-classic'
+export const CUTOVER_DEMOS: readonly CutoverDemo[] = ['fast', 'classic', 'kill', 'tamper', 'tamper-classic']
+/**
+ * 시연용 ?cutover=…: DB 전환 방식과 장애를 고른다(기본 fast) [가정]. 백엔드 PoC(poc/cdc · poc/demo)의 fault와 같다.
+ *  fast 빠른 전환(체크섬은 RESUME 뒤) 통과 · classic PAUSE 안에서 체크섬까지 하는 전환 통과
+ *  kill 전환 중 대상 DB가 죽어 거부 → 원본 DB로 RESUME(다시 시도하면 fast로 통과)
+ *  tamper fast에서 대상이 변조됨: 전환은 되고, 뒤의 검증이 불일치를 알린다
+ *  tamper-classic classic에서 대상이 변조됨: PAUSE 안 체크섬이 막아 거부(다시 시도하면 통과)
+ */
+export function cutoverScenario(): CutoverDemo {
+  if (typeof window === 'undefined') return 'fast'
+  const value = new URLSearchParams(window.location.search).get('cutover') as CutoverDemo | null
+  return value && CUTOVER_DEMOS.includes(value) ? value : 'fast'
+}
+
 /** 시연용 ?delivery=fail: 승인은 기록되지만 첫 전달이 실패한다(다시 전달하면 성공). */
 export function deliveryFailDemo(): boolean {
   return flag('delivery', 'fail')
@@ -56,4 +71,14 @@ export function deliveryFailDemo(): boolean {
 /** 시연용 ?analysis=items: 분석 결과를 예전 방식(발견 항목마다 한 건)으로 받는다. 기본은 백엔드 방식(스캔 Activity마다 개수 묶음). */
 export function analysisItemsDemo(): boolean {
   return flag('analysis', 'items')
+}
+
+/**
+ * 시험용 ?speed=N(1–20): 목업 대본·트래픽 모의의 시계를 N배 빠르게 돌린다(화면 애니메이션은 그대로).
+ * e2e가 실제 시간만큼 기다리지 않게 하려는 값이다. 발표에서는 쓰지 않는다.
+ */
+export function mockSpeed(): number {
+  if (typeof window === 'undefined') return 1
+  const value = Number(new URLSearchParams(window.location.search).get('speed'))
+  return Number.isFinite(value) && value >= 1 ? Math.min(value, 20) : 1
 }

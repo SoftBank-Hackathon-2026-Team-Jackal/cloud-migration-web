@@ -97,6 +97,31 @@ test('전환 단계: 완료된 단계 수와 측정 구간, 결과 3개가 모�
   assert.equal(state.status, 'done')
 })
 
+test('DB 전환 상세: 계획·전환 가능 시점·단계(ms)·결과·테이블 검증, 새 시도면 지난 결과를 비운다 [가정]', () => {
+  seq = 0
+  const phase = 'verification' as const
+  const ready = (attempt: number): DraftEvent => ({ type: 'cutover.ready', phase, status: 'running', data: { attempt, longest_tx_ms: 40, lock_waits: 0, commits_per_sec: 128, ready: true, limits: { longest_tx_ms: 1000, lock_waits: 0 } } })
+  const step = (n: number, id: string, ms: number): DraftEvent => ({ type: 'cutover.step', phase, status: 'running', data: { n, state: 'done', id, ms, method: 'fast', of: 3 } })
+  const plan: DraftEvent = { type: 'cutover.plan', phase, status: 'waiting', data: { method: 'fast', expected_pause_ms: { min: 4, max: 8 }, rehearsal: { source: 'poc/demo', runs: 1, methods: [] }, preconditions: [], steps: [], rollback: { standby_hours: 72 }, topology: { app: 'a', pooler: 'p', source_db: 's', target_db: 't', source_where: 'x', target_where: 'y', writes_per_sec: 1 }, handover: [] } }
+  let state = run(initialState, ev(plan), ev(ready(1)), ev(step(2, 'marker', 2.1)), ev(step(1, 'pause', 0.6)), ev(step(3, 'liveness', 3)))
+  assert.deepEqual(state.cutover.steps.map(item => item.id), ['pause', 'marker', 'liveness'], '받은 순서와 상관없이 n순')
+  assert.equal(state.cutover.doneSteps, 3)
+  state = run(state,
+    ev({ type: 'cutover.outcome', phase, status: 'waiting', data: { result: 'refused', reason: 'TARGET_LIVENESS_FAILED', active: 'source', pause_ms: 5.7, held_requests: 2, failed_requests: 0, replication: { direction: 'forward', lag_ms: null } } }),
+    ev({ type: 'cutover.verify', phase, status: 'running', data: { table: 'orders', source_rows: 10, target_rows: null, checksum: 'skipped' } }),
+    ev({ type: 'cutover.verify', phase, status: 'running', data: { table: 'orders', source_rows: 11, target_rows: null, checksum: 'skipped' } }))
+  assert.equal(state.cutover.outcome?.result, 'refused')
+  assert.equal(state.cutover.tables.length, 1)
+  assert.equal(state.cutover.tables[0].source_rows, 11)
+  assert.notEqual(state.status, 'failed', '거부는 실패가 아니다')
+  state = run(state, ev(ready(2)))
+  assert.equal(state.cutover.attempt, 2)
+  assert.equal(state.cutover.outcome, null)
+  assert.deepEqual(state.cutover.steps, [])
+  assert.equal(state.cutover.tables.length, 0)
+  assert.ok(state.cutover.plan, '계획은 남는다')
+})
+
 test('승인 요청은 대기 상태로, 두 번째 승인은 따로 표시한다', () => {
   seq = 0
   let state = run(initialState, ev({ type: 'approval.required', phase: 'awaiting_approval', status: 'waiting', data: { excluded: ['x'], rollback_policy: 'p' } }))
