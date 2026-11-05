@@ -3,11 +3,16 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import Ajv from 'ajv/dist/2020.js'
 import { initialState, reducer, type MigrationState } from '../../src/lib/migration/reducer.ts'
-import { normalizePlanStep, type DraftEvent, type MigrationEvent, type PlanPreviewData } from '../../src/lib/migration/events.ts'
+import { isBackendPreview, normalizePlanStep, type DraftEvent, type MigrationEvent, type PlanPreviewData } from '../../src/lib/migration/events.ts'
 import { normalizeEvent } from '../../src/lib/migration/sseProvider.ts'
 import { DEFAULT_TRAFFIC_STEPS, approvalFacts, diagramSteps, kindOf, ledgerGroupOf, planSummary, planWarnings, reportsStorage } from '../../src/lib/migration/planModel.ts'
 import { planPreviewFor, timelineFor } from '../../src/lib/migration/script.ts'
 import { TrafficSim, stepIndexOf } from '../../src/lib/migration/trafficSim.ts'
+import { adaptBackendPreview } from '../../src/lib/migration/previewAdapter.ts'
+import { ROLLOUT_POLICY_DEFAULTS } from '../../src/lib/migration/policy.ts'
+
+/** 목업 Preview(백엔드 모양)를 화면 모델로 옮긴 것 */
+const modelPreview = (target: 'gcp' | 'onprem', revision: number) => adaptBackendPreview(planPreviewFor(target, revision), { steps: [], meta: null })
 import type { TrafficSnapshotData } from '../../src/lib/migration/events.ts'
 
 let seq = 0
@@ -37,7 +42,7 @@ test('SSE 이벤트 정규화: plan.step과 snapshot 안의 이벤트, 빠진 �
   const snapshot = normalizeEvent({ seq: 2, at: 'x', phase: 'planning', type: 'snapshot', status: 'running', data: { migration_id: 'm', status: 'running', reset: true, events: [legacy] } } as MigrationEvent)
   assert.ok(snapshot.type === 'snapshot' && snapshot.data.events[0].type === 'plan.step' && snapshot.data.events[0].data.grade === 'API_DIFF')
   const preview = normalizeEvent({ seq: 3, at: 'x', phase: 'planning', type: 'plan.preview', status: 'running', data: { plan_id: 'p', revision: 1, source: { provider: 'AWS', platform: 'EKS', location: 'x' }, target: { provider: 'GCP', platform: 'GKE', location: 'y' } } } as unknown as MigrationEvent)
-  assert.ok(preview.type === 'plan.preview')
+  assert.ok(preview.type === 'plan.preview' && !isBackendPreview(preview.data))
   assert.deepEqual([preview.data.resources, preview.data.env_remap, preview.data.security_rules, preview.data.validation], [[], [], [], { errors: [], warnings: [] }])
 })
 
@@ -61,7 +66,7 @@ test('목업 계획 대본: 미리보기·매핑이 스키마를 통과하고, �
 })
 
 test('경고는 검증 경고와 리소스 경고를 한 목록으로 합친다(같은 리소스는 한 번)', () => {
-  const preview: PlanPreviewData = { ...planPreviewFor('gcp', 1) }
+  const preview: PlanPreviewData = { ...modelPreview('gcp', 1) }
   assert.equal(planWarnings(preview).length, 1)
   preview.resources = preview.resources.map(resource => resource.id === 'db' ? { ...resource, warning: 'same' } : resource.id === 'vpc' ? { ...resource, warning: 'cidr overlap' } : resource)
   assert.deepEqual(planWarnings(preview).map(issue => issue.resource), ['db', 'vpc'])
@@ -79,13 +84,16 @@ test('구성도 분류: kind가 없어도 다른 앱(Go + PgBouncer, S3 없음)�
   assert.deepEqual(diagramSteps(steps).map(item => item.kind), ['ingress', 'compute', 'proxy', 'database'])
   assert.equal(kindOf({ id: 'uploads', before: 'S3 bucket' }), 'storage')
   // 분석·계획 어디에도 저장소가 없으면 S3 상자를 그리지 않는다
-  const state = { analysis: { findings: [], done: true }, plan: { steps, ready: true, meta: null, preview: null } }
+  const state = { analysis: { findings: [], scans: [], done: true }, plan: { steps, ready: true, meta: null, preview: null, backend: null } }
   assert.equal(reportsStorage(state), false)
-  assert.equal(reportsStorage({ analysis: { findings: [], done: false }, plan: { steps: [], ready: false, meta: null, preview: null } }), true, '아무 결과도 없으면 예전처럼 보인다')
+  assert.equal(reportsStorage({ analysis: { findings: [], scans: [], done: false }, plan: { steps: [], ready: false, meta: null, preview: null, backend: null } }), true, '아무 결과도 없으면 예전처럼 보인다')
+  // 스캔 배치가 버킷을 찾았으면 저장소가 있다
+  const scanned = { ...state, analysis: { ...state.analysis, scans: [{ id: 's', activity: 'scan_aws_infra', stream: 'infrastructure' as const, completed: 1, total: 1, items: [{ key: 's3_bucket', n: 1 }], evidence: [] }] } }
+  assert.equal(reportsStorage(scanned), true)
 })
 
 test('원본 유지 리소스는 원래 묶음과 관계없이 원본 유지 묶음으로 간다', () => {
-  const [vpc] = planPreviewFor('gcp', 1).resources
+  const [vpc] = modelPreview('gcp', 1).resources
   assert.equal(ledgerGroupOf(vpc), 'network')
   assert.equal(ledgerGroupOf({ ...vpc, change: 'KEEP_SOURCE' }), 'keep')
 })
@@ -119,8 +127,10 @@ test('승인 요약은 받은 계획 데이터에서 계산하고, 없는 값은
   const empty = approvalFacts(initialState)
   assert.equal(empty.hasPlan, false)
   assert.equal(empty.sandbox, null)
-  assert.equal(empty.writePauseMs, null)
+  // 계획이 rollout을 보내지 않으면 정책 기본값(policy.ts)을 defaulted로 쓴다
+  assert.deepEqual(empty.writePause, { ms: ROLLOUT_POLICY_DEFAULTS.expected_write_pause_ms, defaulted: true })
   assert.deepEqual(empty.traffic, { steps: DEFAULT_TRAFFIC_STEPS, method: null, defaulted: true })
+  assert.deepEqual(empty.pending, { rollback: [], excluded: [] })
 
   let state: MigrationState = initialState
   let n = 0
@@ -132,11 +142,16 @@ test('승인 요약은 받은 계획 데이터에서 계산하고, 없는 값은
   assert.equal(facts.database?.id, 'database')
   assert.deepEqual(facts.traffic.steps, [10, 50, 100])
   assert.equal(facts.traffic.method, null, '트래픽 방식은 미정이라 보내지 않는다')
-  assert.equal(facts.traffic.defaulted, false)
-  assert.equal(facts.writePauseMs, 1000)
+  assert.equal(facts.traffic.defaulted, true, '백엔드 Preview에는 rollout이 없다: 정책 기본값')
+  assert.deepEqual(facts.writePause, { ms: 1000, defaulted: true })
+  assert.deepEqual(facts.dataMethod, { value: 'DUMP_CDC', defaulted: true })
+  assert.deepEqual(facts.pending, { rollback: ['CLEANUP_POLICY_REQUIRED'], excluded: [] }, 'Preview pending_decisions의 정리 정책은 롤백 줄로')
   // 서버가 다른 전환 단계를 보내면 그대로 쓴다.
-  const preview = { ...state.plan.preview!, rollout: { traffic_steps: [25, 100], traffic_method: 'DNS_WEIGHTED' } }
+  const preview = { ...state.plan.preview!, rollout: { traffic_steps: [25, 100], traffic_method: 'DNS_WEIGHTED', expected_write_pause_ms: 400 } }
   const custom = approvalFacts({ ...state, plan: { ...state.plan, preview } })
   assert.deepEqual(custom.traffic, { steps: [25, 100], method: 'DNS_WEIGHTED', defaulted: false })
-  assert.equal(custom.writePauseMs, null)
+  assert.deepEqual(custom.writePause, { ms: 400, defaulted: false })
+  // 승인 요청이 보낸 code도 합친다(모르는 code는 제외 목록으로)
+  const asked = approvalFacts({ ...state, approval: { pendingDecisions: ['CLEANUP_POLICY_REQUIRED', 'INSPECTION_REQUIRED', 'NEW_CODE'] } })
+  assert.deepEqual(asked.pending, { rollback: ['CLEANUP_POLICY_REQUIRED'], excluded: ['INSPECTION_REQUIRED', 'NEW_CODE'] })
 })

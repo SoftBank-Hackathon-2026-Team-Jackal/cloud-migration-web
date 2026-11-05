@@ -1,5 +1,6 @@
 'use client'
 
+import FixerEnvNotice from './FixerEnvNotice'
 import { useEffect } from 'react'
 import StageShell from './StageShell'
 import { useT, type MsgKey } from '../lib/i18n'
@@ -161,6 +162,7 @@ function RehearsalBody({ ready, target, onNext, onComplete }: { ready: boolean; 
       {tracks.map(track => <TrackCard key={track.run} track={track} fixes={fixes} current={track === current && !done} />)}
       {tests && <p className="flow-note sbx-tests"><b>{t('sbx.testsBy')}</b> {t('sbx.tests', { total: tests.total, catalog: tests.catalog, original: tests.original, generated: tests.generated, readOnly: tests.read_only })}</p>}
       {migration.build.result && <BuildResultNote result={migration.build.result} />}
+      <FixerEnvNotice fixes={fixes} />
     </section>
 
     <aside className="flow-panel sbx-side" aria-label={t('sbx.chamberAria')}>

@@ -72,7 +72,11 @@
 .envd-key code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#222;font:500 11.5px/1.3 ui-monospace,SFMono-Regular,monospace}
 .envd-mask{color:#aaa;letter-spacing:1px;font:500 11px/1 ui-monospace,monospace}
 .envd-tag{padding:3px 8px;border:1px solid #ddd;border-radius:999px;background:#fff;color:#555;font:600 10px/1.2 var(--font-sans);white-space:nowrap}
-.envd-key.is-secret .envd-tag{border-color:#111;background:#111;color:#fff}
+.envd-key.is-replaced .envd-tag{border-color:#111;background:#111;color:#fff}
+.envd-key.is-excluded code{color:#999;text-decoration:line-through}
+.envd-key.is-excluded .envd-tag,.envd-key.is-pending .envd-tag{border-style:dashed;color:#888}
+.envd-ref{display:block;margin-top:2px;color:inherit;opacity:.75;font:500 9.5px/1.2 ui-monospace,monospace;white-space:nowrap}
+.envd-class{margin:0;color:#666;font:500 11px/1.4 var(--font-sans)}
 .envd-key.is-missing,.envd-key.is-empty{background:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.1)}
 .envd-key.is-missing code,.envd-key.is-empty code{color:#999}
 .envd-key.is-missing .envd-tag,.envd-key.is-empty .envd-tag{border-style:dashed;color:#999;background:transparent}

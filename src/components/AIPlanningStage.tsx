@@ -2,13 +2,15 @@
 
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import type { Target } from '../lib/stages'
-import { shortDigest, type PlanIssue, type PlanPreviewData, type PlanResource, type PlanStepData, type SecurityRule } from '../lib/migration/events'
+import { shortDigest, type BuildFixData, type PlanIssue, type PlanPreviewData, type PlanResource, type PlanStepData, type SecurityRule } from '../lib/migration/events'
 import { PLAN_FIRST_REVEAL_MS, PLAN_REVEAL_GAP_MS, PLAN_REVEAL_MS } from '../lib/migration/script'
 import { useT, useTOr, type MsgKey, type TranslateOr } from '../lib/i18n'
 import { ViewTabs } from './DiagramParts'
 import PlanTopology from './PlanTopology'
 import { issueText, placeText, stepText } from './planText'
-import { LEDGER_GROUPS, ledgerGroupOf, planSummary, planWarnings } from '../lib/migration/planModel'
+import { LEDGER_GROUPS, SOURCE_FALLBACK, costViewOf, ledgerGroupOf, planSummary, planWarnings, targetEnvOf } from '../lib/migration/planModel'
+import CostCompare from './CostCompare'
+import FixerEnvNotice from './FixerEnvNotice'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
 
 type PlanStep = PlanStepData
@@ -25,7 +27,7 @@ function WarnDot({ label }: { label?: string }) {
   return <i className="plan-warn-dot" role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : true} />
 }
 
-function Ledger({ preview, path, revealed, warnings }: { preview: PlanPreviewData; path: Target; revealed: number; warnings: PlanIssue[] }) {
+function Ledger({ preview, path, revealed, warnings, fixes }: { preview: PlanPreviewData; path: Target; revealed: number; warnings: PlanIssue[]; fixes: BuildFixData[] }) {
   const t = useT()
   const tOr = useTOr()
   const groups = LEDGER_GROUPS.map(group => ({ group, rows: preview.resources.filter(resource => ledgerGroupOf(resource) === group) })).filter(item => item.rows.length > 0)
@@ -42,7 +44,7 @@ function Ledger({ preview, path, revealed, warnings }: { preview: PlanPreviewDat
           return <tr key={resource.id} className={'plan-ledger-row plan-reveal' + (revealed > order ? ' is-visible' : '') + (resource.change === 'KEEP_SOURCE' ? ' is-keep' : '')}>
             <th scope="row">
               <span className="plan-cell-main">{resourceText(tOr, resource, path, 'name')}{warn && <WarnDot label={t('plan.warnAria', { text: issueText(tOr, warn) })} />}</span>
-              <span className="plan-cell-sub">{resourceText(tOr, resource, path, 'detail')}</span>
+              <span className="plan-cell-sub">{resourceText(tOr, resource, path, 'detail') || resource.backend_name}{resource.defaulted && <em className="plan-default">{t('plan.defaulted')}</em>}</span>
             </th>
             <td className="is-num">
               <span className="plan-cell-main">{resource.size || '—'}</span>
@@ -54,7 +56,8 @@ function Ledger({ preview, path, revealed, warnings }: { preview: PlanPreviewDat
       </tbody>)}
     </table>
     <aside className="plan-wells">
-      <section className="plan-well" aria-labelledby="plan-well-env">
+      {/* 재매핑·보안 규칙은 백엔드 Preview에 없다(앱 Values·계획 입력에서 온다). 받지 못했으면 칸을 숨긴다. */}
+      {preview.env_remap.length > 0 && <section className="plan-well" aria-labelledby="plan-well-env">
         <h3 id="plan-well-env">{t('plan.well.env')}</h3>
         <dl>{preview.env_remap.map(item => <div key={item.key}>
           <dt><code>{item.key}</code></dt>
@@ -63,14 +66,14 @@ function Ledger({ preview, path, revealed, warnings }: { preview: PlanPreviewDat
             : <code>{item.to}</code>}</dd>
         </div>)}</dl>
         <p>{t('plan.well.envNote')}</p>
-      </section>
-      <section className="plan-well" aria-labelledby="plan-well-sec">
+      </section>}
+      {preview.security_rules.length > 0 && <section className="plan-well" aria-labelledby="plan-well-sec">
         <h3 id="plan-well-sec">{t('plan.well.security')}</h3>
         <dl>{preview.security_rules.map((rule: SecurityRule, ruleIndex) => <div key={ruleIndex}>
           <dt>{rule.from === '*' && rule.to === '*' ? roleText(tOr, '*') : roleText(tOr, rule.from) + ' → ' + roleText(tOr, rule.to)}</dt>
           <dd>{rule.action === 'DENY' ? t('plan.rule.deny') : rule.port === null ? <span aria-label={t('plan.rule.allAria')}>*</span> : rule.port}</dd>
         </div>)}</dl>
-      </section>
+      </section>}
       <section className="plan-well" aria-labelledby="plan-well-val">
         <h3 id="plan-well-val">{t('plan.well.validation')}</h3>
         <dl>
@@ -79,7 +82,9 @@ function Ledger({ preview, path, revealed, warnings }: { preview: PlanPreviewDat
         </dl>
         {preview.validation.errors.map(issue => <p key={issue.id} className="plan-issue is-error">{issueText(tOr, issue)}</p>)}
         {warnings.map(issue => <p key={issue.id} className="plan-issue">{issueText(tOr, issue)}</p>)}
+        {(preview.pending_decisions ?? []).map(issue => <p key={'pd-' + issue.id} className="plan-issue is-pending">{tOr('approval.pending.' + issue.id, issueText(tOr, issue))}</p>)}
         {preview.validation.errors.length === 0 && warnings.length === 0 && <p>{t('plan.val.clean')}</p>}
+        <FixerEnvNotice fixes={fixes} />
       </section>
     </aside>
   </div>
@@ -236,10 +241,11 @@ export default function AIPlanningStage({ target, onNext }: { target: Target; on
   const [revealed, setRevealed] = useState(0)
   const [swapped, setSwapped] = useState(false)
   const [coreReady, setCoreReady] = useState(false)
-  const [view, setView] = useState<'ledger' | 'mapping' | 'diagram'>('ledger')
+  const [view, setView] = useState<'ledger' | 'mapping' | 'diagram' | 'cost'>('ledger')
   // 분석 결과 없이 바로 이 화면을 연 경우(시연용 단계 이동)에는 분석이 끝난 것으로 보여 준다.
-  const hasInfra = analysis.length === 0 || analysis.some(update => update.stream === 'infrastructure')
-  const hasCode = analysis.length === 0 || analysis.some(update => update.stream === 'code')
+  const streams = [...analysis.map(update => update.stream), ...state.analysis.scans.map(scan => scan.stream)]
+  const hasInfra = streams.length === 0 || streams.includes('infrastructure')
+  const hasCode = streams.length === 0 || streams.includes('code')
 
   useEffect(() => {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -262,15 +268,17 @@ export default function AIPlanningStage({ target, onNext }: { target: Target; on
   const summary = planSummary(steps)
   const warnings = planWarnings(preview)
   const errors = preview?.validation.errors.length ?? 0
-  const creating = preview?.resources.filter(resource => resource.change !== 'KEEP_SOURCE').length ?? 0
-  const keeping = preview ? preview.resources.length - creating : summary.keep
-  const source = placeText(tOr, preview?.source ?? { provider: 'AWS', platform: 'EKS', location: 'ap-northeast-2' })
-  const destination = preview ? placeText(tOr, preview.target) : { provider: t(('target.' + target) as MsgKey), place: '' }
+  // 새로 만듦 = 만들거나(CREATE) 검증한 이미지로 배포(PINNED). 기존 사용·바꿈·지움은 세지 않는다.
+  const creating = preview?.resources.filter(resource => resource.change === 'CREATE' || resource.change === 'PINNED').length ?? 0
+  const keeping = preview ? preview.resources.filter(resource => resource.change === 'KEEP_SOURCE').length : summary.keep
+  const source = placeText(tOr, preview?.source ?? SOURCE_FALLBACK)
+  const destination = preview?.target ? placeText(tOr, preview.target) : { provider: t(('target.' + target) as MsgKey), place: preview ? placeText(tOr, targetEnvOf(preview, target)).place : '' }
   const digest = shortDigest(state.plan.meta?.verified_digest ?? state.plan.meta?.built_digest ?? state.build.result?.digest)
   const tabs = [
     { id: 'ledger' as const, label: t('plan.tab.ledger') },
     { id: 'mapping' as const, label: t('plan.tab.mapping') },
     { id: 'diagram' as const, label: t('plan.tab.diagram') },
+    { id: 'cost' as const, label: t('tab.cost') },
   ]
   const summaryParts = [
     t('plan.summary.total', { n: summary.total }),
@@ -323,7 +331,7 @@ export default function AIPlanningStage({ target, onNext }: { target: Target; on
       </div>
       <div className={'plan-changes plan-body' + (swapped ? ' is-swapped' : '') + ' is-' + view}>
         {view === 'ledger' && (preview
-          ? <Ledger key="ledger" preview={preview} path={path} revealed={visibleCount} warnings={warnings} />
+          ? <Ledger key="ledger" preview={preview} path={path} revealed={visibleCount} warnings={warnings} fixes={state.build.fixes} />
           : <p className="plan-empty">{t('plan.preview.empty')}</p>)}
         {view === 'mapping' && <MappingTable key="mapping" steps={steps} target={target} revealed={visibleCount} />}
         {view === 'diagram' && <div key="diagram" className="plan-topo">
@@ -335,6 +343,7 @@ export default function AIPlanningStage({ target, onNext }: { target: Target; on
             {digest && <li><i className="is-lock" />{t('plan.diagram.legendLock')}</li>}
           </ul>
         </div>}
+        {view === 'cost' && <div key="cost" className="plan-cost"><CostCompare target={target} cost={costViewOf(state, target)} /></div>}
       </div>
       <footer className="plan-foot">
         <p className="plan-status" aria-live="polite">

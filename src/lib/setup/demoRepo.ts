@@ -22,6 +22,13 @@ export const DEMO_SCAN: RepoScan = {
   ],
   env_keys: ['PORT', 'NODE_ENV', 'DATABASE_URL', 'REDIS_URL', 'JWT_SECRET', 'LOG_LEVEL'],
   truncated: false,
+  // [가정] 백엔드 분석이 줄 .env 분류(EnvExceptions)의 목업. REDIS_URL은 바인딩 참조를 아직 모른다(빈 값).
+  env_exceptions: {
+    excluded: ['AWS_REGION'],
+    replaced: { DATABASE_URL: 'target-db/url (Secret)', REDIS_URL: '' },
+    missing: ['LOG_LEVEL'],
+    others: 'COPY',
+  },
 }
 
 /** [가정] "예시 .env 사용" 버튼이 넣는 파일. 값은 가짜이고, 이 파일도 실제 업로드와 똑같이 키 이름만 읽는다. */
@@ -29,6 +36,7 @@ export const EXAMPLE_ENV = [
   '# example values (fake)',
   'PORT=8080',
   'NODE_ENV=production',
+  'AWS_REGION=ap-northeast-2',
   'DATABASE_URL=postgres://chat:example@db.internal:5432/chat',
   'REDIS_URL=redis://cache.internal:6379',
   'JWT_SECRET=example-not-a-real-secret',

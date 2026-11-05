@@ -77,8 +77,13 @@ try {
     await page.keyboard.press('e')
     await page.waitForSelector('.envd-key')
     const sum = await page.locator('.envd-sum').innerText()
-    check(sum.includes('6개 중 5개 있음') && sum.includes('LOG_LEVEL'), '.env 대조: 6개 중 5개 있음 · LOG_LEVEL 없음 → 기본값')
-    check(await page.locator('.envd-key.is-secret').count() === 3, 'Secret 키 3개는 "플랫폼 Secret으로 연결"')
+    check(sum.includes('6개 중 5개 있음') && sum.includes('LOG_LEVEL'), '.env 대조: 6개 중 5개 있음 · LOG_LEVEL은 코드가 읽지만 .env에 없음')
+    // [가정] 목업 분류(EnvExceptions): AWS_REGION 원본 전용 · DATABASE_URL·REDIS_URL 대상 DB 연결 · LOG_LEVEL 코드만 읽음 · 나머지 그대로 사용
+    const treatments = await page.locator('.envd-key').evaluateAll(items => items.map(item => item.getAttribute('data-treatment')))
+    const count = (name) => treatments.filter(item => item === name).length
+    check(count('excluded') === 1 && count('replaced') === 2 && count('missing') === 1 && count('others') === 4, '.env 분류는 받은 데이터대로(제외 1 · 대상 DB 연결 2 · 코드만 읽음 1 · 그대로 4): ' + treatments.join(','))
+    check(await page.locator('.envd-key.is-secret, .envd-key.is-config').count() === 0, '웹 자체의 설정값·Secret 분류가 없다')
+    check((await page.locator('.envd-key[data-treatment=replaced] .envd-ref').first().innerText()).includes('target-db/url'), '대상 DB 연결 키는 바인딩 참조 이름을 보인다')
     const html = await page.content()
     check(VALUES.every(value => !html.includes(value)), '.env 값이 화면(DOM)에 없다')
     await page.waitForTimeout(800)

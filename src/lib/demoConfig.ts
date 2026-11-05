@@ -68,6 +68,11 @@ export function deliveryFailDemo(): boolean {
   return flag('delivery', 'fail')
 }
 
+/** 시연용 ?analysis=items: 분석 결과를 예전 방식(발견 항목마다 한 건)으로 받는다. 기본은 백엔드 방식(스캔 Activity마다 개수 묶음). */
+export function analysisItemsDemo(): boolean {
+  return flag('analysis', 'items')
+}
+
 /**
  * 시험용 ?speed=N(1–20): 목업 대본·트래픽 모의의 시계를 N배 빠르게 돌린다(화면 애니메이션은 그대로).
  * e2e가 실제 시간만큼 기다리지 않게 하려는 값이다. 발표에서는 쓰지 않는다.

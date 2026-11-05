@@ -195,3 +195,18 @@
   .plan-foot{flex-wrap:wrap}
 }
 @media(prefers-reduced-motion:reduce){.plan-reveal,.topo-reveal{transition:none}}
+
+/* 백엔드 Preview의 applied_defaults 줄 · 정해야 할 값 · 비용 탭 */
+.plan-default{margin-left:6px;padding:0 6px;border:1px solid #d2d2d2;border-radius:999px;color:#6b6b6b;font-size:10px;font-style:normal;font-weight:600}
+.plan-issue.is-pending{color:#444;border-left:2px dashed #9a9a9a;padding-left:8px}
+.plan-cost{max-width:640px;padding:4px 2px 0;overflow-y:auto}
+.plan-chip.is-EXISTING{border-color:#cfcfcf;color:#5c5c5c}
+.plan-chip.is-UPDATE{border-color:#141414;color:#141414}
+.plan-chip.is-DELETE{border:1px solid #141414;color:#141414;text-decoration:line-through}
+
+/* Fixer가 새로 읽게 된 환경 변수(값 받는 방법 미정: 중립 안내) */
+.fixer-env{display:grid;gap:4px;margin:8px 0 0;padding:8px 10px;border:1px dashed #bdbdbd;border-radius:10px;color:#444;font-size:12px;line-height:1.45}
+.fixer-env strong{font-weight:650;color:#141414}
+.fixer-env span{display:flex;flex-wrap:wrap;gap:4px}
+.fixer-env code{padding:1px 6px;border-radius:6px;background:#efefef;font:500 11px/1.4 ui-monospace,monospace}
+.fixer-env small{color:#7a7a7a;font-size:11px}
