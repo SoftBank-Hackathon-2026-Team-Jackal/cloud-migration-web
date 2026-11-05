@@ -3,13 +3,16 @@
  * 같은 id의 이벤트는 덮어쓰므로(upsert) 재접속·단계 재전송으로 같은 이벤트가 다시 와도 결과가 같다.
  */
 import type {
-  AnalysisFindingData, ApprovalRequiredData, DataVerifyData, HandoverData, TrafficReadyData, BackendPhase, BuildCheckData, BuildFixData, BuildResultData, BuildReviewData, PlanPreviewData, PlanReadyData, ProvisionCheckData, CutoverResultData,
+  AnalysisFindingData, ApprovalDecisionData, ApprovalRequiredData, DataVerifyData, HandoverData, TrafficReadyData, BackendPhase, BuildCheckData, BuildFixData, BuildResultData, BuildReviewData, PlanPreviewData, PlanReadyData, ProvisionCheckData, CutoverResultData,
   DataProgressData, ErrorData, MigrationEvent, MigrationStatus, PlanStepData, ProvisionResourceData,
   ReportData, TrafficNote, TrafficPrepareData, TrafficSnapshotData,
+  DataLsnData, DataPhase, DataPreflightData, DataReadinessData, DataTableData,
   SandboxAttemptData, SandboxDoneData, SandboxEnvData, SandboxStep, SandboxStepData, SandboxTestsData,
 } from './events'
 
 export const LAG_HISTORY_POINTS = 48
+/** 복제 지연 오실로스코프가 그리는 표본 수(data.lsn, 250ms마다 → 약 40초) */
+export const LAG_TRACE_POINTS = 160
 const TRAFFIC_LOG_LIMIT = 30
 /** 게이트 패널의 p99 추이에 남길 점 수 */
 export const TRAFFIC_TRACE_POINTS = 160
@@ -31,9 +34,14 @@ export type MigrationState = {
   sandbox: { env: SandboxEnvData | null; steps: Record<number, Partial<Record<SandboxStep, SandboxStepData['state']>>>; tests: SandboxTestsData | null; attempts: SandboxAttemptData[]; done: SandboxDoneData | null }
   /** preview: 계획 미리보기(만들 리소스·재매핑·보안 규칙·검증). 없으면 화면은 매핑 항목만 보인다. */
   plan: { steps: PlanStepData[]; ready: boolean; meta: PlanReadyData | null; preview: PlanPreviewData | null }
-  approval: { required: boolean; excluded: string[]; rollbackPolicy: string; cutoverRequired: boolean }
+  /** decision: 승인 결정의 접수·전달·실행 상태(approval.decision 또는 승인 API 응답). 전달 전에는 완료가 아니다. */
+  approval: { required: boolean; excluded: string[]; rollbackPolicy: string; cutoverRequired: boolean; decision: ApprovalDecisionData | null }
   provision: { resources: ProvisionResourceData[]; checks: ProvisionCheckData[] }
-  data: { current: DataProgressData | null; lagHistory: number[]; verify: DataVerifyData[] }
+  /** preflight·phase·lsn·lagTrace·tables·readiness: 데이터 이전 단계 상세(사전 검사 → 스키마 → 초기 복사 → CDC → 스트리밍) [가정] */
+  data: {
+    current: DataProgressData | null; lagHistory: number[]; verify: DataVerifyData[]
+    preflight: DataPreflightData | null; phase: DataPhase | null; lsn: DataLsnData | null; lagTrace: number[]; tables: DataTableData[]; readiness: DataReadinessData | null
+  }
   /** prepare: 사전 확인·연결 정보 [가정]. trace: 관찰 중 p99 비율 추이. startedAt: 이 단계의 첫 이벤트 시각(기록의 +초 기준) */
   traffic: { snapshot: TrafficSnapshotData | null; logs: TrafficLogEntry[]; logCounter: number; ready: TrafficReadyData | null; prepare: TrafficPrepareData | null; trace: number[]; startedAt: string | null }
   cutover: { doneSteps: number; verifying: boolean; results: CutoverResultData[]; handover: HandoverData[] }
@@ -51,9 +59,9 @@ export const initialState: MigrationState = {
   build: { checks: {}, lastCheck: null, fixes: [], attempt: null, result: null, review: null },
   sandbox: { env: null, steps: {}, tests: null, attempts: [], done: null },
   plan: { steps: [], ready: false, meta: null, preview: null },
-  approval: { required: false, excluded: [], rollbackPolicy: '', cutoverRequired: false },
+  approval: { required: false, excluded: [], rollbackPolicy: '', cutoverRequired: false, decision: null },
   provision: { resources: [], checks: [] },
-  data: { current: null, lagHistory: [], verify: [] },
+  data: { current: null, lagHistory: [], verify: [], preflight: null, phase: null, lsn: null, lagTrace: [], tables: [], readiness: null },
   traffic: { snapshot: null, logs: [], logCounter: 0, ready: null, prepare: null, trace: [], startedAt: null },
   cutover: { doneSteps: 0, verifying: false, results: [], handover: [] },
   report: null,
@@ -70,6 +78,8 @@ export type Action =
   | { type: 'connection'; value: MigrationState['connection'] }
   | { type: 'report'; report: ReportData }
   | { type: 'cancelled' }
+  /** 승인 API 응답(ApprovalResponse)을 이벤트와 같은 자리에 넣는다. */
+  | { type: 'approvalDecision'; data: ApprovalDecisionData }
   /** 공급자가 직접 알리는 실패(요청 실패, 이전을 찾을 수 없음 등) */
   | { type: 'fail'; error: ErrorData }
 
@@ -110,6 +120,18 @@ function applyTrafficPrepare(state: MigrationState, data: TrafficPrepareData, at
     logs = [{ id: counter, at, key: data.state === 'failed' ? 'prepareFail' as const : 'prepare' as const, params }, ...logs].slice(0, TRAFFIC_LOG_LIMIT)
   }
   return { ...traffic, prepare: data, logs, logCounter: counter, startedAt: traffic.startedAt ?? at }
+}
+
+/**
+ * 같은 승인(approval_id)의 상태는 뒤로 가지 않는다: 이벤트와 API 응답이 엇갈려 와도 DELIVERED가 PENDING으로 돌아가지 않게 한다.
+ * 다시 전달(재시도)로 시도 횟수가 늘면 FAILED → PENDING/DELIVERED는 받아들인다.
+ */
+const DELIVERY_RANK = { PENDING: 0, FAILED: 1, DELIVERED: 2 } as const
+export function mergeDecision(current: ApprovalDecisionData | null, incoming: ApprovalDecisionData): ApprovalDecisionData {
+  if (!current || current.approval_id !== incoming.approval_id) return incoming
+  if (incoming.delivery_attempts > current.delivery_attempts) return incoming
+  if (incoming.delivery_attempts < current.delivery_attempts) return current
+  return DELIVERY_RANK[incoming.delivery_status] >= DELIVERY_RANK[current.delivery_status] ? incoming : { ...current, execution_status: incoming.execution_status }
 }
 
 function fail(state: MigrationState, phase: BackendPhase, failure: Failure): MigrationState {
@@ -165,6 +187,8 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
         : { ...next.approval, required: true, excluded: data.excluded, rollbackPolicy: data.rollback_policy }
       return { ...next, status: 'waiting', approval }
     }
+    case 'approval.decision':
+      return { ...next, approval: { ...next.approval, decision: mergeDecision(next.approval.decision, event.data) } }
     case 'provision.resource':
       return { ...next, provision: { ...next.provision, resources: upsert(next.provision.resources, event.data) } }
     case 'provision.check': {
@@ -184,6 +208,24 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
       if (index < 0) verify.push(event.data); else verify[index] = event.data
       return { ...next, data: { ...next.data, verify } }
     }
+    // ---- 데이터 이전 단계 상세 ----
+    case 'data.preflight':
+      return { ...next, data: { ...next.data, preflight: event.data } }
+    case 'data.phase':
+      return { ...next, data: { ...next.data, phase: event.data.phase } }
+    case 'data.lsn': {
+      const lag = event.data.lag_ms
+      const lagTrace = lag === null ? next.data.lagTrace : [...next.data.lagTrace.slice(-(LAG_TRACE_POINTS - 1)), lag]
+      return { ...next, data: { ...next.data, lsn: event.data, lagTrace } }
+    }
+    case 'data.table': {
+      const tables = next.data.tables.slice()
+      const index = tables.findIndex(item => item.name === event.data.name)
+      if (index < 0) tables.push(event.data); else tables[index] = event.data
+      return { ...next, data: { ...next.data, tables } }
+    }
+    case 'data.readiness':
+      return { ...next, data: { ...next.data, readiness: event.data } }
     case 'traffic.ready':
       return { ...next, traffic: { ...next.traffic, ready: event.data } }
     case 'traffic.prepare':
@@ -246,6 +288,8 @@ export function reducer(state: MigrationState, action: Action): MigrationState {
       return { ...state, report: action.report }
     case 'cancelled':
       return { ...state, status: 'cancelled' }
+    case 'approvalDecision':
+      return { ...state, approval: { ...state.approval, decision: mergeDecision(state.approval.decision, action.data) } }
     case 'fail':
       return { ...fail(state, action.error.phase ?? 'analysis', { code: action.error.code, message: action.error.message, retryable: action.error.retryable }), error: action.error }
     case 'event': {

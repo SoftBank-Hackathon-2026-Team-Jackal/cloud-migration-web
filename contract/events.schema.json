@@ -35,6 +35,9 @@
       "$ref": "#/$defs/event:approval.required"
     },
     {
+      "$ref": "#/$defs/event:approval.decision"
+    },
+    {
       "$ref": "#/$defs/event:provision.resource"
     },
     {
@@ -45,6 +48,21 @@
     },
     {
       "$ref": "#/$defs/event:data.verify"
+    },
+    {
+      "$ref": "#/$defs/event:data.preflight"
+    },
+    {
+      "$ref": "#/$defs/event:data.phase"
+    },
+    {
+      "$ref": "#/$defs/event:data.lsn"
+    },
+    {
+      "$ref": "#/$defs/event:data.table"
+    },
+    {
+      "$ref": "#/$defs/event:data.readiness"
     },
     {
       "$ref": "#/$defs/event:traffic.ready"
@@ -1438,6 +1456,9 @@
           "$ref": "#/$defs/event:approval.required"
         },
         {
+          "$ref": "#/$defs/event:approval.decision"
+        },
+        {
           "$ref": "#/$defs/event:provision.resource"
         },
         {
@@ -1448,6 +1469,21 @@
         },
         {
           "$ref": "#/$defs/event:data.verify"
+        },
+        {
+          "$ref": "#/$defs/event:data.preflight"
+        },
+        {
+          "$ref": "#/$defs/event:data.phase"
+        },
+        {
+          "$ref": "#/$defs/event:data.lsn"
+        },
+        {
+          "$ref": "#/$defs/event:data.table"
+        },
+        {
+          "$ref": "#/$defs/event:data.readiness"
         },
         {
           "$ref": "#/$defs/event:traffic.ready"
@@ -2583,6 +2619,93 @@
             "warnings"
           ],
           "additionalProperties": false
+        },
+        "rollout": {
+          "type": "object",
+          "description": "전환 방법 [가정: 백엔드 계약 없음]. traffic_method는 정해졌을 때만 온다(Route 53 가중치·중계 프록시 미정).",
+          "properties": {
+            "traffic_steps": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "maximum": 100
+              },
+              "minItems": 1
+            },
+            "traffic_method": {
+              "type": "string"
+            },
+            "expected_write_pause_ms": {
+              "type": "number",
+              "minimum": 0
+            },
+            "data_method": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "traffic_steps"
+          ],
+          "additionalProperties": false
+        },
+        "cost": {
+          "type": "object",
+          "description": "고정 요금 추정(USD/월) [가정]. 값이 null이면 그쪽은 아직 추정하지 못했다.",
+          "properties": {
+            "currency": {
+              "const": "USD"
+            },
+            "lines": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "source_usd": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": 0
+                  },
+                  "target_usd": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": 0
+                  },
+                  "excluded": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "id",
+                  "source_usd",
+                  "target_usd"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "credits_usd": {
+              "type": "number",
+              "minimum": 0
+            },
+            "basis": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "currency",
+            "lines"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -2625,6 +2748,620 @@
         },
         "data": {
           "$ref": "#/$defs/data:plan.preview"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "phase",
+        "type",
+        "status",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "data:approval.decision": {
+      "type": "object",
+      "description": "승인 결정의 접수·전달·실행 상태 [가정: SSE 이벤트 이름]. 필드는 백엔드 ApprovalResponse와 같다. 전달(DELIVERED) 전에는 완료로 보이지 않는다(ADR-002).",
+      "properties": {
+        "approval_id": {
+          "type": "string"
+        },
+        "plan_id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "decision": {
+          "enum": [
+            "APPROVE",
+            "REJECT"
+          ]
+        },
+        "scope": {
+          "enum": [
+            "INFRASTRUCTURE",
+            "WORKLOADS",
+            "FULL"
+          ]
+        },
+        "delivery_status": {
+          "enum": [
+            "PENDING",
+            "DELIVERED",
+            "FAILED"
+          ]
+        },
+        "delivery_attempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "execution_status": {
+          "enum": [
+            "NOT_STARTED",
+            "RUNNING",
+            "SUCCEEDED",
+            "FAILED",
+            "UNKNOWN"
+          ]
+        },
+        "workflow_state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "approval_id",
+        "plan_id",
+        "revision",
+        "decision",
+        "scope",
+        "delivery_status",
+        "delivery_attempts",
+        "execution_status"
+      ],
+      "additionalProperties": false
+    },
+    "event:approval.decision": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "type": {
+          "const": "approval.decision"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/data:approval.decision"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "phase",
+        "type",
+        "status",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "data:data.preflight": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "RUNNING",
+            "PASS",
+            "FAIL",
+            "UNKNOWN"
+          ]
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "enum": [
+                  "cidr_overlap",
+                  "route",
+                  "db_path",
+                  "large_transfer"
+                ]
+              },
+              "status": {
+                "enum": [
+                  "PENDING",
+                  "RUNNING",
+                  "PASS",
+                  "FAIL",
+                  "UNKNOWN",
+                  "SKIPPED"
+                ]
+              },
+              "code": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "evidence": {
+                "type": "string"
+              },
+              "checked_at": {
+                "type": "string"
+              },
+              "tested_endpoint": {
+                "type": "string"
+              },
+              "steps": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "enum": [
+                        "DNS",
+                        "TCP",
+                        "TLS",
+                        "AUTH",
+                        "QUERY"
+                      ]
+                    },
+                    "status": {
+                      "enum": [
+                        "PENDING",
+                        "PASS",
+                        "FAIL",
+                        "UNKNOWN"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "status"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "bytes_done": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "bytes_total": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "elapsed_ms": {
+                "type": "number",
+                "minimum": 0
+              },
+              "mtu": {
+                "enum": [
+                  "NOT_ATTEMPTED",
+                  "PASS",
+                  "FAIL"
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "status",
+              "code",
+              "evidence"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "probe_location": {
+          "type": "string"
+        },
+        "input_fingerprint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "checked_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "may_start": {
+          "type": "boolean"
+        },
+        "network": {
+          "type": "object",
+          "properties": {
+            "source_cidr": {
+              "type": "string"
+            },
+            "target_cidr": {
+              "type": "string"
+            },
+            "path": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "wireguard",
+                    "cloud_vpn",
+                    "other"
+                  ]
+                },
+                "name": {
+                  "type": "string"
+                },
+                "cidr": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "name",
+                "cidr"
+              ],
+              "additionalProperties": false
+            },
+            "source_db": {
+              "type": "string"
+            },
+            "source_addr": {
+              "type": "string"
+            },
+            "replication_node": {
+              "type": "string"
+            },
+            "target_db": {
+              "type": "string"
+            },
+            "target_db_detail": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_cidr",
+            "target_cidr",
+            "path",
+            "source_db",
+            "source_addr",
+            "replication_node",
+            "target_db",
+            "target_db_detail"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "status",
+        "checks",
+        "probe_location",
+        "input_fingerprint",
+        "checked_at",
+        "may_start",
+        "network"
+      ],
+      "additionalProperties": false
+    },
+    "event:data.preflight": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "type": {
+          "const": "data.preflight"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/data:data.preflight"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "phase",
+        "type",
+        "status",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "data:data.phase": {
+      "type": "object",
+      "properties": {
+        "phase": {
+          "enum": [
+            "preflight",
+            "blocked",
+            "schema",
+            "copy",
+            "catchup",
+            "streaming"
+          ]
+        }
+      },
+      "required": [
+        "phase"
+      ],
+      "additionalProperties": false
+    },
+    "event:data.phase": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "type": {
+          "const": "data.phase"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/data:data.phase"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "phase",
+        "type",
+        "status",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "data:data.lsn": {
+      "type": "object",
+      "properties": {
+        "source_lsn": {
+          "type": "string"
+        },
+        "target_lsn": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lag_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lag_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "source_lsn",
+        "target_lsn",
+        "lag_bytes",
+        "lag_ms"
+      ],
+      "additionalProperties": false
+    },
+    "event:data.lsn": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "type": {
+          "const": "data.lsn"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/data:data.lsn"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "phase",
+        "type",
+        "status",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "data:data.table": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "rows_copied": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rows_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "state": {
+          "enum": [
+            "waiting",
+            "copying",
+            "copied",
+            "matched"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "rows_copied",
+        "rows_total",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "event:data.table": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "type": {
+          "const": "data.table"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/data:data.table"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "phase",
+        "type",
+        "status",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "data:data.readiness": {
+      "type": "object",
+      "properties": {
+        "longest_tx_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "lock_waits": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "commits_per_sec": {
+          "type": "number",
+          "minimum": 0
+        },
+        "ready": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "longest_tx_ms",
+        "lock_waits",
+        "commits_per_sec",
+        "ready"
+      ],
+      "additionalProperties": false
+    },
+    "event:data.readiness": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "type": {
+          "const": "data.readiness"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/data:data.readiness"
         }
       },
       "required": [

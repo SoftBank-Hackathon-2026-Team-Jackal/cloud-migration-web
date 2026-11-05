@@ -74,7 +74,7 @@
 .traffic-foot{padding-top:clamp(8px,1.2vh,16px)}
 .traffic-lane-slot{flex:1;min-width:0;display:flex;align-items:center;gap:16px}
 .traffic-lane-slot>*:not(.traffic-foot-note){flex:1;min-width:0}
-.traffic-foot-note{color:var(--text-muted);font-size:var(--tr-s)}
+.traffic-foot-note{flex:0 0 clamp(180px,15vw,320px);color:var(--text-muted);font-size:var(--tr-s);line-height:1.45}
 .traffic-actions{flex:none;display:flex;align-items:center;gap:8px}
 .traffic-actions button{height:clamp(38px,3.6vh,56px);padding:0 clamp(16px,1.2vw,28px);font-size:calc(var(--tr-s) + 1px)}
 

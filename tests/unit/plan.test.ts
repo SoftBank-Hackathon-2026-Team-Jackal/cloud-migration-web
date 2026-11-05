@@ -5,7 +5,7 @@ import Ajv from 'ajv/dist/2020.js'
 import { initialState, reducer, type MigrationState } from '../../src/lib/migration/reducer.ts'
 import { normalizePlanStep, type DraftEvent, type MigrationEvent, type PlanPreviewData } from '../../src/lib/migration/events.ts'
 import { normalizeEvent } from '../../src/lib/migration/sseProvider.ts'
-import { diagramSteps, kindOf, ledgerGroupOf, planSummary, planWarnings, reportsStorage } from '../../src/lib/migration/planModel.ts'
+import { DEFAULT_TRAFFIC_STEPS, approvalFacts, diagramSteps, kindOf, ledgerGroupOf, planSummary, planWarnings, reportsStorage } from '../../src/lib/migration/planModel.ts'
 import { planPreviewFor, timelineFor } from '../../src/lib/migration/script.ts'
 import { TrafficSim, stepIndexOf } from '../../src/lib/migration/trafficSim.ts'
 import type { TrafficSnapshotData } from '../../src/lib/migration/events.ts'
@@ -113,4 +113,30 @@ test('전환 측정 결과: 모르는 id도 받고, 마지막 결과(done)로 �
   state = run(state, ev({ type: 'cutover.result', phase: 'verification', status: 'done', data: { id: 'p99', value: '120ms' } }))
   assert.equal(state.status, 'done')
   assert.ok(validate({ seq: ++seq, at: '2026-01-01T00:00:00.000Z', phase: 'verification', type: 'cutover.result', status: 'running', data: { id: 'duplicate', value: '0', label: 'Duplicate rows', ok: true } }))
+})
+
+test('승인 요약은 받은 계획 데이터에서 계산하고, 없는 값은 비워 둔다', () => {
+  const empty = approvalFacts(initialState)
+  assert.equal(empty.hasPlan, false)
+  assert.equal(empty.sandbox, null)
+  assert.equal(empty.writePauseMs, null)
+  assert.deepEqual(empty.traffic, { steps: DEFAULT_TRAFFIC_STEPS, method: null, defaulted: true })
+
+  let state: MigrationState = initialState
+  let n = 0
+  for (const { event } of timelineFor('planning', { target: 'gcp', aiFixes: 1 })) state = reducer(state, { type: 'event', event: { ...event, seq: ++n, at: '2026-01-01T00:00:00.000Z' } as MigrationEvent })
+  const facts = approvalFacts(state)
+  // 목업 계획: 인프라 4(그중 storage 원본 유지) · 코드 2(그중 s3-code 원본 유지)
+  assert.deepEqual(facts.changes, { infrastructure: 3, code: 1, keep: 2, approval: 0, block: 0 })
+  assert.equal(facts.sandbox?.kind, 'mapping', '샌드박스 판정이 없으면 매핑 항목의 검증 상태로 센다')
+  assert.equal(facts.database?.id, 'database')
+  assert.deepEqual(facts.traffic.steps, [10, 50, 100])
+  assert.equal(facts.traffic.method, null, '트래픽 방식은 미정이라 보내지 않는다')
+  assert.equal(facts.traffic.defaulted, false)
+  assert.equal(facts.writePauseMs, 1000)
+  // 서버가 다른 전환 단계를 보내면 그대로 쓴다.
+  const preview = { ...state.plan.preview!, rollout: { traffic_steps: [25, 100], traffic_method: 'DNS_WEIGHTED' } }
+  const custom = approvalFacts({ ...state, plan: { ...state.plan, preview } })
+  assert.deepEqual(custom.traffic, { steps: [25, 100], method: 'DNS_WEIGHTED', defaulted: false })
+  assert.equal(custom.writePauseMs, null)
 })

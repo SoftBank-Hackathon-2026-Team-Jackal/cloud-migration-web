@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react'
 import StageShell from './StageShell'
 import ProposalTag from './ProposalTag'
 import TrafficCanvas from './TrafficCanvas'
+import MigrationLanes from './MigrationLanes'
 import type { Target } from '../lib/stages'
 import { useI18n, useT, type MsgKey } from '../lib/i18n'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
@@ -133,8 +134,8 @@ function TrafficBody({ ready, target, onNext }: { ready: boolean; target: Target
 
     <div className="flow-footer flow-footer-wide traffic-foot">
       <div className="traffic-lane-slot">
-        {/* ▼ LANE STRIP MOUNT (data-stage 세션): 두 갈래 진행 띠(앱 트래픽 · DB, 게이트 0/1/2)를 이 자리에 한 줄로 붙인다. */}
-        {/* ▲ LANE STRIP MOUNT */}
+        {/* 두 갈래 진행 띠(앱 트래픽 · DB, 게이트 0/1/2) */}
+        <MigrationLanes stage="traffic" />
         <span className="traffic-foot-note">{stage === 'rolledback' ? t('traffic.foot.rolledback') : drained ? t('traffic.foot.done') : stage === 'complete' ? t('traffic.foot.draining', verdictParams) : t('traffic.foot.default')}</span>
       </div>
       <div className="traffic-actions">

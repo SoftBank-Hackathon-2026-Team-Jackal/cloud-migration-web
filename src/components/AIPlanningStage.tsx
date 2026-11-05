@@ -2,39 +2,23 @@
 
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import type { Target } from '../lib/stages'
-import { shortDigest, type PlanEnvironment, type PlanIssue, type PlanPreviewData, type PlanResource, type PlanStepData, type SecurityRule } from '../lib/migration/events'
+import { shortDigest, type PlanIssue, type PlanPreviewData, type PlanResource, type PlanStepData, type SecurityRule } from '../lib/migration/events'
 import { PLAN_FIRST_REVEAL_MS, PLAN_REVEAL_GAP_MS, PLAN_REVEAL_MS } from '../lib/migration/script'
 import { useT, useTOr, type MsgKey, type TranslateOr } from '../lib/i18n'
 import { ViewTabs } from './DiagramParts'
 import PlanTopology from './PlanTopology'
+import { issueText, placeText, stepText } from './planText'
 import { LEDGER_GROUPS, ledgerGroupOf, planSummary, planWarnings } from '../lib/migration/planModel'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
 
 type PlanStep = PlanStepData
-
-// GCP 대상일 때만 문구가 다른 항목(사전에 gcpAfter / gcpChange 키가 있는 것)
-const GCP_AFTER = new Set(['network', 'compute'])
-const GCP_CHANGE = new Set(['network'])
-
-/** 문구는 이벤트 값이 있으면 그대로 쓰고, 비어 있으면 id로 사전에서 찾는다(대상이 GCP일 때만 다른 문구 포함). 사전에도 없으면 id. */
-function stepText(tOr: TranslateOr, step: PlanStep, target: Target, field: 'before' | 'after' | 'evidence' | 'change') {
-  if (step[field]) return step[field]
-  const gcp = target === 'gcp'
-  if (field === 'after' && gcp && GCP_AFTER.has(step.id)) return tOr('plan.step.' + step.id + '.gcpAfter', step.id)
-  if (field === 'change' && gcp && GCP_CHANGE.has(step.id)) return tOr('plan.step.' + step.id + '.gcpChange')
-  return tOr('plan.step.' + step.id + '.' + field, field === 'before' || field === 'after' ? step.id : '')
-}
 
 /** 리소스 이름·설명: 이벤트 값 → 대상별 사전 문구 → 공통 사전 문구 → id */
 function resourceText(tOr: TranslateOr, resource: PlanResource, path: Target, field: 'name' | 'detail') {
   if (resource[field]) return resource[field]
   return tOr('plan.res.' + path + '.' + resource.id + '.' + field, tOr('plan.res.' + resource.id + '.' + field, field === 'name' ? resource.id : ''))
 }
-const issueText = (tOr: TranslateOr, issue: PlanIssue) => issue.message || tOr('plan.warn.' + issue.id, issue.id)
 const roleText = (tOr: TranslateOr, role: string) => tOr('plan.role.' + role, role)
-function placeText(tOr: TranslateOr, env: PlanEnvironment) {
-  return { provider: tOr('plan.provider.' + env.provider, env.provider), place: [env.platform, tOr('region.' + env.location, env.location)].filter(Boolean).join(' · ') }
-}
 
 /** 경고 표시는 이 점 하나로만(찾은 내용 줄 · 리소스 줄 · 검증 칸이 같은 경고를 같은 모양으로) */
 function WarnDot({ label }: { label?: string }) {

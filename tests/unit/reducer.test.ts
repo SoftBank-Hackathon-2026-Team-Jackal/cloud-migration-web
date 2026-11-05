@@ -263,3 +263,58 @@ test('샌드박스 루프: 트랙별 단계·판정·최종 상태가 쌓이고,
   state = run(state, ev({ type: 'sandbox.attempt', phase: 'build', status: 'running', data: { run: 2, attempt: 1, max_attempts: 3, verdict: { passed: true, reasons: [] }, failure_class: null, checks, fix_ids: [] } }))
   assert.equal(state.sandbox.attempts.length, 2, '같은 트랙의 판정은 덮어쓴다')
 })
+
+// ---- 데이터 이전 단계 상세 [가정] ----
+test('데이터 이전: 사전 검사는 통째로 바뀌고, 테이블은 이름으로 덮어쓰고, 지연 궤적은 160개까지 남는다', async () => {
+  const { dataTimeline, dataTickAt, DATA_END_MS } = await import('../../src/lib/migration/dataScript.ts')
+  seq = 0
+  let state = initialState
+  for (const { event } of dataTimeline('onprem', 'pass', 0)) state = run(state, ev(event))
+  assert.equal(state.data.preflight?.status, 'PASS')
+  assert.equal(state.data.preflight?.checks.length, 4)
+  assert.equal(state.data.phase, 'streaming')
+  assert.equal(state.data.tables.length, 6, '테이블은 이름당 하나')
+  assert.ok(state.data.tables.every(table => table.state === 'matched'))
+  assert.equal(state.data.readiness?.ready, true)
+  assert.equal(state.status, 'running', '사전 검사·단계 이벤트가 이전을 실패로 만들지 않는다')
+  for (let ms = 0; ms <= DATA_END_MS + 30000; ms += 250) for (const event of dataTickAt(ms, 'pass')) state = run(state, ev(event))
+  assert.equal(state.data.lagTrace.length, 160)
+  assert.equal(state.data.lsn?.lag_bytes, 0)
+  assert.equal(state.data.current?.step, 'ready', '예전 진행 값도 함께 온다')
+  state = reducer(state, { type: 'resetPhase', phase: 'data_copy' })
+  assert.deepEqual(state.data, initialState.data)
+})
+
+test('데이터 이전: 경로 실패면 시작 차단이고 이전 자체는 실패가 아니다', async () => {
+  const { dataTimeline } = await import('../../src/lib/migration/dataScript.ts')
+  seq = 0
+  let state = initialState
+  for (const { event } of dataTimeline('gcp', 'route', 0)) state = run(state, ev(event))
+  assert.equal(state.data.preflight?.status, 'FAIL')
+  assert.equal(state.data.preflight?.may_start, false)
+  assert.equal(state.data.preflight?.checks.find(check => check.name === 'route')?.code, 'ROUTE_NOT_TUNNEL')
+  assert.deepEqual(state.data.preflight?.checks.filter(check => check.status === 'SKIPPED').map(check => check.name), ['db_path', 'large_transfer'])
+  assert.equal(state.data.phase, 'blocked')
+  assert.equal(state.data.tables.length, 0)
+  assert.equal(state.failures.data_copy, undefined)
+})
+
+test('승인 결정: 전달 상태는 뒤로 가지 않고, 다시 전달하면 새 시도로 바뀐다 [가정: approval.decision]', () => {
+  seq = 0
+  const base = { approval_id: 'a1', plan_id: 'p', revision: 1, decision: 'APPROVE' as const, scope: 'FULL' as const, delivery_attempts: 1, execution_status: 'NOT_STARTED' as 'NOT_STARTED' | 'RUNNING' }
+  const decision = (data: Partial<typeof base> & { delivery_status: 'PENDING' | 'DELIVERED' | 'FAILED'; execution_status?: 'NOT_STARTED' | 'RUNNING' }): DraftEvent =>
+    ({ type: 'approval.decision', phase: 'awaiting_approval', status: 'waiting', data: { ...base, ...data } })
+  let state = run(initialState, ev(decision({ delivery_status: 'PENDING' })))
+  assert.equal(state.approval.decision?.delivery_status, 'PENDING')
+  assert.notEqual(state.status, 'failed')
+  // 이벤트(DELIVERED)가 API 응답(PENDING)보다 먼저 와도 PENDING으로 돌아가지 않는다.
+  state = run(state, ev(decision({ delivery_status: 'DELIVERED', execution_status: 'RUNNING' })))
+  state = reducer(state, { type: 'approvalDecision', data: { ...base, delivery_status: 'PENDING' } })
+  assert.equal(state.approval.decision?.delivery_status, 'DELIVERED')
+  // 전달 실패 → 다시 전달(시도 2)은 받아들인다. 전달 실패는 이전 실패가 아니다.
+  state = reducer(initialState, { type: 'approvalDecision', data: { ...base, delivery_status: 'FAILED' } })
+  assert.equal(state.status, 'idle')
+  state = reducer(state, { type: 'approvalDecision', data: { ...base, delivery_attempts: 2, delivery_status: 'PENDING' } })
+  assert.equal(state.approval.decision?.delivery_status, 'PENDING')
+  assert.equal(reducer(state, { type: 'resetPhase', phase: 'awaiting_approval' }).approval.decision, null)
+})
