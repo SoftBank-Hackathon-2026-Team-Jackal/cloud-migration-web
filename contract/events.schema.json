@@ -364,6 +364,13 @@
         },
         "file": {
           "type": "string"
+        },
+        "new_env_keys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "[가정] 이 수정으로 코드가 새로 읽게 된 환경 변수 이름(값 없음)"
         }
       },
       "required": [

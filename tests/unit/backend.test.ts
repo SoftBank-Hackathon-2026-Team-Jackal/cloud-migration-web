@@ -165,3 +165,11 @@ test('요금 추정: 인프라 스캔을 받기 전에는 원본 값을 모른�
   assert.ok(view.lines.filter(line => !line.excluded).every(line => line.source_usd === null && line.target_usd !== null))
   assert.deepEqual(view.bases.map(basis => basis.provider), ['GCP'])
 })
+
+test('Fixer가 새로 읽게 된 환경 변수: build.fix의 new_env_keys에서 센다(없으면 0)', async () => {
+  const { fixerEnvKeys } = await import('../../src/lib/migration/planModel.ts')
+  const fixes = (scenario: 'spec' | 'pass') => timelineFor('build', { target: 'gcp', aiFixes: 2, sandbox: scenario }).flatMap(item => item.event.type === 'build.fix' ? [item.event.data] : [])
+  assert.deepEqual(fixerEnvKeys(fixes('spec')), ['DB_SSLMODE'])
+  assert.deepEqual(fixerEnvKeys(fixes('pass')), [], '수정이 없으면 안내도 없다')
+  assert.deepEqual(fixerEnvKeys([{ id: 'a', check: 'x', lines: [], why: '', evidence: '', new_env_keys: ['A', 'B'] }, { id: 'b', check: 'x', lines: [], why: '', evidence: '', new_env_keys: ['B'] }]), ['A', 'B'])
+})

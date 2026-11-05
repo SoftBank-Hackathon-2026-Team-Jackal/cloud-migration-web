@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import { RECORDED_CLIPS } from '../../src/lib/voiceRecorded.ts'
 import { isStartCommand, targetFromUtterance } from '../../src/lib/agent/intent.ts'
-import { classifyKey, crossCheck, parseEnvKeys } from '../../src/lib/setup/envFile.ts'
+import { classifyEnv, crossCheck, envCounts, parseEnvKeys } from '../../src/lib/setup/envFile.ts'
+import { DEMO_SCAN, EXAMPLE_ENV } from '../../src/lib/setup/demoRepo.ts'
 import { detectStack, displayTree, runtimeFromDockerfile, scanPublicSource } from '../../src/lib/github/scan.ts'
 import { createMockAgents, createMockConnections, resetMock } from '../../src/lib/connections/mock.ts'
 import { agentState } from '../../src/lib/connections/types.ts'
@@ -38,17 +39,30 @@ test('.env는 키 이름만 꺼내고 값은 돌려주지 않는다', () => {
   assert.deepEqual(keys.map(key => key.name), ['PORT', 'NODE_ENV', 'DATABASE_URL', 'JWT_SECRET', 'EMPTY', 'QUOTED'])
   const serialized = JSON.stringify(keys)
   for (const secret of ['8080', 'production', 'hunter2', 's3cr3t-value', 'postgres://']) assert.ok(!serialized.includes(secret), 'value leaked: ' + secret)
-  assert.deepEqual(Object.keys(keys[0]).sort(), ['empty', 'kind', 'name'])
+  assert.deepEqual(Object.keys(keys[0]).sort(), ['empty', 'name'])
   assert.equal(keys.find(key => key.name === 'EMPTY')?.empty, true)
   assert.equal(keys.find(key => key.name === 'QUOTED')?.empty, true)
 })
 
-test('설정값과 Secret을 나누고, 코드가 읽는 키와 대조한다', () => {
-  assert.equal(classifyKey('PORT'), 'config')
-  assert.equal(classifyKey('LOG_LEVEL'), 'config')
-  assert.equal(classifyKey('JWT_SECRET'), 'secret')
-  assert.equal(classifyKey('DATABASE_URL'), 'secret')
-  assert.equal(classifyKey('STRIPE_API_KEY'), 'secret')
+test('.env 분류는 받은 데이터(EnvExceptions)만 따른다: 원본 전용·대상 DB 연결·코드만 읽음·그 밖의 처리', () => {
+  const keys0 = parseEnvKeys('PORT=1\nAWS_REGION=x\nDATABASE_URL=y\nREDIS_URL=z\nJWT_SECRET=\n')
+  // 분류 데이터가 없으면 이름으로 짐작하지 않는다(JWT_SECRET도 분류 대기)
+  assert.deepEqual(classifyEnv(keys0, null).map(row => row.treatment), ['pending', 'pending', 'pending', 'pending', 'pending'])
+  const rows = classifyEnv(keys0, { excluded: ['AWS_REGION'], replaced: { DATABASE_URL: 'db/url', REDIS_URL: '' }, missing: ['LOG_LEVEL'], others: 'COPY' })
+  assert.deepEqual(rows.map(row => [row.name, row.treatment, row.ref ?? null]), [
+    ['PORT', 'others', null], ['AWS_REGION', 'excluded', null], ['DATABASE_URL', 'replaced', 'db/url'], ['REDIS_URL', 'replaced', null], ['JWT_SECRET', 'others', null], ['LOG_LEVEL', 'missing', null],
+  ])
+  assert.equal(rows.find(row => row.name === 'JWT_SECRET')?.empty, true)
+  assert.equal(rows[0].others, 'COPY', '그 밖의 처리는 데이터 값 그대로')
+  // others가 없으면(확인 대기) 나머지는 분류 대기
+  assert.equal(classifyEnv(keys0, { excluded: [], replaced: {}, missing: [] })[0].treatment, 'pending')
+  // 목업 저장소 + 예시 .env
+  const demo = envCounts(classifyEnv(parseEnvKeys(EXAMPLE_ENV), DEMO_SCAN.env_exceptions))
+  assert.deepEqual(demo, { others: 4, replaced: 2, excluded: 1, missing: 1, pending: 0 })
+  assert.ok(!JSON.stringify(classifyEnv(parseEnvKeys(EXAMPLE_ENV), DEMO_SCAN.env_exceptions)).includes('example-not-a-real-secret'), '값이 줄에 없다')
+})
+
+test('코드가 읽는 키와 대조한다', () => {
   const keys = parseEnvKeys('PORT=1\nDATABASE_URL=x\nJWT_SECRET=y\nREDIS_URL=\nEXTRA=1')
   const check = crossCheck(keys, ['PORT', 'DATABASE_URL', 'JWT_SECRET', 'REDIS_URL', 'LOG_LEVEL'])
   assert.deepEqual(check.present, ['PORT', 'DATABASE_URL', 'JWT_SECRET'])

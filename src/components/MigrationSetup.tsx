@@ -233,7 +233,7 @@ export default function MigrationSetup({ target, onTarget, onNext, onSay, startR
         </section>
         <section className={'setup2-card' + (scan && !envFile ? ' is-focus' : '')} aria-label={t('setup2.env')}>
           <h3>{t('setup2.env')}<small>.env</small></h3>
-          <EnvDrop expected={expected} value={envFile} onChange={onEnvFile} exampleRef={exampleRef} />
+          <EnvDrop expected={expected} exceptions={scan?.env_exceptions} value={envFile} onChange={onEnvFile} exampleRef={exampleRef} />
         </section>
       </div>
       {pending && source && <div className="repo-pending" role="alert">

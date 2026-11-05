@@ -117,8 +117,9 @@ function analysisTimeline(): TimedDraft[] {
 
 type FixId = 'db' | 'host' | 'port' | 'probe'
 // AI가 고치는 항목. 수정은 검증 항목 하나에 여러 개 붙을 수 있다(예: 상태 확인에서 서너 건).
-const FIX_POOL: Array<{ id: FixId; check: string; file: string; lines: FixLine[] }> = [
-  { id: 'db', check: 'db', file: '.env', lines: [{ kind: 'del', text: '- DB_HOST=postgres' }, { kind: 'add', text: '+ DB_HOST=postgresql.demo.svc.cluster.local' }] },
+const FIX_POOL: Array<{ id: FixId; check: string; file: string; lines: FixLine[]; new_env_keys?: string[] }> = [
+  // [가정] DB 수정은 대상 DB 연결에 TLS 설정을 새로 읽는다(새 환경 변수 1개)
+  { id: 'db', check: 'db', file: '.env', lines: [{ kind: 'del', text: '- DB_HOST=postgres' }, { kind: 'add', text: '+ DB_HOST=postgresql.demo.svc.cluster.local' }, { kind: 'add', text: '+ ssl: process.env.DB_SSLMODE' }], new_env_keys: ['DB_SSLMODE'] },
   { id: 'host', check: 'health', file: '.env', lines: [{ kind: 'del', text: '- HOST=127.0.0.1' }, { kind: 'add', text: '+ HOST=0.0.0.0' }] },
   { id: 'port', check: 'health', file: 'k8s/deployment.yaml', lines: [{ kind: 'add', text: '+ containerPort: 8080' }] },
   { id: 'probe', check: 'health', file: 'k8s/deployment.yaml', lines: [{ kind: 'add', text: '+ readinessProbe: { httpGet: { path: /health, port: 8080 } }' }] },
@@ -155,7 +156,7 @@ function sandboxPlans(scenario: SandboxScenario): RunPlan[] {
 function buildTimeline(aiFixes: number, retried = false, scenario: SandboxScenario = 'spec'): TimedDraft[] {
   const plans = sandboxPlans(scenario)
   const fixing = plans.some(plan => plan.fail && (plan.fail.cls === 'SPEC' || plan.fail.cls === 'CODE'))
-  const fixes: BuildFixData[] = fixing ? FIX_POOL.slice(0, aiFixes).map(fix => ({ id: fix.id, check: fix.check, file: fix.file, lines: fix.lines, why: '', evidence: '' })) : []
+  const fixes: BuildFixData[] = fixing ? FIX_POOL.slice(0, aiFixes).map(fix => ({ id: fix.id, check: fix.check, file: fix.file, lines: fix.lines, why: '', evidence: '', ...(fix.new_env_keys ? { new_env_keys: fix.new_env_keys } : {}) })) : []
   const items: TimedDraft[] = fixes.map(data => ({ after: 0, event: { type: 'build.fix', phase: 'build', status: 'running', data } }))
   const build = (after: number, attempt: number, digest: string, reused: boolean) => items.push({ after, event: { type: 'build.result', phase: 'build', status: 'running', data: { attempt, max_attempts: MAX_ATTEMPTS, status: 'SUCCEEDED', digest, image_uri: 'registry.example.com/demo/app@' + digest, reused, error_code: null } } })
   // 이미지 빌드(샌드박스 밖) → 임시 Namespace 준비 → 테스트 묶음 고정(Tester)

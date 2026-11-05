@@ -126,8 +126,11 @@ export type SandboxDoneData = {
   digest: string | null
 }
 export type FixLine = { kind: 'del' | 'add'; text: string }
-/** 수정 하나. file은 고친 파일 경로 [가정] — 있으면 "변경 내용 전체 보기"가 파일별로 묶는다. */
-export type BuildFixData = { id: string; check: string; lines: FixLine[]; why: string; evidence: string; file?: string }
+/**
+ * 수정 하나. file은 고친 파일 경로 [가정] — 있으면 "변경 내용 전체 보기"가 파일별로 묶는다.
+ * new_env_keys [가정]: 이 수정으로 코드가 새로 읽게 된 환경 변수 이름(값 없음). 값을 어떻게 받을지는 미정이다.
+ */
+export type BuildFixData = { id: string; check: string; lines: FixLine[]; why: string; evidence: string; file?: string; new_env_keys?: string[] }
 
 /*
  * 계획(매핑·미리보기) [가정: SSE 이벤트 이름·필드는 백엔드와 미정].

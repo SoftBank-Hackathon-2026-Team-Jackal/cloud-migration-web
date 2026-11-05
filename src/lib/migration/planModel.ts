@@ -2,7 +2,7 @@
  * 계획 화면이 받은 데이터에서 계산하는 값(요약 수, 경고, 구성도 노드 분류). 순수 함수만 둔다(런타임 import 없음).
  * 서버가 무엇을 보내든(앱마다 리소스가 다르다) 같은 규칙으로 화면을 그리려는 것이다.
  */
-import type { PlanEnvironment, PlanIssue, PlanNodeKind, PlanPreviewData, PlanResource, PlanStepData, Target } from './events'
+import type { BuildFixData, PlanEnvironment, PlanIssue, PlanNodeKind, PlanPreviewData, PlanResource, PlanStepData, Target } from './events'
 import type { MigrationState } from './reducer'
 import { PENDING_DECISION_ROW, ROLLOUT_POLICY_DEFAULTS } from './policy.ts'
 import { estimateCost, type CostView } from './pricing.ts'
@@ -143,4 +143,9 @@ export function approvalFacts(state: Pick<MigrationState, 'plan' | 'sandbox' | '
     pending: { rollback: pending.filter(code => PENDING_DECISION_ROW[code] === 'rollback'), excluded: pending.filter(code => PENDING_DECISION_ROW[code] !== 'rollback') },
     keepSteps: steps.filter(step => step.keep_source),
   }
+}
+
+/** Fixer 수정이 새로 읽게 된 환경 변수(중복 없이, 받은 순서). build.fix의 new_env_keys [가정]에서 센다. */
+export function fixerEnvKeys(fixes: BuildFixData[]): string[] {
+  return [...new Set(fixes.flatMap(fix => fix.new_env_keys ?? []))]
 }

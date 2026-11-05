@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import type { Target } from '../lib/stages'
-import { shortDigest, type PlanIssue, type PlanPreviewData, type PlanResource, type PlanStepData, type SecurityRule } from '../lib/migration/events'
+import { shortDigest, type BuildFixData, type PlanIssue, type PlanPreviewData, type PlanResource, type PlanStepData, type SecurityRule } from '../lib/migration/events'
 import { PLAN_FIRST_REVEAL_MS, PLAN_REVEAL_GAP_MS, PLAN_REVEAL_MS } from '../lib/migration/script'
 import { useT, useTOr, type MsgKey, type TranslateOr } from '../lib/i18n'
 import { ViewTabs } from './DiagramParts'
@@ -10,6 +10,7 @@ import PlanTopology from './PlanTopology'
 import { issueText, placeText, stepText } from './planText'
 import { LEDGER_GROUPS, SOURCE_FALLBACK, costViewOf, ledgerGroupOf, planSummary, planWarnings, targetEnvOf } from '../lib/migration/planModel'
 import CostCompare from './CostCompare'
+import FixerEnvNotice from './FixerEnvNotice'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
 
 type PlanStep = PlanStepData
@@ -26,7 +27,7 @@ function WarnDot({ label }: { label?: string }) {
   return <i className="plan-warn-dot" role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : true} />
 }
 
-function Ledger({ preview, path, revealed, warnings }: { preview: PlanPreviewData; path: Target; revealed: number; warnings: PlanIssue[] }) {
+function Ledger({ preview, path, revealed, warnings, fixes }: { preview: PlanPreviewData; path: Target; revealed: number; warnings: PlanIssue[]; fixes: BuildFixData[] }) {
   const t = useT()
   const tOr = useTOr()
   const groups = LEDGER_GROUPS.map(group => ({ group, rows: preview.resources.filter(resource => ledgerGroupOf(resource) === group) })).filter(item => item.rows.length > 0)
@@ -83,6 +84,7 @@ function Ledger({ preview, path, revealed, warnings }: { preview: PlanPreviewDat
         {warnings.map(issue => <p key={issue.id} className="plan-issue">{issueText(tOr, issue)}</p>)}
         {(preview.pending_decisions ?? []).map(issue => <p key={'pd-' + issue.id} className="plan-issue is-pending">{tOr('approval.pending.' + issue.id, issueText(tOr, issue))}</p>)}
         {preview.validation.errors.length === 0 && warnings.length === 0 && <p>{t('plan.val.clean')}</p>}
+        <FixerEnvNotice fixes={fixes} />
       </section>
     </aside>
   </div>
@@ -329,7 +331,7 @@ export default function AIPlanningStage({ target, onNext }: { target: Target; on
       </div>
       <div className={'plan-changes plan-body' + (swapped ? ' is-swapped' : '') + ' is-' + view}>
         {view === 'ledger' && (preview
-          ? <Ledger key="ledger" preview={preview} path={path} revealed={visibleCount} warnings={warnings} />
+          ? <Ledger key="ledger" preview={preview} path={path} revealed={visibleCount} warnings={warnings} fixes={state.build.fixes} />
           : <p className="plan-empty">{t('plan.preview.empty')}</p>)}
         {view === 'mapping' && <MappingTable key="mapping" steps={steps} target={target} revealed={visibleCount} />}
         {view === 'diagram' && <div key="diagram" className="plan-topo">

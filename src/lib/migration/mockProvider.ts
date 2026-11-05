@@ -65,8 +65,9 @@ export class MockProvider implements MigrationProvider {
     let stop: () => void = () => {}
     // 분석은 한 번 끝나면(결과가 남아 있으면) 다시 보러 올 때 처음부터 돌리지 않고 결과를 그대로 보여 준다.
     const keepResult = phase === 'analysis' && this.analysisDone
-    // 분석 결과는 뒤 단계(계획)도, 계획 결과(이미지 Digest·계획 버전)는 승인 화면도 읽으므로 화면을 떠나도 지우지 않는다. 다른 단계는 떠날 때 비워 두었다가 다시 들어오면 처음부터 시작한다.
-    const clearOnLeave = phase !== 'analysis' && phase !== 'planning'
+    // 분석 결과는 뒤 단계(계획)도, 샌드박스 결과(Fixer 수정·새 환경 변수)는 계획 화면도, 계획 결과(이미지 Digest·계획 버전)는 승인 화면도 읽으므로 화면을 떠나도 지우지 않는다.
+    // 다른 단계는 떠날 때 비워 두었다가 다시 들어오면 처음부터 시작한다(들어올 때는 어느 단계든 위에서 비운다).
+    const clearOnLeave = phase !== 'analysis' && phase !== 'planning' && phase !== 'build'
     if (!keepResult) this.host.dispatch({ type: 'resetPhase', phase })
     switch (phase) {
       case 'analysis':

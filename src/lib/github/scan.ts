@@ -5,6 +5,7 @@
  * 이 파일은 단위 테스트(node --test)가 직접 읽으므로 '@/' 별칭이나 Next 전용 모듈을 쓰지 않는다.
  */
 import { GithubError, type GithubDeps } from './repos.ts'
+import type { EnvExceptions } from '../setup/envFile'
 
 export type Detection =
   | { kind: 'runtime'; name: string; evidence: string }
@@ -21,6 +22,8 @@ export type RepoScan = {
   env_keys: string[]
   /** 파일 목록이 상한에 닿았는지 */
   truncated: boolean
+  /** [가정] .env 키 분류(백엔드 분석 EnvExceptions 모양). 지금은 목업 저장소만 준다. 없으면 화면은 '분류 대기'. */
+  env_exceptions?: EnvExceptions
 }
 
 export const TREE_LIMIT = 40
