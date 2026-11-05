@@ -5,14 +5,17 @@
 import type {
   AnalysisFindingData, ApprovalRequiredData, DataVerifyData, HandoverData, TrafficReadyData, BackendPhase, BuildCheckData, BuildFixData, BuildResultData, BuildReviewData, PlanPreviewData, PlanReadyData, ProvisionCheckData, CutoverResultData,
   DataProgressData, ErrorData, MigrationEvent, MigrationStatus, PlanStepData, ProvisionResourceData,
-  ReportData, TrafficNote, TrafficSnapshotData,
+  ReportData, TrafficNote, TrafficPrepareData, TrafficSnapshotData,
   SandboxAttemptData, SandboxDoneData, SandboxEnvData, SandboxStep, SandboxStepData, SandboxTestsData,
 } from './events'
 
 export const LAG_HISTORY_POINTS = 48
 const TRAFFIC_LOG_LIMIT = 30
+/** 게이트 패널의 p99 추이에 남길 점 수 */
+export const TRAFFIC_TRACE_POINTS = 160
 
-export type TrafficLogEntry = { id: number; at: string; key: Exclude<TrafficNote['key'], 'restart'>; params: Record<string, string | number> }
+/** activity: Temporal Activity 이름(서버가 보낸 값, 없으면 화면이 key로 기본 이름을 고른다). prepareFail은 사전 확인 실패. */
+export type TrafficLogEntry = { id: number; at: string; key: Exclude<TrafficNote['key'], 'restart'> | 'prepareFail'; params: Record<string, string | number>; activity?: string }
 export type Failure = { code: string; message: string; retryable: boolean }
 
 export type MigrationState = {
@@ -31,7 +34,8 @@ export type MigrationState = {
   approval: { required: boolean; excluded: string[]; rollbackPolicy: string; cutoverRequired: boolean }
   provision: { resources: ProvisionResourceData[]; checks: ProvisionCheckData[] }
   data: { current: DataProgressData | null; lagHistory: number[]; verify: DataVerifyData[] }
-  traffic: { snapshot: TrafficSnapshotData | null; logs: TrafficLogEntry[]; logCounter: number; ready: TrafficReadyData | null }
+  /** prepare: 사전 확인·연결 정보 [가정]. trace: 관찰 중 p99 비율 추이. startedAt: 이 단계의 첫 이벤트 시각(기록의 +초 기준) */
+  traffic: { snapshot: TrafficSnapshotData | null; logs: TrafficLogEntry[]; logCounter: number; ready: TrafficReadyData | null; prepare: TrafficPrepareData | null; trace: number[]; startedAt: string | null }
   cutover: { doneSteps: number; verifying: boolean; results: CutoverResultData[]; handover: HandoverData[] }
   report: ReportData | null
   failures: Partial<Record<BackendPhase, Failure>>
@@ -50,7 +54,7 @@ export const initialState: MigrationState = {
   approval: { required: false, excluded: [], rollbackPolicy: '', cutoverRequired: false },
   provision: { resources: [], checks: [] },
   data: { current: null, lagHistory: [], verify: [] },
-  traffic: { snapshot: null, logs: [], logCounter: 0, ready: null },
+  traffic: { snapshot: null, logs: [], logCounter: 0, ready: null, prepare: null, trace: [], startedAt: null },
   cutover: { doneSteps: 0, verifying: false, results: [], handover: [] },
   report: null,
   failures: {},
@@ -80,12 +84,32 @@ function upsert<T extends { id: string }>(list: T[], item: T): T[] {
 function addTrafficLogs(state: MigrationState, data: TrafficSnapshotData, at: string) {
   let logs = state.traffic.logs
   let counter = state.traffic.logCounter
+  let trace = state.traffic.trace
   for (const note of data.notes ?? []) {
-    if (note.key === 'restart') { logs = []; continue }
+    if (note.key === 'restart') { logs = []; trace = []; continue }
     counter += 1
-    logs = [{ id: counter, at, key: note.key, params: note.params ?? {} }, ...logs].slice(0, TRAFFIC_LOG_LIMIT)
+    logs = [{ id: counter, at, key: note.key, params: note.params ?? {}, ...(note.activity ? { activity: note.activity } : {}) }, ...logs].slice(0, TRAFFIC_LOG_LIMIT)
   }
-  return { logs, logCounter: counter }
+  // 관찰 중·판정 중의 p99 비율만 추이에 남긴다(가중치 적용 중에는 아직 관찰하지 않는다).
+  if (data.phase === 'observing' || data.phase === 'gate') trace = [...trace, data.gate.p99_ratio].slice(-TRAFFIC_TRACE_POINTS)
+  return { logs, logCounter: counter, trace }
+}
+
+/** 사전 확인 결과. 끝난(done·failed) 결과가 처음 올 때만 기록에 남긴다(재전송으로 겹쳐 와도 한 번). */
+function applyTrafficPrepare(state: MigrationState, data: TrafficPrepareData, at: string): MigrationState['traffic'] {
+  const traffic = state.traffic
+  const finished = data.state === 'done' || data.state === 'failed'
+  const already = traffic.prepare?.state === data.state
+  let logs = traffic.logs
+  let counter = traffic.logCounter
+  if (finished && !already) {
+    counter += 1
+    const params: Record<string, string | number> = {}
+    if (data.target?.external_endpoint) params.endpoint = data.target.external_endpoint
+    if (data.reason) params.reason = data.reason
+    logs = [{ id: counter, at, key: data.state === 'failed' ? 'prepareFail' as const : 'prepare' as const, params }, ...logs].slice(0, TRAFFIC_LOG_LIMIT)
+  }
+  return { ...traffic, prepare: data, logs, logCounter: counter, startedAt: traffic.startedAt ?? at }
 }
 
 function fail(state: MigrationState, phase: BackendPhase, failure: Failure): MigrationState {
@@ -162,8 +186,10 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
     }
     case 'traffic.ready':
       return { ...next, traffic: { ...next.traffic, ready: event.data } }
+    case 'traffic.prepare':
+      return { ...next, traffic: applyTrafficPrepare(next, event.data, event.at) }
     case 'traffic.snapshot':
-      return { ...next, traffic: { ...next.traffic, snapshot: event.data, ...addTrafficLogs(next, event.data, event.at) } }
+      return { ...next, traffic: { ...next.traffic, snapshot: event.data, startedAt: next.traffic.startedAt ?? event.at, ...addTrafficLogs(next, event.data, event.at) } }
     case 'cutover.step': {
       const { n, state: stepState } = event.data
       const doneSteps = stepState === 'running' ? Math.max(next.cutover.doneSteps, n - 1) : Math.max(next.cutover.doneSteps, n)

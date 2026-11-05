@@ -1,6 +1,6 @@
 import { targetOfRequest, type BackendPhase, type DraftEvent, type MigrationEvent, type StartRequest, type Target } from './events'
 import type { EnterContext, MigrationProvider, ProviderHost } from './provider'
-import { DATA_TICK_MS, TRAFFIC_READY_EVENTS, dataProgressAt, dueDataVerify, reportFor, timelineFor, type ScriptedPhase, type TimedDraft } from './script'
+import { DATA_TICK_MS, TRAFFIC_READY_EVENTS, trafficPrepareTimeline, dataProgressAt, dueDataVerify, reportFor, timelineFor, type ScriptedPhase, type TimedDraft } from './script'
 import { TrafficSim } from './trafficSim'
 import { aiFixCount, digestMismatchDemo, reviewDemo, sandboxScenario } from '../demoConfig'
 
@@ -104,7 +104,11 @@ export class MockProvider implements MigrationProvider {
         this.traffic = sim
         // 먼저 전환 조건을 확인하고(전환 가능 시점), 확인이 끝나면 트래픽을 옮기기 시작한다.
         const timers = TRAFFIC_READY_EVENTS.map(item => window.setTimeout(() => this.emit({ type: 'traffic.ready', phase: 'traffic', status: 'running', data: item.data }), item.after))
-        timers.push(window.setTimeout(() => sim.start(), TRAFFIC_READY_EVENTS[TRAFFIC_READY_EVENTS.length - 1].after))
+        // [가정] 사전 확인(traffic_prepare): 인계 상태·ready·external_endpoint·헬스를 확인하고 연결 정보를 알린다.
+        const prepare = trafficPrepareTimeline(this.target)
+        for (const item of prepare) timers.push(window.setTimeout(() => this.emit({ type: 'traffic.prepare', phase: 'traffic', status: item.data.state === 'done' ? 'done' : 'running', data: item.data }), item.after))
+        const startAt = Math.max(TRAFFIC_READY_EVENTS[TRAFFIC_READY_EVENTS.length - 1].after, prepare[prepare.length - 1].after)
+        timers.push(window.setTimeout(() => sim.start(), startAt))
         stop = () => { timers.forEach(timer => window.clearTimeout(timer)); sim.stop(); if (this.traffic === sim) this.traffic = null }
         break
       }

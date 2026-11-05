@@ -4,7 +4,7 @@
  * 대본의 시각(after)은 "그 단계 화면이 준비된 순간"부터 센 ms이다.
  * Node가 그대로 읽으므로 런타임 import가 없고, 타입 문법만 쓴다(enum·네임스페이스 금지).
  */
-import type { AnalysisFindingData, BuildErrorCode, BuildFixData, DataProgressData, DataVerifyData, DraftEvent, TrafficReadyData, EnvRemap, FixLine, FlowPath, Grade, PlanEnvironment, PlanPreviewData, PlanResource, PlanStepData, SecurityRule, ReportData, SandboxChecks, SandboxDoneData, SandboxEnvData, SandboxFailureClass, SandboxStep, SandboxTestsData, Target } from './events'
+import type { AnalysisFindingData, BuildErrorCode, BuildFixData, DataProgressData, DataVerifyData, DraftEvent, TrafficPrepareData, TrafficReadyData, EnvRemap, FixLine, FlowPath, Grade, PlanEnvironment, PlanPreviewData, PlanResource, PlanStepData, SecurityRule, ReportData, SandboxChecks, SandboxDoneData, SandboxEnvData, SandboxFailureClass, SandboxStep, SandboxTestsData, Target } from './events'
 import type { SandboxScenario } from '../demoConfig'
 
 /** events.ts의 pathOf와 같다(이 모듈은 런타임 import가 없어야 Node가 그대로 읽는다). */
@@ -329,6 +329,44 @@ export const TRAFFIC_READY_EVENTS: Array<{ after: number; data: TrafficReadyData
   { after: TRAFFIC_READY_MS, data: { state: 'done', lag_ms: 12, longest_tx_ms: 85, commits_per_sec: 118 } },
 ]
 export const DATA_TICK_MS = 250
+
+// ---- 트래픽 사전 확인 [가정] (traffic_prepare: 인계 상태 READY · ready=true · external_endpoint · 헬스) ----
+/** 데모 값. 실제 화면은 백엔드가 보낸 traffic.prepare 값으로 그린다. */
+function trafficPrepareBase(target: Target): Omit<TrafficPrepareData, 'state' | 'checks'> {
+  const onprem = target === 'onprem'
+  return {
+    entry_host: 'app.example.com',
+    relay: { name: 'Envoy', location: 'AWS ap-northeast-2', mode: 'weighted_clusters' },
+    origin: { name: 'env-a', platform: 'ALB → EKS', location: 'AWS ap-northeast-2' },
+    target: onprem
+      ? { name: 'env-b', platform: 'K3s', location: 'on-prem', external_endpoint: 'http://10.8.0.12:80', tunnel: { interface: 'wg0', mtu: 1420 } }
+      : { name: 'env-b', platform: 'GKE', location: 'GCP asia-northeast3', external_endpoint: 'http://34.64.120.18:80' },
+    data_path: { pooler: 'PgBouncer', source_db: 'pg-a', target_db: 'pg-b' },
+    policy: { steps: [10, 50, 100], observe_seconds: 4, max_failed_requests: 0, max_p99_ratio: 1.5 },
+  }
+}
+const PREPARE_CHECK_IDS = ['handoff_status', 'ready', 'external_endpoint', 'health'] as const
+export const TRAFFIC_PREPARE_STEP_MS = 350
+/** 사전 확인 이벤트(확인 하나씩 끝나고 마지막에 done). 끝나는 시각은 TRAFFIC_PREPARE_STEP_MS × (확인 수 + 1). */
+export function trafficPrepareTimeline(target: Target): Array<{ after: number; data: TrafficPrepareData }> {
+  const base = trafficPrepareBase(target)
+  const values: Record<(typeof PREPARE_CHECK_IDS)[number], string> = {
+    handoff_status: 'READY', ready: 'true', external_endpoint: base.target?.external_endpoint ?? '', health: '/healthz 200',
+  }
+  const items: Array<{ after: number; data: TrafficPrepareData }> = []
+  for (let done = 0; done <= PREPARE_CHECK_IDS.length; done++) {
+    // 끝난 확인은 값과 함께, 지금 확인 중인 것 하나는 running으로(아직 시작하지 않은 확인은 보내지 않는다).
+    const checks = PREPARE_CHECK_IDS.slice(0, done + 1).map((id, index) => index < done
+      ? { id, state: 'done' as const, value: values[id] }
+      : { id, state: 'running' as const })
+    items.push({ after: done * TRAFFIC_PREPARE_STEP_MS, data: { ...base, state: 'running', checks } })
+  }
+  const last = items[items.length - 1]
+  last.after += TRAFFIC_PREPARE_STEP_MS / 2
+  last.data = { ...last.data, state: 'done' }
+  return items
+}
+export const TRAFFIC_PREPARE_MS = (PREPARE_CHECK_IDS.length + 0.5) * TRAFFIC_PREPARE_STEP_MS
 
 function lagAt(seconds: number): number | null {
   if (seconds < 5) return null
