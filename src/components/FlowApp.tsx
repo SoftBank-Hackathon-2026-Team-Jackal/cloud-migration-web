@@ -28,6 +28,7 @@ import { useVoiceGuide } from '../lib/useVoiceGuide'
 import { buildAgentFacts } from '../lib/agent/context'
 import { askAgent } from '../lib/agent/ask'
 import voiceClips from '../lib/voiceClips.json'
+import { FoldIcon, MicIcon, SpeakerIcon } from './JackalIcons'
 
 // 실제 환경을 바꾸기 전(입력~승인)까지만 이전 단계로 돌아갈 수 있다. 승인 이후는 되돌림이 아니라 롤백 정책을 따른다.
 const BACK: Partial<Record<Stage, Stage>> = { setup: 'intro', analysis: 'setup', rehearsal: 'analysis', planning: 'rehearsal', approval: 'planning' }
@@ -280,6 +281,9 @@ export default function FlowApp() {
     if (stage !== 'intro' && !window.history.state?.guard) window.history.pushState({ guard: true }, '')
   }, [stage])
 
+  // Jackal 위젯 상태 점: 말하는 중 > 듣는 중(마이크 켬) > 대기
+  const jvStatus = voice.speaking ? 'speaking' : voice.micEnabled ? 'listening' : 'idle'
+
   return <main className={'experience' + (dissolving ? ' is-dissolving' : '')} aria-label={t('flow.aria')}>
     <ParticleField morphToSphere={started} analysisMode={exited} voiceLevel={voice.voiceLevel} voiceActive={voice.voiceActive} micLevel={voice.micLevel} listenMode={listenMode}
       onStart={wake} onSphereFormed={() => setSphereFormed(true)} />
@@ -314,36 +318,41 @@ export default function FlowApp() {
     <LangSwitch />
     {exited && <StageRail stage={stage} />}
     {demoPanel && <DemoControls stage={stage} target={target} onJump={jump} onTarget={setTarget} />}
-    <aside className={'jv' + (chatOpen ? ' is-open' : '') + (stage === 'intro' ? ' is-intro' : '')} aria-label={t('agent.title')}>
+    <aside className={'jv is-' + jvStatus + (chatOpen ? ' is-open' : '') + (stage === 'intro' ? ' is-intro' : '')} aria-label={t('agent.title')}>
       {chatOpen && <section className="jv-panel" aria-label={t('agent.title')}>
         <header className="jv-head">
-          <strong>JACKAL</strong><span>LOCAL DEMO</span>
+          <span className="jv-dot" aria-hidden="true" />
+          <strong>{t('agent.title')}</strong>
+          <span className="jv-status">{t(('agent.status.' + jvStatus) as MsgKey)}</span>
           <div className="jv-head-actions">
-            <button type="button" onClick={voice.toggleMic} disabled={!voice.recognitionSupported} aria-pressed={voice.micEnabled}>{voice.micEnabled ? t('agent.micOn') : t('agent.mic')}</button>
-            <button type="button" onClick={voice.toggleSound} aria-pressed={voice.soundEnabled}>{voice.soundEnabled ? t('agent.soundOn') : t('agent.soundOff')}</button>
-            <button type="button" className="jv-fold" onClick={() => setChatOpen(false)} aria-label={t('agent.fold')} title={t('agent.fold')}>–</button>
+            <button type="button" className="jv-toggle" onClick={voice.toggleMic} disabled={!voice.recognitionSupported} aria-pressed={voice.micEnabled}
+              aria-label={t('agent.mic')} title={t('agent.mic') + ' · ' + t(voice.micEnabled ? 'agent.on' : 'agent.off')}><MicIcon off={!voice.micEnabled} /></button>
+            <button type="button" className="jv-toggle" onClick={voice.toggleSound} aria-pressed={voice.soundEnabled}
+              aria-label={t('agent.voice')} title={t('agent.voice') + ' · ' + t(voice.soundEnabled ? 'agent.on' : 'agent.off')}><SpeakerIcon off={!voice.soundEnabled} /></button>
+            <button type="button" className="jv-fold" onClick={() => setChatOpen(false)} aria-label={t('agent.fold')} title={t('agent.fold')}><FoldIcon /></button>
           </div>
         </header>
-        {stage === 'intro' && <p className="jv-profile">{t('agent.profile')}</p>}
+        {exited && <p className="jv-context">{t('agent.route', { from: t('map.from'), to: t(('target.' + target) as MsgKey) })}</p>}
         <div className="jv-log" role="log" aria-live="polite" ref={logRef}>
-          {chat.length === 0 && <p className="jv-empty">{started ? t('prompt.question') : '“헤이 자칼”'} · {t('agent.empty')}</p>}
-          {chat.map(message => <div key={message.id} className={'jv-msg is-' + message.role}>
+          {chat.length === 0 && <p className="jv-empty">{started ? t('prompt.question') : '“' + t('agent.chip.wake') + '”'} · {t('agent.empty')}</p>}
+          {chat.map(message => <div key={message.id} className={'jv-msg is-' + message.role} {...(message.tag ? { 'data-msg-tag': message.tag } : {})}
+            {...(message.tag === 'model' || message.tag === 'local' ? { 'data-agent-source': message.tag } : {})}>
             <p>{message.text}</p>
-            {message.role === 'agent' && message.tag && <small data-msg-tag={message.tag} {...(message.tag === 'model' || message.tag === 'local' ? { 'data-agent-source': message.tag } : {})}>{message.tag === 'model' ? t('agent.sourceModel') : message.tag === 'local' ? t('agent.sourceLocal') : t('agent.sourceReport')}</small>}
+            {(message.tag === 'model' || message.tag === 'local') && <small>{t(message.tag === 'model' ? 'agent.sourceModel' : 'agent.sourceLocal')}</small>}
           </div>)}
           {asking && <div className="jv-msg is-agent is-typing"><p>{t('agent.thinking')}</p></div>}
         </div>
         {voice.error && <small className="jv-error">{voice.error}</small>}
         {stage === 'intro' && <div className="jv-chips">
-          <button type="button" onClick={wake}>헤이 자칼</button>
-          {started && <button type="button" onClick={() => beginVoiceMigration()}>마이그레이션 시작하자</button>}
+          <button type="button" onClick={wake}>{t('agent.chip.wake')}</button>
+          {started && <button type="button" onClick={() => beginVoiceMigration()}>{t('agent.chip.start')}</button>}
         </div>}
         {stage !== 'intro' && <form className="jv-form" onSubmit={event => { event.preventDefault(); const text = question.trim(); if (text && !asking) { setQuestion(''); pushChat('user', text); void askHandler.current(text) } }}>
           <input value={question} onChange={event => setQuestion(event.target.value)} placeholder={t('agent.placeholder')} aria-label={t('agent.label')} maxLength={200} />
           <button type="submit" disabled={asking || !question.trim()}>{t('agent.send')}</button>
         </form>}
       </section>}
-      <button type="button" className={'jv-pill' + (voice.speaking ? ' is-speaking' : '')} aria-expanded={chatOpen} aria-label={chatOpen ? t('agent.fold') : t('agent.open')} onClick={() => setChatOpen(open => !open)}>
+      <button type="button" className="jv-pill" aria-expanded={chatOpen} title={chatOpen ? t('agent.fold') : t('agent.open')} onClick={() => setChatOpen(open => !open)}>
         <span className="jv-dot" aria-hidden="true" />{t('agent.title')}{!chatOpen && unread > 0 && <b>{unread}</b>}
       </button>
     </aside>
