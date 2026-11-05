@@ -57,6 +57,19 @@ npm run build
 npm run typecheck
 ```
 
+### 컨테이너로 실행
+
+서버(예: 플랫폼 EC2)에서는 `Dockerfile`로 실행합니다. 서버 TTS의 `onnxruntime-node`가 glibc용이라 `node:22-slim`을 씁니다.
+
+```bash
+docker build -t jackal-web .                       # NEXT_PUBLIC_* 값은 빌드 인자(--build-arg)로 넣습니다(기본: 목업 모드)
+docker run -d --name jackal-web -p 3000:3000 --env-file .env -v jackal-models:/models jackal-web
+```
+
+- `AUTH_*`, `PLATFORM_*`, `GEMINI_API_KEY` 같은 서버용 값은 실행할 때(`--env-file`) 넣습니다. 이미지에는 비밀값을 넣지 않습니다.
+- 음성 모델(약 400MB)은 이미지에 없습니다. 처음 한 번 `docker exec jackal-web npm run tts:download`로 `/models`에 받습니다. 없으면 `/api/tts`가 503을 돌려주고 화면은 브라우저 음성으로 읽습니다.
+- 컨테이너는 `node` 사용자(uid 1000)로 돌고, 상태 확인(`HEALTHCHECK`)이 `/`를 봅니다.
+
 ## GitHub 로그인과 저장소 선택
 
 설정 화면의 "GitHub 저장소"는 주소 입력 대신 **GitHub 로그인 → 공개 저장소 검색 → 선택**입니다. 고르면 서버가 그 저장소를 id로 다시 조회해 공개 저장소인지 확인하고, 기본 브랜치의 지금 커밋 SHA를 고정합니다. 시작 요청에는 `source: { kind: "GITHUB_PUBLIC", repository_id, full_name, commit_sha }`만 실립니다.

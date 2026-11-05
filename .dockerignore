@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.github
+tests
+.tts-cache
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+Dockerfile
+.dockerignore
