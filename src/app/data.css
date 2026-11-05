@@ -147,6 +147,8 @@
 
 /* ── 높이에 맞추기 ─────────────────────────────── */
 @media (max-height:900px){
+  /* 사전 검사 줄마다 붙는 증거 문구(마우스를 올리면 title로 보인다)와 지문 줄은 접어 스크롤 없이 한 화면에 들어오게 한다 */
+  .dm-pf .dm-ev,.dm-pf .dm-fp{display:none}
   .dm-pf-note{display:none}
   .dm-pf{overflow-y:auto;scrollbar-width:thin}
   .dm-fp{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
