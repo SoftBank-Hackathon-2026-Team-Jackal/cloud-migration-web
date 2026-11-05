@@ -1,7 +1,7 @@
 /**
  * 단계별 음성 명령표. 말(인식 결과·입력창)을 명령 하나로 맞춘다. 런타임 import 없음(단위 테스트가 직접 읽는다).
  * 규칙
- * - 승인은 "승인해/승인할게"(en approve, ja 承認して)처럼 승인 낱말이 있어야 한다. "좋아·진행해"는 승인이 아니다.
+ * - 승인은 "승인"·"승인해"·"승인할게"(en approve, ja 承認·承認して)처럼 승인 낱말이 있어야 한다. "좋아·진행해"는 승인이 아니다.
  * - 롤백·장애 주입·이전 취소처럼 되돌리기 어려운 동작은 되묻고, "확인"을 들어야 실행한다.
  * - 부정("승인 안 해", "don't approve")은 승인으로 받지 않는다.
  */
@@ -19,7 +19,8 @@ export const normalizeUtterance = (value: string) => value.toLowerCase().normali
 const NEGATION = /(안해|안할|않|하지마|하지말|말아|못해|don't|dont|donot|not|never|しない|しません|やめ)/
 
 const PATTERNS: Array<[CommandId, RegExp]> = [
-  ['approve', /(승인해|승인할게|승인합니다|승인하겠|승인해요|승인하자|approve|iapprove|承認して|承認します|承認する)/],
+  // "승인" 한 낱말도 승인이다(보고가 "'승인'이라고 해 주세요"라고 묻는다). "승인이 뭐야"처럼 뒤에 말이 붙으면 아니다.
+  ['approve', /(^(헤이(자칼|재칼|쟈칼))?승인(이요|요)?$|승인해|승인할게|승인합니다|승인하겠|승인해요|승인하자|approve|iapprove|^承認$|承認して|承認します|承認する)/],
   ['cancel', /(이전취소|마이그레이션취소|전부취소|취소해|cancelthemigration|cancelmigration|移行を?(取り消|キャンセル|中止))/],
   ['rollback', /(롤백|되돌려|원래대로|rollback|rollitback|ロールバック|元に戻)/],
   ['inject', /(장애(를)?(넣|주입)|장애테스트|오류(를)?넣|inject|failuretest|障害(を)?(入れ|注入))/],

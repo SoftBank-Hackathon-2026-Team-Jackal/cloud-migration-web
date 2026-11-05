@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import voiceClips from './voiceClips.json'
 import { RECORDED_CLIPS } from './voiceRecorded'
 import { ttsAudio, warmTts } from './voice/ttsClient'
+import { spokenText } from './tts/pronounce'
 
 type RecognitionResult = { results: ArrayLike<ArrayLike<{ transcript: string }>> }
 type RecognitionError = { error: string }
@@ -176,7 +177,7 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
     const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined
     if (!synth) { options?.onEnd?.(); window.setTimeout(listen, 150); return }
     synth.cancel()
-    const utterance = new SpeechSynthesisUtterance(text)
+    const utterance = new SpeechSynthesisUtterance(spokenText(text, language))
     utterance.lang = { ko: 'ko-KR', en: 'en-US', ja: 'ja-JP' }[language]
     speakingRef.current = true
     setSpeaking(true)

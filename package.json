@@ -20,6 +20,7 @@
     "test:e2e:voice": "node tests/e2e/voice.mjs",
     "tts:download": "node scripts/download-tts-model.mjs",
     "tts:pregen": "node scripts/pregen-tts.ts",
+    "tts:clips": "node scripts/generate-voice-clips.ts",
     "contract:check": "node --test \"tests/unit/contract.test.ts\""
   },
   "dependencies": {

@@ -9,9 +9,10 @@ import { synthesizeCached, ttsAvailable } from '../src/lib/tts/service.ts'
 import type { TtsLang } from '../src/lib/tts/supertonic.ts'
 import { VOICE_MESSAGES, voiceText, type VoiceKey, type VoiceLang } from '../src/lib/voice/messages.ts'
 import { cutoverFactReports, renderReport, ReportEngine } from '../src/lib/voice/reports.ts'
-import { approvalTimeline, timelineFor, type ScriptedPhase } from '../src/lib/migration/script.ts'
+import { approvalTimeline, PROVISION_NODES, timelineFor, type ScriptedPhase } from '../src/lib/migration/script.ts'
 import { cutoverPlan, cutoverRun } from '../src/lib/migration/cutoverScript.ts'
 import { dataTickAt, dataTimeline, DATA_END_MS, DATA_LSN_TICK_MS } from '../src/lib/migration/dataScript.ts'
+import { DEFAULT_POLICY } from '../src/lib/migration/trafficModel.ts'
 import { ko } from '../src/lib/i18n/ko.ts'
 import { en } from '../src/lib/i18n/en.ts'
 import { ja } from '../src/lib/i18n/ja.ts'
@@ -39,8 +40,20 @@ function linesFor(lang: VoiceLang): Set<string> {
   for (const [key, text] of Object.entries(VOICE_MESSAGES[lang])) if ((key.startsWith('r.') || key.startsWith('c.')) && !text.includes('{')) lines.add(text)
   for (const stage of ['setup', 'analysis', 'rehearsal', 'planning', 'approval', 'provisioning', 'data', 'traffic', 'cutover']) lines.add(voiceText(lang, 's.stage', { stage: 'stage.' + stage }))
   // 합쳐지는 보고("수정 3건 적용")는 개수가 그때그때 달라서 1~8을 모두 만든다.
-  for (let n = 1; n <= 8; n++) for (const key of ['r.sandbox.fix', 'r.prov.ready'] as VoiceKey[]) lines.add(voiceText(lang, key, { n }))
-  for (const p of [10, 50, 100]) { lines.add(voiceText(lang, 'r.traffic.step', { p })); if (p < 100) lines.add(voiceText(lang, 'r.traffic.gate', { p })) }
+  for (let n = 1; n <= 8; n++) lines.add(voiceText(lang, 'r.sandbox.fix', { n }))
+  // 구축 완료는 빨리 연달아 오면 큐가 이름을 잇는다("네트워크와 클러스터 생성 완료"): 이웃한 둘·셋도 만든다.
+  for (const keys of Object.values(PROVISION_NODES)) for (let i = 0; i < keys.length; i++) for (const size of [2, 3]) {
+    const names = keys.slice(i, i + size)
+    if (names.length === size) lines.add(voiceText(lang, 'r.prov.ready', { name: names.map(key => 'res.' + key) }))
+  }
+  // 트래픽 단계(정책 기본값: 10·50·100퍼센트, 관찰 창, 실패 0건)
+  for (const p of DEFAULT_POLICY.steps) {
+    lines.add(p < 100 ? voiceText(lang, 'r.traffic.step', { p, s: DEFAULT_POLICY.observe_seconds }) : voiceText(lang, 'r.traffic.stepShort', { p }))
+    if (p < 100) lines.add(voiceText(lang, 'r.traffic.gate', { p, f: 0 }))
+  }
+  lines.add(voiceText(lang, 'r.traffic.done', { next: 'stage.cutover' }))
+  // 단계 시작 안내(화면이 단계를 열 때 말한다)
+  for (const key of Object.keys(VOICE_MESSAGES[lang]) as VoiceKey[]) if (key.startsWith('r.start.') && !VOICE_MESSAGES[lang][key].includes('{')) lines.add(voiceText(lang, key))
 
   // 목업 대본을 엔진에 흘린다(두 대상 × 샌드박스 시나리오들).
   let seq = 0

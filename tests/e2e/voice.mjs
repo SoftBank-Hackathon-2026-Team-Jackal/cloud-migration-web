@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * 음성만으로 처음부터 끝까지(헤드리스): 가짜 음성 인식(SpeechRecognition)에 말을 넣어 실제 인식 경로로 명령을 보낸다.
- * 소개 → 설정("좋아, 시작하자") → 분석·샌드박스·계획("다음") → 승인("좋아"는 승인 아님 → 사실 읽기 → "승인해")
+ * 소개 → 설정("좋아, 시작하자") → 분석·샌드박스·계획("다음") → 승인("좋아"는 승인 아님 → 사실 읽기 → "승인")
  * → 구축·데이터("다음") → 트래픽("장애 넣어 봐" 되묻기 → "아니", "지금 어디야", "다음") → DB 전환("다음"은 승인 아님 → "승인할게" → "다음") → 리포트.
  * 이벤트 보고가 채팅 기록에 남는지, 목소리가 서버 TTS(/api/tts)로만 나오는지(브라우저 합성 0회)도 본다.
  *
@@ -102,38 +102,38 @@ try {
   await openChat()
 
   await waitHint('다음')
-  await waitChat(/분석 완료/, '분석 완료 보고가 채팅에 남는다')
+  await waitChat(/분석 완료\. 샌드박스 검증으로 갈까요\?/, '분석 완료 → 다음 단계를 묻는다')
   await say('다음')
   await page.locator('.sbx-split').waitFor()
   check(true, '"다음" → 샌드박스')
   await waitHint('다음')
-  await waitChat(/샌드박스 검증 통과/, '샌드박스 통과 보고')
+  await waitChat(/검증 통과\. 계획 수립으로 갈까요\?/, '샌드박스 통과 → 계획 수립을 묻는다')
   await say('다음')
   await page.locator('.plan-next').waitFor()
   await waitHint('다음')
   await say('지금 어디야?')
-  await waitChat(/현재 계획 단계/, '"지금 어디야" → 단계 요약')
+  await waitChat(/지금 계획 수립\./, '"지금 어디야" → 단계 요약')
   await say('다음')
   await page.locator('.approval-panel').waitFor()
   check(true, '"다음" → 승인 화면')
 
   // 승인: 일반 동의("좋아")로는 승인하지 않는다. 사실을 읽고 승인 방법을 알려 준다.
-  await waitChat(/롤백 가능/, '승인 사실(변경·테스트·롤백)을 읽는다')
-  await waitChat(/승인하려면 '승인해'/, '승인 방법을 알려 준다')
+  await waitChat(/만들 리소스, 원본에 남는 항목, 비용을 확인해 주세요/, '승인 사실(확인할 것)을 읽는다')
+  await waitChat(/맞으면 '승인'이라고 해 주세요/, '승인 방법을 알려 준다')
   await say('좋아')
   await page.waitForTimeout(1500)
   check(await page.locator('.approval-delivery').count() === 0, '"좋아"로는 승인되지 않는다')
-  await say('승인해')
-  await page.locator('.approval-delivery').waitFor().then(() => check(true, '"승인해" → 승인 전달 시작'), () => check(false, '"승인해" → 승인 전달 시작'))
+  await say('승인')
+  await page.locator('.approval-delivery').waitFor().then(() => check(true, '"승인" → 승인 전달 시작'), () => check(false, '"승인" → 승인 전달 시작'))
   await page.waitForSelector('.approval-panel', { state: 'detached' })
   note('승인 전달됨 → 구축')
 
   await waitHint('다음')
-  await waitChat(/재검증 \d+\/\d+ 통과/, '구축 재검증 보고')
+  await waitChat(/구축 완료\. 데이터 이전으로 갈까요\?/, '구축 완료 → 데이터 이전을 묻는다')
   await say('다음')
   await page.locator('.dm').waitFor()
   await waitHint('다음')
-  await waitChat(/복제 지연 0/, '복제 지연 0 보고')
+  await waitChat(/복제 지연 0\. 트래픽 이전으로 갈까요\?/, '복제 지연 0 → 트래픽 이전을 묻는다')
   await say('다음')
   await page.locator('.traffic-layout').waitFor()
   check(true, '"다음" → 트래픽')
@@ -141,18 +141,18 @@ try {
   // 위험한 동작은 되묻는다: "장애 넣어 봐" → 되묻기 → "아니" → 하지 않는다.
   await waitHint('장애 넣어 봐')
   await say('장애 넣어 봐')
-  await waitChat(/장애 주입할까요/, '장애 주입은 되묻는다')
+  await waitChat(/장애를 넣어 볼까요/, '장애 주입은 되묻는다')
   await waitHint('확인')
   await say('아니')
   await waitChat(/요청 취소/, '"아니" → 취소')
   check(!(await chat()).includes('게이트 실패'), '되묻기를 거절하면 장애를 넣지 않는다')
   await waitHint('다음')
-  await waitChat(/트래픽 이전 완료/, '트래픽 완료 보고')
+  await waitChat(/트래픽 이전 완료\. DB 전환으로 갈까요\?/, '트래픽 완료 → DB 전환을 묻는다')
   await say('다음')
 
   // DB 전환: "다음"은 승인이 아니다 → 사실 읽기 → "승인할게"
   await page.locator('.cutover-approval').waitFor()
-  await waitChat(/전환하려면 '승인해'/, 'DB 전환 승인 방법을 알려 준다')
+  await waitChat(/진행하려면 '승인'이라고 해 주세요/, 'DB 전환 승인 방법을 알려 준다')
   await say('다음')
   await page.waitForTimeout(1500)
   check(await page.locator('.cutover-approval').count() === 1, '"다음"으로는 DB 전환을 승인하지 않는다')
