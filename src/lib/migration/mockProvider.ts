@@ -1,9 +1,10 @@
 import { targetOfRequest, type BackendPhase, type DraftEvent, type MigrationEvent, type StartRequest, type Target } from './events'
 import type { EnterContext, MigrationProvider, ProviderHost } from './provider'
 import { TRAFFIC_READY_EVENTS, trafficPrepareTimeline, approvalTimeline, reportFor, timelineFor, type ScriptedPhase, type TimedDraft } from './script'
-import { DATA_LSN_TICK_MS, dataTickAt, dataTimeline } from './dataScript'
+import { DATA_LSN_TICK_MS, DATA_TABLES, dataTickAt, dataTimeline } from './dataScript'
+import { cutoverPlan, cutoverRun } from './cutoverScript'
 import { TrafficSim } from './trafficSim'
-import { aiFixCount, deliveryFailDemo, digestMismatchDemo, preflightScenario, reviewDemo, sandboxScenario } from '../demoConfig'
+import { aiFixCount, cutoverScenario, deliveryFailDemo, digestMismatchDemo, preflightScenario, reviewDemo, sandboxScenario } from '../demoConfig'
 
 /**
  * 백엔드 없이 지금까지와 똑같이 움직이게 하는 공급자. 단계 화면이 준비되면 그 단계의 대본(script.ts)을
@@ -23,6 +24,7 @@ export class MockProvider implements MigrationProvider {
   private buildPlay: (() => void) | null = null
   private traffic: TrafficSim | null = null
   private cutoverCancel: (() => void) | null = null
+  private cutoverAttempt = 0
   /** 승인 결정 대본(접수 → 전달)과 전달 시도 횟수 */
   private approvalPlay: (() => void) | null = null
   private deliveryAttempts = 0
@@ -111,7 +113,9 @@ export class MockProvider implements MigrationProvider {
         break
       }
       case 'verification':
-        // 두 번째 승인(approveCutover)이 있어야 시작한다. 승인 뒤의 대본은 여기서 정리한다.
+        // 승인 화면이 읽을 전환 계획을 먼저 알린다. 두 번째 승인(approveCutover)이 있어야 전환을 시작한다. 승인 뒤의 대본은 여기서 정리한다.
+        this.cutoverAttempt = 0
+        this.emit({ type: 'cutover.plan', phase: 'verification', status: 'waiting', data: cutoverPlan(this.target, cutoverScenario()) })
         stop = () => { this.cutoverCancel?.(); this.cutoverCancel = null }
         break
     }
@@ -149,7 +153,8 @@ export class MockProvider implements MigrationProvider {
 
   approveCutover() {
     this.cutoverCancel?.()
-    this.cutoverCancel = this.play(this.scripted('verification'))
+    this.cutoverAttempt += 1
+    this.cutoverCancel = this.play(cutoverRun(cutoverScenario(), this.cutoverAttempt, DATA_TABLES))
   }
 
   cancel() { this.host.dispatch({ type: 'cancelled' }) }

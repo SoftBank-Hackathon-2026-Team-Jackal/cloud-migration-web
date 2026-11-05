@@ -85,7 +85,7 @@ export class SseProvider implements MigrationProvider {
     this.host.dispatch({ type: 'approvalDecision', data: this.decision })
   }
 
-  /** 시연용 쿼리(?review=1 · ?preflight=route|unknown)를 목업 서버에 넘긴다. 실제 백엔드는 무시한다. */
+  /** 시연용 쿼리(?review=1 · ?preflight=route|unknown · ?cutover=classic|kill)를 목업 서버에 넘긴다. 실제 백엔드는 무시한다. */
   private demoQuery() {
     if (typeof window === 'undefined') return ''
     const search = new URLSearchParams(window.location.search)
@@ -93,6 +93,8 @@ export class SseProvider implements MigrationProvider {
     if (search.get('review') === '1') query.set('review', '1')
     const preflight = search.get('preflight')
     if (preflight === 'route' || preflight === 'unknown') query.set('preflight', preflight)
+    const cutover = search.get('cutover')
+    if (cutover === 'classic' || cutover === 'kill') query.set('cutover', cutover)
     const text = query.toString()
     return text ? '?' + text : ''
   }

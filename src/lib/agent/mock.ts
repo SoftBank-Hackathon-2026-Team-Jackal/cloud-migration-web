@@ -41,7 +41,9 @@ function stageDetail(facts: AgentFacts, lang: AgentLang): string {
     case 'traffic':
       return { ko: `대상 환경으로 ${f.traffic.targetWeight}% 옮겼고 실패 요청은 ${f.traffic.failedRequests}건이에요.`, en: `${f.traffic.targetWeight}% of traffic is on the target; ${f.traffic.failedRequests} failed requests.`, ja: `対象環境へ ${f.traffic.targetWeight}% 移行、失敗リクエストは ${f.traffic.failedRequests} 件です。` }[lang]
     case 'cutover':
-      return { ko: `DB 전환 ${f.cutover.doneSteps}/6 단계, 측정 결과 ${f.cutover.results}/3.`, en: `DB switch ${f.cutover.doneSteps}/6 steps, measurements ${f.cutover.results}/3.`, ja: `DB 切替 ${f.cutover.doneSteps}/6 段階、測定結果 ${f.cutover.results}/3。` }[lang]
+      if (f.cutover.outcome === 'refused') return { ko: `DB 전환을 거부하고 원본 DB로 RESUME했어요. 데이터는 그대로예요.`, en: `The DB switch was refused and writes resumed on the source DB. No data changed.`, ja: `DB 切替を拒否し、移行元 DB で RESUME しました。データはそのままです。` }[lang]
+      if (f.cutover.outcome === 'switched' && f.cutover.pauseMs !== null) return { ko: `DB를 옮겼어요. 쓰기 중단 ${f.cutover.pauseMs}ms, 측정 결과 ${f.cutover.results}개.`, en: `DB switched. Writes paused ${f.cutover.pauseMs} ms; ${f.cutover.results} measurements.`, ja: `DB を切り替えました。書込み停止 ${f.cutover.pauseMs}ms、測定結果 ${f.cutover.results} 件。` }[lang]
+      return { ko: `DB 전환 ${f.cutover.doneSteps}/${f.cutover.stepsTotal ?? '-'} 단계, 측정 결과 ${f.cutover.results}개.`, en: `DB switch ${f.cutover.doneSteps}/${f.cutover.stepsTotal ?? '-'} steps, ${f.cutover.results} measurements.`, ja: `DB 切替 ${f.cutover.doneSteps}/${f.cutover.stepsTotal ?? '-'} 段階、測定結果 ${f.cutover.results} 件。` }[lang]
     default:
       return ''
   }

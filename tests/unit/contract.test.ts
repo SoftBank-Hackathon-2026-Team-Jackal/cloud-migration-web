@@ -9,6 +9,8 @@ import { APPROVAL_ID, DATA_VERIFY_TOTAL_MS, PLAN_ID, TRAFFIC_READY_EVENTS, appro
 import { TrafficSim } from '../../src/lib/migration/trafficSim.ts'
 import { DATA_END_MS, DATA_READY_AT, dataTickAt, dataTimeline, type PreflightScenario } from '../../src/lib/migration/dataScript.ts'
 import { startRequestFor, type Target } from '../../src/lib/migration/events.ts'
+import { cutoverPlan, cutoverRun, type CutoverScenario } from '../../src/lib/migration/cutoverScript.ts'
+import { DATA_TABLES } from '../../src/lib/migration/dataScript.ts'
 
 const read = (path: string) => JSON.parse(readFileSync(new URL('../../' + path, import.meta.url), 'utf8'))
 const eventsSchema = read('contract/events.schema.json')
@@ -37,7 +39,7 @@ test('스키마가 events.ts의 모든 이벤트 type을 빠짐없이, 남김없
 })
 
 test('목업 대본의 모든 이벤트가 스키마를 통과한다(target × aifix)', () => {
-  const phases: ScriptedPhase[] = ['analysis', 'build', 'planning', 'provisioning', 'verification']
+  const phases: ScriptedPhase[] = ['analysis', 'build', 'planning', 'provisioning']
   let count = 0
   for (const target of ['gcp', 'onprem'] as Target[]) {
     for (let aiFixes = 1; aiFixes <= 4; aiFixes++) {
@@ -49,7 +51,41 @@ test('목업 대본의 모든 이벤트가 스키마를 통과한다(target × a
       }
     }
   }
-  assert.ok(count > 300, '검증한 이벤트 수: ' + count)
+  assert.ok(count > 250, '검증한 이벤트 수: ' + count)
+})
+
+test('DB 전환 대본(fast·classic·kill × 시도)이 스키마를 통과하고, 단계는 순서대로·결과는 시나리오대로다 [가정]', () => {
+  for (const target of ['gcp', 'onprem'] as Target[]) {
+    for (const scenario of ['fast', 'classic', 'kill'] as CutoverScenario[]) {
+      assertValid(validateEvent, stamp({ type: 'cutover.plan', phase: 'verification', status: 'waiting', data: cutoverPlan(target, scenario) }), 'cutover.plan/' + scenario)
+      for (const attempt of [1, 2]) {
+        const items = cutoverRun(scenario, attempt, DATA_TABLES)
+        for (const { event } of items) assertValid(validateEvent, stamp(event), `cutover/${target}/${scenario}/${attempt}/${event.type}`)
+        const sorted = [...items].sort((a, b) => a.after - b.after).map(item => item.event)
+        const steps = sorted.flatMap(event => event.type === 'cutover.step' && event.data.state === 'done' ? [event.data] : [])
+        assert.deepEqual(steps.map(step => step.n), steps.map((_, index) => index + 1), '단계 번호는 1부터 차례대로')
+        assert.ok(steps.every(step => step.of === steps.length && typeof step.ms === 'number'), '단계마다 전체 수와 ms')
+        const outcome = sorted.find(event => event.type === 'cutover.outcome')
+        const refused = scenario === 'kill' && attempt === 1
+        assert.equal(outcome?.type === 'cutover.outcome' && outcome.data.result, refused ? 'refused' : 'switched')
+        if (outcome?.type === 'cutover.outcome') {
+          const total = steps.reduce((sum, step) => sum + (step.ms ?? 0), 0)
+          assert.ok(Math.abs(outcome.data.pause_ms - total) < 0.11, '쓰기 중단 = 단계 합')
+          assert.notEqual(outcome.status, 'failed', '거부는 이전 실패가 아니다(원본으로 RESUME)')
+        }
+        const ready = sorted.filter(event => event.type === 'cutover.ready')
+        assert.ok(ready.length > 0 && ready.every(event => event.type === 'cutover.ready' && event.data.attempt === attempt))
+        const firstStep = sorted.findIndex(event => event.type === 'cutover.step')
+        const lastReady = sorted.map(event => event.type).lastIndexOf('cutover.ready')
+        assert.ok(lastReady < firstStep, '전환 가능 시점을 기다린 뒤 PAUSE')
+        const handover = sorted.flatMap(event => event.type === 'cutover.handover' ? [event.data.state] : [])
+        assert.ok(refused ? handover.every(state => state === 'held') : handover.includes('done'), '거부면 인계 보류')
+      }
+    }
+  }
+  const classic = cutoverRun('classic', 1, DATA_TABLES).find(item => item.event.type === 'cutover.outcome')!.event
+  const fast = cutoverRun('fast', 1, DATA_TABLES).find(item => item.event.type === 'cutover.outcome')!.event
+  assert.ok(classic.type === 'cutover.outcome' && fast.type === 'cutover.outcome' && classic.data.pause_ms > 50 * fast.data.pause_ms, 'classic은 fast보다 훨씬 오래 멈춘다')
 })
 
 test('사람 검토·이미지 불일치 데모 대본도 스키마를 통과한다', () => {
@@ -190,7 +226,7 @@ test('잘못된 이벤트는 실패한다', () => {
   assert.equal(validateEvent({ ...check, data: { id: 'unknown', state: 'running' } }), false, '허용되지 않는 id')
   assert.equal(validateEvent({ ...check, data: { state: 'running' } }), false, 'data 필수 필드 누락')
   assert.equal(validateEvent({ ...check, data: { id: 'build', state: 'running', extra: 1 } }), false, '계약에 없는 필드')
-  assert.equal(validateEvent({ ...good, type: 'cutover.step', phase: 'verification', data: { n: 7, state: 'done' } }), false, 'n 범위')
+  assert.equal(validateEvent({ ...good, type: 'cutover.step', phase: 'verification', data: { n: 33, state: 'done' } }), false, 'n 범위')
 })
 
 // ---- 목업 서버가 보내는 이벤트 ----
