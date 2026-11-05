@@ -6,7 +6,7 @@
  * 런타임 import는 같은 폴더의 순수 모듈뿐이다(단위 테스트가 직접 읽는다).
  */
 import type { BackendPhase, MigrationEvent } from '../migration/events'
-import { voiceText, type VoiceKey, type VoiceLang, type VoiceParams } from './messages.ts'
+import { VOICE_MESSAGES, voiceText, type VoiceKey, type VoiceLang, type VoiceParams } from './messages.ts'
 
 export type ReportKind = 'failure' | 'decision' | 'complete' | 'milestone' | 'discovery'
 export type Report = {
@@ -65,7 +65,10 @@ export function cutoverFactReports(pauseMs: number | null | undefined, at: numbe
 export class ReportEngine {
   private once = new Set<string>()
   private milestone = new Map<string, number>()
-  private found = { infrastructure: 0, code: 0 }
+  /** 계획 미리보기의 만들 리소스 수(원본 유지 제외): 구축 진행을 n/m으로 말할 때 m */
+  private provTotal: number | null = null
+  /** 데이터 테이블별 복사 끝남 여부: 초기 복사를 n/m으로 말한다 */
+  private tables = new Map<string, boolean>()
   private planSteps = new Map<string, boolean>()
   private sandboxChecks: { passed: number; total: number } | null = null
   private lastAttempt = 0
@@ -76,7 +79,7 @@ export class ReportEngine {
   writePauseMs: number | null = null
 
   reset() {
-    this.once.clear(); this.milestone.clear(); this.found = { infrastructure: 0, code: 0 }; this.planSteps.clear()
+    this.once.clear(); this.milestone.clear(); this.provTotal = null; this.tables.clear(); this.planSteps.clear()
     this.sandboxChecks = null; this.lastAttempt = 0; this.provReady.clear(); this.trafficStep = -1; this.trafficPhase = ''; this.gatesPassed.clear(); this.writePauseMs = null
   }
 
@@ -84,7 +87,7 @@ export class ReportEngine {
   resetPhase(phase: BackendPhase) {
     for (const key of [...this.once]) if (key.startsWith(phase + ':')) this.once.delete(key)
     for (const key of [...this.milestone.keys()]) if (key.startsWith(phase + ':')) this.milestone.delete(key)
-    if (phase === 'analysis') this.found = { infrastructure: 0, code: 0 }
+    if (phase === 'data_copy') this.tables.clear()
     if (phase === 'build') { this.sandboxChecks = null; this.lastAttempt = 0 }
     if (phase === 'provisioning') this.provReady.clear()
     if (phase === 'traffic') { this.trafficStep = -1; this.trafficPhase = ''; this.gatesPassed.clear() }
@@ -127,15 +130,19 @@ export class ReportEngine {
     switch (event.type) {
       case 'snapshot': return []
       case 'analysis.finding': {
+        // 백엔드는 항목마다가 아니라 스캔(Activity)이 끝날 때 알린다: 스캔 완료(그 스트림의 진행 100)만 말하고,
+        // 코드에서 찾은 것은 이름을 아는 항목(f.<key>)만 말한다. 개수·퍼센트를 지어내지 않는다.
         const stream = event.data.stream === 'code' ? 'code' : 'infrastructure'
-        this.found[stream] += 1
-        const out = [make(stream === 'code' ? 'r.analysis.found.code' : 'r.analysis.found.infrastructure', 'discovery', {}, { series: 'found:' + stream, count: 1, countParam: 'n' })]
-        const mark = this.crossed(phase, 'progress', event.progress ?? event.data.progress)
-        if (mark) out.push(make('r.analysis.progress', 'milestone', { p: mark }, { series: 'progress:' + phase }))
+        const out: Report[] = []
+        const label = 'f.' + event.data.key
+        if (stream === 'code' && label in VOICE_MESSAGES.ko && this.first(phase, 'code:' + event.data.key)) {
+          out.push(make('r.analysis.codeFound', 'discovery', { item: label }, { series: 'code:' + event.data.key }))
+        }
+        if ((event.data.progress ?? 0) >= 100 && this.first(phase, 'scan:' + stream)) out.push(make(`r.analysis.scanDone.${stream}`, 'milestone', {}, { series: 'scan:' + stream }))
         return out
       }
       case 'analysis.done':
-        return this.first(phase, 'done') ? [make('r.analysis.done', 'complete', { infra: this.found.infrastructure, code: this.found.code })] : []
+        return this.first(phase, 'done') ? [make('r.analysis.done', 'complete')] : []
       case 'build.fix':
         return [make('r.sandbox.fix', 'discovery', {}, { series: 'fix', count: 1, countParam: 'n' })]
       case 'sandbox.attempt': {
@@ -157,6 +164,7 @@ export class ReportEngine {
         this.planSteps.set(event.data.id, Boolean(event.data.keep_source))
         return []
       case 'plan.preview':
+        this.provTotal = event.data.resources.filter(resource => resource.change !== 'KEEP_SOURCE').length || null
         this.writePauseMs = event.data.rollout?.expected_write_pause_ms ?? this.writePauseMs
         return []
       case 'plan.ready':
@@ -172,15 +180,17 @@ export class ReportEngine {
         return []
       }
       case 'provision.resource': {
-        const out: Report[] = []
         if (event.data.state === 'failed') return this.first(phase, 'res:' + event.data.id) ? [make('r.prov.checkFail', 'failure', { name: event.data.name || event.data.key })] : []
-        if (event.data.state === 'done' && !this.provReady.has(event.data.id)) {
-          this.provReady.add(event.data.id)
-          out.push(make('r.prov.ready', 'discovery', {}, { series: 'ready', count: 1, countParam: 'n' }))
+        if (event.data.state !== 'done' || this.provReady.has(event.data.id)) return []
+        this.provReady.add(event.data.id)
+        const n = this.provReady.size
+        const m = this.provTotal
+        // 전체 수를 알면 "리소스 3/6 준비"(25·50·75를 지날 때만), 모르면 개수만 합쳐 말한다.
+        if (m && n <= m) {
+          const mark = this.crossed(phase, 'ready', (n / m) * 100)
+          return mark && n < m ? [make('r.prov.readyOf', 'milestone', { n, m }, { series: 'progress:' + phase })] : []
         }
-        const mark = this.crossed(phase, 'progress', event.progress ?? event.data.progress)
-        if (mark) out.push(make('r.prov.progress', 'milestone', { p: mark }, { series: 'progress:' + phase }))
-        return out
+        return [make('r.prov.ready', 'discovery', {}, { series: 'ready', count: 1, countParam: 'n' })]
       }
       case 'provision.check': {
         const { name, state, passed, total } = event.data
@@ -197,11 +207,16 @@ export class ReportEngine {
         }
         return []
       }
-      case 'data.progress': {
-        const percent = event.data.dump_percent
-        if (percent >= 100) return this.first(phase, 'copyDone') ? [make('r.data.copyDone', 'milestone', {}, { series: 'progress:' + phase })] : []
-        const mark = this.crossed(phase, 'copy', percent)
-        return mark ? [make('r.data.copy', 'milestone', { p: mark }, { series: 'progress:' + phase })] : []
+      case 'data.table': {
+        // 초기 복사 진행은 테이블 n/m으로만 말한다(25·50·75를 지날 때). 모두 복사되면 한 번 끝났다고 말한다.
+        const copied = event.data.state === 'copied' || event.data.state === 'matched'
+        this.tables.set(event.data.name, copied || (this.tables.get(event.data.name) ?? false))
+        const m = this.tables.size
+        const n = [...this.tables.values()].filter(Boolean).length
+        if (!copied || m === 0) return []
+        if (n === m) return this.first(phase, 'copyDone') ? [make('r.data.copyDone', 'milestone', {}, { series: 'progress:' + phase })] : []
+        const mark = this.crossed(phase, 'tables', (n / m) * 100)
+        return mark ? [make('r.data.tables', 'milestone', { n, m }, { series: 'progress:' + phase })] : []
       }
       case 'data.readiness':
         return event.data.ready && this.first(phase, 'lagZero') ? [make('r.data.lagZero', 'complete')] : []
@@ -242,7 +257,8 @@ export class ReportEngine {
         const { id, value, label, ok } = event.data
         const out: Report[] = []
         if (ok === false) out.push(make('r.cutover.fail', 'failure', { label: label || id }))
-        else if (/pause|delay/.test(id) && value) out.push(make('r.cutover.pause', 'milestone', { value }))
+        // 쓰기 중단(ms)은 성공 뒤 결과로만 온다: 결과가 오면 한 번 말한다.
+        else if (/pause|delay/.test(id) && value && this.first(phase, 'pause')) out.push(make('r.cutover.pause', 'milestone', { value }))
         if (event.status === 'done' && this.first(phase, 'done')) out.push(make('r.cutover.done', 'complete'))
         return out
       }

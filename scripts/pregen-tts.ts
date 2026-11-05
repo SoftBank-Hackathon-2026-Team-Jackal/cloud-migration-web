@@ -37,8 +37,8 @@ function linesFor(lang: VoiceLang): Set<string> {
   // 변수 없는 보고·명령 응답, 단계 이름이 들어간 "지금 어디야"
   for (const [key, text] of Object.entries(VOICE_MESSAGES[lang])) if ((key.startsWith('r.') || key.startsWith('c.')) && !text.includes('{')) lines.add(text)
   for (const stage of ['setup', 'analysis', 'rehearsal', 'planning', 'approval', 'provisioning', 'data', 'traffic', 'cutover']) lines.add(voiceText(lang, 's.stage', { stage: 'stage.' + stage }))
-  // 합쳐지는 보고("리소스 3개 더 발견")는 개수가 그때그때 달라서 1~8을 모두 만든다.
-  for (let n = 1; n <= 8; n++) for (const key of ['r.analysis.found.infrastructure', 'r.analysis.found.code', 'r.sandbox.fix', 'r.prov.ready'] as VoiceKey[]) lines.add(voiceText(lang, key, { n }))
+  // 합쳐지는 보고("수정 3건 적용")는 개수가 그때그때 달라서 1~8을 모두 만든다.
+  for (let n = 1; n <= 8; n++) for (const key of ['r.sandbox.fix', 'r.prov.ready'] as VoiceKey[]) lines.add(voiceText(lang, key, { n }))
   for (const p of [10, 50, 100]) { lines.add(voiceText(lang, 'r.traffic.step', { p })); if (p < 100) lines.add(voiceText(lang, 'r.traffic.gate', { p })) }
 
   // 목업 대본을 엔진에 흘린다(두 대상 × 샌드박스 시나리오들).

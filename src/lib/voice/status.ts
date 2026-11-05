@@ -11,8 +11,10 @@ export function statusLine(stage: string, state: MigrationState): StatusLine {
   const lines: StatusLine = [{ key: 's.stage', params: { stage: 'stage.' + stage } }]
   switch (stage) {
     case 'analysis': {
-      const n = state.analysis.findings.filter(finding => finding.stream !== 'code').length
-      if (n > 0 && !state.analysis.done) lines.push({ key: 's.analysis', params: { n } })
+      // 스캔(스트림) 단위: 진행이 100이 된 스캔 수 / 시작된 스캔 수
+      const streams = new Map<string, number>()
+      for (const finding of state.analysis.findings) streams.set(finding.stream, Math.max(streams.get(finding.stream) ?? 0, finding.progress ?? 0))
+      if (streams.size > 0 && !state.analysis.done) lines.push({ key: 's.analysis', params: { n: [...streams.values()].filter(value => value >= 100).length, m: streams.size } })
       break
     }
     case 'rehearsal': {
@@ -21,13 +23,16 @@ export function statusLine(stage: string, state: MigrationState): StatusLine {
       break
     }
     case 'provisioning': {
-      const total = state.provision.resources.length
-      if (total > 0) lines.push({ key: 's.provisioning', params: { done: state.provision.resources.filter(item => item.state === 'done').length, total } })
+      // m은 계획의 만들 리소스 수(원본 유지 제외). 모르면 받은 리소스 수.
+      const planned = state.plan.preview?.resources.filter(resource => resource.change !== 'KEEP_SOURCE').length
+      const done = state.provision.resources.filter(item => item.state === 'done').length
+      const m = planned && planned >= done ? planned : state.provision.resources.length
+      if (m > 0) lines.push({ key: 's.provisioning', params: { n: done, m } })
       break
     }
     case 'data': {
-      const p = state.data.current?.dump_percent
-      if (typeof p === 'number') lines.push({ key: 's.data', params: { p: Math.round(p) } })
+      const tables = state.data.tables
+      if (tables.length > 0) lines.push({ key: 's.data', params: { n: tables.filter(table => table.state === 'copied' || table.state === 'matched').length, m: tables.length } })
       break
     }
     case 'traffic': {

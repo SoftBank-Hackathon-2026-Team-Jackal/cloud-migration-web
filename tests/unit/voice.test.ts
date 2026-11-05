@@ -35,25 +35,31 @@ test('보고 문구: 한국어 보고는 명사형으로 짧게(존댓말 어미
   assert.equal(voiceText('en', 'r.error', { phase: 'phase.data_copy', code: 'X' }), 'Data error. X')
 })
 
-test('엔진: 발견은 합치고 진행은 25/50/75에서만, 완료는 한 번만', () => {
+test('엔진: 분석은 스캔 단위, 코드에서 아는 항목만, 개수·퍼센트를 지어내지 않는다', () => {
   const engine = new ReportEngine()
-  const queue = new ReportQueue()
-  const reports: Report[] = []
-  for (const [stream, p] of [['infrastructure', 10], ['infrastructure', 20], ['code', 30], ['infrastructure', 55], ['infrastructure', 60]] as const) {
-    for (const report of engine.fromEvent(finding(stream, p), 'analysis', 0)) { reports.push(report); queue.push(report) }
+  const said: string[] = []
+  const codeFinding = (key: string, progress: number) => ev({ type: 'analysis.finding', phase: 'analysis', status: 'running', progress, data: { id: key, stream: 'code', key, via: [], progress, message: '', detail: '' } })
+  for (const event of [finding('infrastructure', 30), codeFinding('database', 40), codeFinding('compose', 60), finding('infrastructure', 100), codeFinding('code-done', 100)]) {
+    for (const report of engine.fromEvent(event, 'analysis', 0)) said.push(renderReport(report, 'ko'))
   }
-  const progress = reports.filter(report => report.key === 'r.analysis.progress').map(report => report.params.p)
-  assert.deepEqual(progress, [25, 50])
-  // 합치기: 리소스 4개가 한 보고로
-  const infra = queue.peek().find(report => report.series === 'found:infrastructure')!
-  assert.equal(renderReport(infra, 'ko'), '리소스 4개 추가 발견')
+  assert.deepEqual(said, ['코드에서 DB 드라이버 확인', '코드에서 컨테이너 구성 확인', '인프라 스캔 완료', '코드 스캔 완료'])
   const done = ev({ type: 'analysis.done', phase: 'analysis', status: 'done', progress: 100, data: {} })
-  const complete = engine.fromEvent(done, 'analysis', 0)
-  assert.equal(renderReport(complete[0], 'ko'), '분석 완료. 리소스 4개, 코드 1건')
-  assert.equal(engine.fromEvent(done, 'analysis', 0).length, 0)
-  // 완료가 오면 밀린 진행·발견은 버린다.
-  queue.push(complete[0])
-  assert.deepEqual(queue.peek().map(report => report.key), ['r.analysis.done'])
+  assert.deepEqual(engine.fromEvent(done, 'analysis', 0).map(report => renderReport(report, 'ko')), ['분석 완료'])
+  assert.equal(engine.fromEvent(done, 'analysis', 0).length, 0, '완료는 한 번만')
+})
+
+test('엔진: 구축·데이터 진행은 n/m으로만(25·50·75를 지날 때)', () => {
+  const engine = new ReportEngine()
+  const resources = ['a', 'b', 'c', 'd', 'e', 'f'].map(id => ({ id, group: 'compute' as const, name: '', detail: '', size: '', change: 'CREATE' as const }))
+  engine.fromEvent(ev({ type: 'plan.preview', phase: 'planning', status: 'running', data: { plan_id: 'p', revision: 1, source: { provider: '', platform: '', location: '' }, target: { provider: '', platform: '', location: '' },
+    resources: [...resources, { id: 'keep', group: 'data', name: '', detail: '', size: '', change: 'KEEP_SOURCE' }], env_remap: [], security_rules: [], validation: { errors: [], warnings: [] } } }), 'planning', 0)
+  const prov = resources.flatMap(({ id }) => engine.fromEvent(ev({ type: 'provision.resource', phase: 'provisioning', status: 'running', data: { id, key: id, state: 'done', progress: 0 } }), 'provisioning', 0))
+  assert.deepEqual(prov.map(report => renderReport(report, 'ko')), ['리소스 2/6 준비', '리소스 3/6 준비', '리소스 5/6 준비'])
+  const table = (name: string, state: 'copying' | 'copied') => ev({ type: 'data.table', phase: 'data_copy', status: 'running', data: { name, rows_copied: 1, rows_total: 2, state } })
+  const said = [table('t1', 'copying'), table('t2', 'copying'), table('t3', 'copying'), table('t4', 'copying'), table('t1', 'copied'), table('t2', 'copied'), table('t3', 'copied'), table('t4', 'copied')]
+    .flatMap(event => engine.fromEvent(event, 'data', 0)).map(report => renderReport(report, 'ko'))
+  assert.deepEqual(said, ['테이블 1/4 복사', '테이블 2/4 복사', '테이블 3/4 복사', '초기 복사 완료. 변경분 따라잡는 중'])
+  for (const text of [...prov, ...said].map(String)) assert.ok(!/퍼센트|%/.test(text))
 })
 
 test('엔진: 화면 단계와 다른 phase의 이벤트는 실패만 말한다', () => {
@@ -100,20 +106,20 @@ test('DB 전환 사실: 쓰기 중단 초', () => {
 
 test('큐: 실패·결정 먼저, 최소 간격, 오래된 진행 버림, 잠깐 멈춤', () => {
   const queue = new ReportQueue({ gapMs: 3500, restMs: 1000, staleMs: 9000 })
-  const make = (key: Report['key'], kind: Report['kind'], at: number, series?: string): Report => ({ key, params: { p: at }, kind, phase: 'data_copy', at, series })
-  queue.push(make('r.data.copy', 'milestone', 0, 'progress:data_copy'))
+  const make = (key: Report['key'], kind: Report['kind'], at: number, series?: string): Report => ({ key, params: { n: at, m: 9 }, kind, phase: 'data_copy', at, series })
+  queue.push(make('r.data.tables', 'milestone', 0, 'progress:data_copy'))
   queue.push(make('r.data.preflightFail', 'failure', 0))
   assert.equal(queue.size, 1, '실패가 오면 같은 단계의 진행은 버린다')
   assert.equal(queue.next(0, true), null, '말하는 중에는 기다린다')
   assert.equal(queue.next(500, false)?.key, 'r.data.preflightFail')
   // 진행은 같은 series면 새 값으로 바뀐다(낡은 진행은 말하지 않는다).
-  queue.push(make('r.data.copy', 'milestone', 600, 'progress:data_copy'))
-  queue.push(make('r.data.copy', 'milestone', 700, 'progress:data_copy'))
+  queue.push(make('r.data.tables', 'milestone', 600, 'progress:data_copy'))
+  queue.push(make('r.data.tables', 'milestone', 700, 'progress:data_copy'))
   assert.equal(queue.size, 1)
   assert.equal(queue.next(1000, false), null, '간격(3.5초) 전에는 말하지 않는다')
-  assert.equal(queue.next(4100, false)?.params.p, 700)
+  assert.equal(queue.next(4100, false)?.params.n, 700)
   // 오래된 진행은 버린다.
-  queue.push(make('r.data.copy', 'milestone', 5000, 'progress:data_copy'))
+  queue.push(make('r.data.tables', 'milestone', 5000, 'progress:data_copy'))
   assert.equal(queue.next(20000, false), null)
   assert.equal(queue.size, 0)
   // 잠깐: 실패만 말한다.
@@ -158,8 +164,9 @@ test('화면 아래 안내: 화면이 받을 수 있는 동작만', () => {
 })
 
 test('지금 어디야: 단계 + 숫자 하나', () => {
-  const state = { ...initialState, data: { ...initialState.data, current: { step: 'dump' as const, rows: 1, total_rows: 2, lag_ms: null, writes_per_sec: 0, dump_percent: 42.4 } } }
-  assert.deepEqual(statusLine('data', state).map(part => voiceText('ko', part.key, part.params)), ['현재 데이터 이전 단계', '데이터 복사 42퍼센트'])
+  const tables = (['copied', 'matched', 'copying'] as const).map((state, index) => ({ name: 't' + index, rows_copied: 1, rows_total: 2, state }))
+  const state = { ...initialState, data: { ...initialState.data, tables } }
+  assert.deepEqual(statusLine('data', state).map(part => voiceText('ko', part.key, part.params)), ['현재 데이터 이전 단계', '테이블 2/3 복사'])
   assert.deepEqual(statusLine('planning', initialState).map(part => voiceText('en', part.key, part.params)), ['Now in planning'])
 })
 

@@ -102,7 +102,7 @@ try {
   await openChat()
 
   await waitHint('다음')
-  await waitChat(/분석 완료\. 리소스 \d+개/, '분석 완료 보고가 채팅에 남는다')
+  await waitChat(/분석 완료/, '분석 완료 보고가 채팅에 남는다')
   await say('다음')
   await page.locator('.sbx-split').waitFor()
   check(true, '"다음" → 샌드박스')
