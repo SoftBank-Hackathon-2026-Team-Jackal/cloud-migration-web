@@ -12,7 +12,7 @@ import type * as Ort from 'onnxruntime-node'
 export type TtsLang = 'ko' | 'en' | 'ja'
 export const VOICES = ['M1', 'M2', 'M3', 'M4', 'M5', 'F1', 'F2', 'F3', 'F4', 'F5'] as const
 export type Voice = typeof VOICES[number]
-/** 미리 녹음한 안내(scripts/generate_voice.py)와 같은 목소리 */
+/** 미리 녹음한 안내(scripts/generate-voice-clips.ts)와 같은 목소리 */
 export const DEFAULT_VOICE: Voice = 'M1'
 
 export function modelDir(): string {

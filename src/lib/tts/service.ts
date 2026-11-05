@@ -2,18 +2,20 @@
  * /api/tts와 미리 생성 스크립트가 함께 쓰는 합성 서비스(서버 전용).
  * - 모델은 프로세스에 한 번만 올린다(개발 서버의 HMR에도 유지되도록 globalThis에 둔다).
  * - 캐시: 메모리(최근 200개) → 디스크(TTS_CACHE_DIR, 기본 .tts-cache) → 합성. 키는 목소리·언어·설정·문장의 해시다.
+ * - 합성 직전에 spokenText(pronounce.ts)로 약어·코드·분수를 읽기 좋은 말로 바꾼다. 캐시 키도 바꾼 말로 만든다.
  * - 합성은 CPU를 다 쓰므로 한 번에 하나씩 한다(같은 문장을 동시에 요청하면 하나만 합성한다).
  */
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { spokenText } from './pronounce.ts'
 import { DEFAULT_VOICE, encodeWav, modelAvailable, modelDir, Supertonic, VOICES, type TtsLang, type Voice } from './supertonic.ts'
 
 export const TTS_LANGS: readonly TtsLang[] = ['ko', 'en', 'ja']
 export const MAX_TTS_CHARS = 400
 /** 품질·속도 설정(바꾸면 캐시 키가 바뀐다). TTS_STEPS로 조정할 수 있다. */
 const STEPS = Math.max(2, Math.min(16, Number(process.env.TTS_STEPS) || 8))
-// 미리 녹음한 안내(scripts/generate_voice.py: M1·8단계·속도 1.0)와 같은 목소리가 되도록 맞춘다.
+// 미리 녹음한 안내(scripts/generate-voice-clips.ts: M1·8단계·속도 1.0)와 같은 목소리가 되도록 맞춘다.
 const SPEED = 1.0
 const MEMORY_LIMIT = 200
 
@@ -65,8 +67,14 @@ function remember(key: string, audio: Buffer) {
   while (shared.memory.size > MEMORY_LIMIT) shared.memory.delete(shared.memory.keys().next().value as string)
 }
 
-export async function synthesizeCached(request: TtsRequest): Promise<TtsResult> {
+/** 실제로 합성할 요청(말로 다듬은 문장). 같은 말이 되는 화면 문구들은 캐시를 함께 쓴다. */
+export function spokenRequest(request: TtsRequest): TtsRequest {
+  return { ...request, text: spokenText(request.text, request.lang) }
+}
+
+export async function synthesizeCached(original: TtsRequest): Promise<TtsResult> {
   const started = performance.now()
+  const request = spokenRequest(original)
   const key = cacheKey(request)
   const hit = shared.memory.get(key)
   if (hit) { remember(key, hit); return { audio: hit, cache: 'memory', ms: performance.now() - started } }
