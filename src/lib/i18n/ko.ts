@@ -379,6 +379,8 @@ export const ko = {
   "agent.open": "열기",
   "agent.mic": "마이크",
   "agent.voice": "음성",
+  "agent.voiceLang": "음성 언어",
+  "agent.captions": "자막",
   "agent.on": "켜짐",
   "agent.off": "꺼짐",
   "agent.status.idle": "대기",

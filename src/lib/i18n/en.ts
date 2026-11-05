@@ -380,6 +380,8 @@ export const en: Record<MsgKey, string> = {
   "agent.open": "Open",
   "agent.mic": "Mic",
   "agent.voice": "Voice",
+  "agent.voiceLang": "Voice language",
+  "agent.captions": "Captions",
   "agent.on": "On",
   "agent.off": "Off",
   "agent.status.idle": "Idle",

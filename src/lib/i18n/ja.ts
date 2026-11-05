@@ -380,6 +380,8 @@ export const ja: Record<MsgKey, string> = {
   "agent.open": "開く",
   "agent.mic": "マイク",
   "agent.voice": "音声",
+  "agent.voiceLang": "音声の言語",
+  "agent.captions": "字幕",
   "agent.on": "オン",
   "agent.off": "オフ",
   "agent.status.idle": "待機中",

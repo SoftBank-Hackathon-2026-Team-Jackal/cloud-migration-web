@@ -75,3 +75,18 @@
 .voice-hints q { color: #3d3d3d; white-space: nowrap; quotes: '“' '”'; }
 .voice-hints-sep { color: #b0b0b0; }
 @media (max-width: 640px) { .voice-hints { display: none; } }
+
+/* 음성 언어 고르기(위젯을 열면 보인다): 말하고 알아듣는 언어. 화면 언어와 따로 정한다. */
+.jv-lang { display: flex; align-items: center; gap: 6px; padding: 0 16px 8px; color: var(--text-muted); font-size: 12px; }
+.jv-lang span { flex: none; margin-right: auto; }
+.jv-lang button { height: 26px; padding: 0 10px; border: 1px solid #e2e2e2; border-radius: 999px; background: transparent; color: #444; font: 500 12px/1 inherit; cursor: pointer; }
+.jv-lang button:hover { border-color: #bdbdbd; background: #fff; }
+.jv-lang button.is-active { border-color: #111; background: #111; color: #fff; }
+.jv-head-actions .jv-cc { width: 34px; font-size: 11px; font-weight: 700; letter-spacing: .02em; }
+
+/* 하단 떠 있는 자막: 자칼이 말하는 동안만 보인다(영화 자막처럼). 클릭을 막지 않는다. */
+.jv-caption { position: fixed; left: 50%; bottom: 18px; z-index: 60; max-width: min(880px, calc(100vw - 48px)); padding: 10px 22px; border-radius: 14px; background: rgba(17, 17, 17, .84); color: #fff; font-family: var(--font-sans); font-size: clamp(15px, 1.15vw, 22px); line-height: 1.45; text-align: center; opacity: 0; pointer-events: none; transform: translate(-50%, 8px); transition: opacity .25s, transform .25s; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.jv-caption.is-on { opacity: 1; transform: translate(-50%, 0); }
+.jv-caption p { margin: 0; text-wrap: balance; }
+.jv-caption .jv-caption-sub { margin-top: 4px; color: rgba(255, 255, 255, .72); font-size: .78em; }
+@media (prefers-reduced-motion: reduce) { .jv-caption { transition: none; } }
