@@ -10,9 +10,18 @@
 .flow-footer,.analysis-next-area{margin-bottom:var(--chrome-b)}
 .flow-toast{bottom:calc(24px + var(--chrome-b))}
 
-/* Jackal 위젯: 화면 가운데 오른쪽(본문 영역) → 언어 전환 바로 아래 빈 모서리 */
-.jv{top:52px;transform:none;flex-direction:column-reverse}
+/* Jackal 위젯: 언어 전환 왼쪽의 위쪽 줄(본문 오른쪽 가장자리의 칩·카드를 가리지 않게). 알약 → 패널 → 말 안내 순서. */
+.jv{top:10px;right:196px;transform:none;flex-direction:column}
+.jv-pill{order:0}.jv-panel{order:1}.jv>.voice-hints{order:2}
 .jv-panel{max-height:min(430px,calc(100dvh - 140px))}
+/* 말 안내는 평소에는 접어 두고, 호출했거나 위젯에 마우스를 올렸을 때만 보인다 */
+.jv>.voice-hints{display:none}
+.jv:hover>.voice-hints,.jv:focus-within>.voice-hints,.jv.is-awake>.voice-hints{display:flex}
+/* 호출 직후(띠링) 기다리는 동안 알약이 숨 쉬듯 반짝인다 */
+.jv.is-awake .jv-pill{border-color:#111;animation:jv-awake 1.2s ease-in-out infinite}
+@keyframes jv-awake{0%,100%{box-shadow:0 0 0 0 rgba(17,17,17,.18)}50%{box-shadow:0 0 0 6px rgba(17,17,17,0)}}
+@media(max-width:1180px){.jv{top:52px;right:14px}}
+@media(prefers-reduced-motion:reduce){.jv.is-awake .jv-pill{animation:none}}
 
 @media(max-width:620px){
   :root{--chrome-b:50px}

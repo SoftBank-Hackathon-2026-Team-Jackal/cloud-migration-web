@@ -16,6 +16,7 @@ import { voiceText, type VoiceKey, type VoiceLang, type VoiceParams } from './me
 import { approvalFactReports, cutoverFactReports, renderReport, ReportEngine, ReportQueue, type Report } from './reports'
 import { statusLine } from './status'
 import { prefetchTts } from './ttsClient'
+import { isQuestionLine, parseWake } from './wake'
 
 const PHASE_OF: Record<string, BackendPhase> = {
   analysis: 'analysis', rehearsal: 'build', planning: 'planning', approval: 'awaiting_approval',
@@ -24,13 +25,19 @@ const PHASE_OF: Record<string, BackendPhase> = {
 /** 호출어 없이 받는 명령의 최대 길이(정규화한 글자 수): 발표 중의 긴 설명이 명령으로 잡히지 않게 */
 const BARE_COMMAND_MAX = 14
 const CONFIRM_MS = 12000
+/** 자칼이 되묻거나 말을 시킨 뒤, 호출어 없이 짧은 대답("응", "승인해")을 받는 시간 */
+const ANSWER_MS = 15000
 const WAKE = /^(헤이(자칼|재칼|쟈칼)|heyjackal|ヘイジャッカル)/
 
-type Speak = (text: string) => void
+/** 자막은 두 번째 인자(화면 언어 문구)로 받는다. 음성 언어와 화면 언어가 같으면 비어 있다. */
+type Speak = (text: string, caption?: string) => void
 
-export function useStageVoice({ stage, lang, speaking, lastLine, speak, onSetupStart }: {
+export function useStageVoice({ stage, lang, captionLang, speaking, lastLine, speak, onSetupStart }: {
   stage: string
+  /** 말하고 알아듣는 언어(음성 언어) */
   lang: VoiceLang
+  /** 자막에 같이 보일 화면 언어. lang과 같으면 자막은 따로 만들지 않는다. */
+  captionLang: VoiceLang
   speaking: boolean
   /** 자칼이 마지막으로 한 말("다시 말해줘") */
   lastLine: string
@@ -41,15 +48,25 @@ export function useStageVoice({ stage, lang, speaking, lastLine, speak, onSetupS
   const { subscribe, state } = useMigration()
   const engine = useRef(new ReportEngine())
   const queue = useRef(new ReportQueue())
-  const live = useRef({ stage, lang, speaking, lastLine, speak, onSetupStart, state })
-  live.current = { stage, lang, speaking, lastLine, speak, onSetupStart, state }
+  const live = useRef({ stage, lang, captionLang, speaking, lastLine, speak, onSetupStart, state })
+  live.current = { stage, lang, captionLang, speaking, lastLine, speak, onSetupStart, state }
   const [paused, setPaused] = useState(false)
   const [confirming, setConfirming] = useState<CommandId | null>(null)
   const pending = useRef<{ command: CommandId; until: number } | null>(null)
   // 이 단계에서 승인 사실을 읽어 줬는지(읽어 준 뒤에만 "승인해"로 승인한다)
   const factsRead = useRef(false)
+  // 자칼이 마지막으로 되묻거나 말을 시킨 때(이 뒤 잠깐은 호출어 없이 짧은 대답을 받는다)
+  const questionAt = useRef(-Infinity)
 
-  const say = useCallback((key: VoiceKey, params?: VoiceParams) => live.current.speak(voiceText(live.current.lang, key, params)), [])
+  /** 말하기: 되묻는 문장이면 때를 적어 둔다. 자막 언어가 다르면 같은 문장의 화면 언어 문구를 같이 넘긴다. */
+  const speakLine = useCallback((text: string, caption?: string) => {
+    if (isQuestionLine(text)) questionAt.current = performance.now()
+    live.current.speak(text, caption)
+  }, [])
+  const say = useCallback((key: VoiceKey, params?: VoiceParams) => {
+    const { lang: spoken, captionLang: shown } = live.current
+    speakLine(voiceText(spoken, key, params), shown !== spoken ? voiceText(shown, key, params) : undefined)
+  }, [speakLine])
 
   // ---- 이벤트 → 보고 ----
   useEffect(() => subscribe(action => {
@@ -74,10 +91,11 @@ export function useStageVoice({ stage, lang, speaking, lastLine, speak, onSetupS
       const report = queue.current.next(performance.now(), live.current.speaking)
       if (!report) return
       if (report.key === 'r.approval.ask' || report.key === 'r.cutover.ask') factsRead.current = true
-      live.current.speak(renderReport(report, live.current.lang))
+      const { lang: spoken, captionLang: shown } = live.current
+      speakLine(renderReport(report, spoken), shown !== spoken ? renderReport(report, shown) : undefined)
     }, 250)
     return () => window.clearInterval(timer)
-  }, [])
+  }, [speakLine])
 
   const enqueueFacts = useCallback((reports: Report[]) => {
     for (const report of reports) {
@@ -110,8 +128,14 @@ export function useStageVoice({ stage, lang, speaking, lastLine, speak, onSetupS
     switch (command) {
       case 'pause': queue.current.paused = true; setPaused(true); say('c.paused'); return
       case 'resume': queue.current.paused = false; setPaused(false); say('c.resumed'); return
-      case 'repeat': { const line = live.current.lastLine; if (line) live.current.speak(line); else say('c.nothing'); return }
-      case 'status': live.current.speak(statusLine(current, live.current.state).map(part => voiceText(live.current.lang, part.key, part.params)).join(' ')); return
+      case 'repeat': { const line = live.current.lastLine; if (line) speakLine(line); else say('c.nothing'); return }
+      case 'status': {
+        const parts = statusLine(current, live.current.state)
+        const { lang: spoken, captionLang: shown } = live.current
+        const join = (language: VoiceLang) => parts.map(part => voiceText(language, part.key, part.params)).join(' ')
+        speakLine(join(spoken), shown !== spoken ? join(shown) : undefined)
+        return
+      }
       case 'confirm':
       case 'deny': {
         const waiting = pending.current
@@ -141,6 +165,7 @@ export function useStageVoice({ stage, lang, speaking, lastLine, speak, onSetupS
         // "다시 시도할까요?"(샌드박스 사람 검토)에 "좋아·진행해"로 답하면 다시 시도한다.
         const handler = voiceAction('next') ?? (current === 'rehearsal' ? voiceAction('retry') : null)
         if (!handler) { say('c.notYet'); return }
+        say('c.next')
         handler()
         return
       }
@@ -159,16 +184,23 @@ export function useStageVoice({ stage, lang, speaking, lastLine, speak, onSetupS
         handler()
       }
     }
-  }, [say, enqueueFacts, gateFacts])
+  }, [say, speakLine, enqueueFacts, gateFacts])
 
-  /** 들은 말(또는 입력창)을 명령으로 처리했으면 true. 아니면 질문·의도로 넘긴다. */
-  const handleUtterance = useCallback((text: string): boolean => {
+  /**
+   * 들은 말(또는 입력창)을 명령으로 처리했으면 true. 아니면 질문·의도로 넘긴다.
+   * 호출어("헤이 자칼")가 있거나, 호출 직후(armed)이거나, 자칼이 막 되물은 뒤 짧은 대답이거나, 되묻는 확인 중이거나,
+   * 설정 화면일 때만 명령으로 받는다. 발표 중의 일반 말이 명령으로 잡히지 않게 하려는 것이다.
+   */
+  const handleUtterance = useCallback((text: string, options?: { armed?: boolean }): boolean => {
     const current = live.current.stage
     if (current === 'intro') return false
     const said = normalizeUtterance(text)
-    const woke = WAKE.test(said)
+    const woke = WAKE.test(said) || parseWake(text).woke
     if (pending.current && performance.now() > pending.current.until) { pending.current = null; setConfirming(null) }
-    if (!woke && said.length > BARE_COMMAND_MAX) return false
+    const armed = options?.armed === true
+    const answering = pending.current !== null || performance.now() - questionAt.current < ANSWER_MS
+    if (!woke && !armed && !answering && current !== 'setup') return false
+    if (!woke && !armed && said.length > BARE_COMMAND_MAX) return false
     const command = matchCommand(text, { confirming: pending.current !== null })
     if (!command) return false
     if (current === 'setup' && command !== 'advance' && command !== 'status' && command !== 'repeat') return false

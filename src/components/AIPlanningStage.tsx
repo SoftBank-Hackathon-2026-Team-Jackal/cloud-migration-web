@@ -68,13 +68,14 @@ function Ledger({ preview, path, revealed, warnings, fixes }: { preview: PlanPre
         </div>)}</dl>
         <p>{t('plan.well.envNote')}</p>
       </section>}
-      {preview.security_rules.length > 0 && <section className="plan-well" aria-labelledby="plan-well-sec">
-        <h3 id="plan-well-sec">{t('plan.well.security')}</h3>
+      {/* 보안 규칙은 접어 둔다(오른쪽 칸이 세 개라 한 화면에 정보가 많다). 열면 전체 규칙이 나온다. */}
+      {preview.security_rules.length > 0 && <details className="plan-well plan-well-fold" aria-labelledby="plan-well-sec">
+        <summary><h3 id="plan-well-sec">{t('plan.well.security')}</h3></summary>
         <dl>{preview.security_rules.map((rule: SecurityRule, ruleIndex) => <div key={ruleIndex}>
           <dt>{rule.from === '*' && rule.to === '*' ? roleText(tOr, '*') : roleText(tOr, rule.from) + ' → ' + roleText(tOr, rule.to)}</dt>
           <dd>{rule.action === 'DENY' ? t('plan.rule.deny') : rule.port === null ? <span aria-label={t('plan.rule.allAria')}>*</span> : rule.port}</dd>
         </div>)}</dl>
-      </section>}
+      </details>}
       <section className="plan-well" aria-labelledby="plan-well-val">
         <h3 id="plan-well-val">{t('plan.well.validation')}</h3>
         <dl>

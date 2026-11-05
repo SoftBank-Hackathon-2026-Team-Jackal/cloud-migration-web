@@ -5,6 +5,8 @@ import voiceClips from './voiceClips.json'
 import { RECORDED_CLIPS } from './voiceRecorded'
 import { ttsAudio, warmTts } from './voice/ttsClient'
 import { spokenText } from './tts/pronounce'
+import { voiceText } from './voice/messages'
+import { parseWake } from './voice/wake'
 
 type RecognitionResult = { results: ArrayLike<ArrayLike<{ transcript: string }>> }
 type RecognitionError = { error: string }
@@ -30,6 +32,8 @@ function scriptLang(text: string, fallback: 'ko' | 'en' | 'ja'): 'ko' | 'en' | '
   if (/[\u3040-\u30ff]/.test(text)) return 'ja'
   return fallback
 }
+/** 호출 뒤 다음 한 마디를 기다리는 시간 */
+const AWAKE_MS = 10000
 const RECOGNITION_LANG = { ko: 'ko-KR', en: 'en-US', ja: 'ja-JP' } as const
 const normalize = (value: string) => value.toLowerCase().replace(/[\s.,!?~·]/g, '')
 const recorded = new Set(RECORDED_CLIPS)
@@ -47,7 +51,7 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
   /** 호출 뒤 첫 화면에서 들은 말(이전 의도). 있으면 onStart 대신 이쪽으로 보낸다. */
   onIntent?: (utterance: string) => void
   /** 시연 중 호출어 없이 받는 명령(예: 설정 화면의 "좋아, 시작하자"). 처리했으면 true. */
-  onCommand?: (utterance: string) => boolean
+  onCommand?: (utterance: string, options?: { armed?: boolean }) => boolean
   onAsk?: (question: string) => void
   /** 에이전트가 말한 모든 문구(미리 녹음한 보고·즉석 답변): 채팅 기록용 */
   onSay?: (text: string, meta: { kind: 'report' | 'answer'; source?: 'model' | 'local' }) => void
@@ -59,6 +63,12 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
   const [soundEnabled, setSoundEnabled] = useState(true)
   const [speaking, setSpeaking] = useState(false)
   const [heard, setHeard] = useState('')
+  // 호출어를 듣고 다음 한 마디를 기다리는 중(띠링 → "네, 말씀하세요" 뒤 10초)
+  const [awake, setAwake] = useState(false)
+  // 자막: 방금 한 말과 (음성 언어와 화면 언어가 다를 때) 화면 언어로 옮긴 같은 말
+  const [caption, setCaption] = useState('')
+  // 말한 횟수(같은 문장을 다시 말해도 자막이 다시 뜨게 한다)
+  const [utterance, setUtterance] = useState(0)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const recognitionRef = useRef<Recognition | null>(null)
@@ -69,7 +79,8 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
   const soundRef = useRef(true)
   const callbacksRef = useRef({ onWake, onStart, onIntent, onCommand, onAsk, onSay, onHeard })
   const askRef = useRef(ask)
-  const askUntil = useRef(0)
+  const awakeUntil = useRef(0)
+  const awakeTimer = useRef(0)
   const restartTimer = useRef(0)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const contextRef = useRef<AudioContext | null>(null)
@@ -114,6 +125,7 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
     return () => {
       micRef.current = false
       window.clearTimeout(restartTimer.current)
+      window.clearTimeout(awakeTimer.current)
       window.cancelAnimationFrame(frameRef.current)
       window.cancelAnimationFrame(micFrameRef.current)
       micStreamRef.current?.getTracks().forEach(track => track.stop())
@@ -125,6 +137,18 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
       }
       void contextRef.current?.close()
     }
+  }, [])
+
+  const disarm = useCallback(() => {
+    window.clearTimeout(awakeTimer.current)
+    awakeUntil.current = 0
+    setAwake(false)
+  }, [])
+  const arm = useCallback(() => {
+    window.clearTimeout(awakeTimer.current)
+    awakeUntil.current = Date.now() + AWAKE_MS
+    setAwake(true)
+    awakeTimer.current = window.setTimeout(() => { awakeUntil.current = 0; setAwake(false) }, AWAKE_MS)
   }, [])
 
   const listen = useCallback(() => {
@@ -154,6 +178,30 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
     }
     void contextRef.current.resume()
   }, [])
+
+  /** 호출어를 알아들었다는 신호: 짧은 두 음("띠링"). 소리를 끄면 내지 않는다. */
+  const chime = useCallback(() => {
+    if (!soundRef.current) return
+    armAudio()
+    const context = contextRef.current
+    if (!context) return
+    const start = context.currentTime
+    const tone = (frequency: number, delay: number, length: number) => {
+      const oscillator = context.createOscillator()
+      const gain = context.createGain()
+      oscillator.type = 'sine'
+      oscillator.frequency.value = frequency
+      gain.gain.setValueAtTime(0, start + delay)
+      gain.gain.linearRampToValueAtTime(.16, start + delay + .02)
+      gain.gain.exponentialRampToValueAtTime(.0001, start + delay + length)
+      oscillator.connect(gain)
+      gain.connect(context.destination)
+      oscillator.start(start + delay)
+      oscillator.stop(start + delay + length + .03)
+    }
+    tone(880, 0, .3)
+    tone(1318.5, .13, .42)
+  }, [armAudio])
 
   const stopAudio = useCallback(() => {
     window.cancelAnimationFrame(frameRef.current)
@@ -296,8 +344,10 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
     })
   }, [armAudio, listen, playFile, stopAudio, stopListening, synthesize])
 
-  const speak = useCallback((text: string, options?: { ripple?: boolean; onEnd?: () => void; lang?: 'ko' | 'en' | 'ja' }) => {
+  const speak = useCallback((text: string, options?: { ripple?: boolean; onEnd?: () => void; lang?: 'ko' | 'en' | 'ja'; caption?: string }) => {
     setMessage(text)
+    setCaption(options?.caption ?? '')
+    setUtterance(count => count + 1)
     callbacksRef.current.onSay?.(text, { kind: 'report' })
     utter(text, options?.lang ?? langRef.current, options)
   }, [utter])
@@ -307,6 +357,8 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
   /** 에이전트의 즉석 답변도 같은 목소리(서버 TTS)로 읽는다. */
   const speakText = useCallback((text: string, language: 'ko' | 'en' | 'ja' = 'ko', source?: 'model' | 'local') => {
     setMessage(text)
+    setCaption('')
+    setUtterance(count => count + 1)
     callbacksRef.current.onSay?.(text, { kind: 'answer', source })
     utter(text, language)
   }, [utter])
@@ -369,28 +421,29 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
       const transcript = event.results[0]?.[0]?.transcript ?? ''
       setHeard(transcript)
       const command = normalize(transcript)
-      if (callbacksRef.current.onCommand?.(transcript)) { callbacksRef.current.onHeard?.(transcript.trim()); return }
+      const { woke, rest } = parseWake(transcript)
+      // 호출 직후(띠링 → "네, 말씀하세요")에는 호출어 없이 말해도 다음 한 마디를 받는다.
+      const armedNow = askRef.current && Date.now() < awakeUntil.current
+      if (callbacksRef.current.onCommand?.(transcript, { armed: armedNow })) { disarm(); callbacksRef.current.onHeard?.(transcript.trim()); return }
       if (askRef.current && callbacksRef.current.onAsk) {
-        // 시연 중에는 호출어(헤이 자칼) 뒤의 말만 질문으로 받는다. 호출어만 말하면 10초 동안 다음 말을 질문으로 받는다.
-        const wake = transcript.match(/헤이\s*(자칼|재칼|쟈칼)\s*[,.!?]?\s*(.*)$/i) || transcript.match(/hey\s*jackal\s*[,.!?]?\s*(.*)$/i) || transcript.match(/ヘイ\s*ジャッカル\s*[、,.!?]?\s*(.*)$/i)
-        if (wake) {
-          const rest = (wake[wake.length - 1] || '').trim()
-          if (rest.length > 1) { askUntil.current = 0; callbacksRef.current.onHeard?.(rest); callbacksRef.current.onAsk(rest) }
-          else { askUntil.current = Date.now() + 10000; callbacksRef.current.onHeard?.('헤이 자칼'); speakRef.current?.(voiceClips.wake) }
-        } else if (Date.now() < askUntil.current) {
-          askUntil.current = 0
+        // 시연 중에는 호출어(헤이 자칼) 뒤의 말이나 호출 직후의 말만 질문으로 받는다.
+        // 호출어만 말하면 띠링 소리와 "네, 말씀하세요"로 답하고 10초 동안 다음 한 마디를 기다린다.
+        if (woke) {
+          if (rest.length > 1) { disarm(); callbacksRef.current.onHeard?.(rest); callbacksRef.current.onAsk(rest) }
+          else { arm(); chime(); callbacksRef.current.onHeard?.('헤이 자칼'); speakRef.current?.(voiceText(langRef.current, 'c.wake')) }
+        } else if (armedNow) {
+          disarm()
           callbacksRef.current.onHeard?.(transcript.trim())
           callbacksRef.current.onAsk(transcript.trim())
         }
         return
       }
       const intent = callbacksRef.current.onIntent
-      const wakeWord = transcript.match(/헤이\s*(?:자칼|재칼|쟈칼)\s*[,.!?]?\s*(.*)$/i) || transcript.match(/hey\s*jackal\s*[,.!?]?\s*(.*)$/i) || transcript.match(/ヘイ\s*ジャッカル\s*[、,.!?]?\s*(.*)$/i)
-      if (wakeWord) {
+      if (woke) {
+        chime()
         callbacksRef.current.onHeard?.('헤이 자칼')
         callbacksRef.current.onWake()
         // "헤이 자칼, AWS에 있는 …"처럼 한 번에 말하면 뒷부분을 의도로 받는다.
-        const rest = (wakeWord[1] || '').trim()
         if (intent && rest.length > 3) { callbacksRef.current.onHeard?.(rest); window.setTimeout(() => callbacksRef.current.onIntent?.(rest), 1400) }
       } else if (startedRef.current && intent && transcript.trim()) { callbacksRef.current.onHeard?.(transcript.trim()); intent(transcript.trim()) }
       else if (startedRef.current && /(마이그레이션|이전).*(시작|진행)/.test(command)) { callbacksRef.current.onHeard?.(transcript.trim()); callbacksRef.current.onStart() }
@@ -439,5 +492,5 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
     } else armAudio()
   }, [armAudio, stopAudio])
 
-  return { micEnabled, recognitionSupported, soundEnabled, speaking, heard, message, error, speak, speakText, toggleMic, toggleSound, armAudio, voiceLevel, voiceActive, micLevel }
+  return { micEnabled, recognitionSupported, soundEnabled, speaking, heard, message, caption, utterance, awake, chime, error, speak, speakText, toggleMic, toggleSound, armAudio, voiceLevel, voiceActive, micLevel }
 }
