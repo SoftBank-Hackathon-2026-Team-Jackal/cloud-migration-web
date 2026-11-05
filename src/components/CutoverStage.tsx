@@ -311,7 +311,8 @@ function VerifyLedger({ cutover, show, refused }: { cutover: MigrationState['cut
   return <section className="cx-card cx-verify" aria-label={t('cut.v.head')}>
     <h3>{t('cut.v.head')}<small>{t('cut.v.note')}</small></h3>
     <div className="cx-vgrid">
-      <table className="cx-table">
+      {/* 표가 카드보다 길어도 아래가 잘리지 않도록 스크롤 영역으로 감싼다 */}
+      <div className="cx-table-wrap"><table className="cx-table">
         <thead><tr><th>{t('cut.v.table')}</th><th>{t('cut.v.src')}</th><th>{t('cut.v.dst')}</th><th>{t('cut.v.sum')}</th></tr></thead>
         <tbody>{tables.map(table => <tr key={table.table} className={'is-' + table.checksum}>
           <td className="cx-mono">{table.table}</td>
@@ -319,7 +320,7 @@ function VerifyLedger({ cutover, show, refused }: { cutover: MigrationState['cut
           <td className="cx-mono">{table.target_rows === null ? <span className="cx-faint">{t('cut.v.replicating')}</span> : fmt(table.target_rows)}</td>
           <td className="cx-sum">{t(('cut.v.' + table.checksum) as MsgKey)}</td>
         </tr>)}</tbody>
-      </table>
+      </table></div>
       <div className="cx-totals">
         <div className="cx-ledger">
           {results.map(result => {
@@ -351,7 +352,7 @@ function Handover({ cutover, held }: { cutover: MigrationState['cutover']; held:
           <span className="cx-ck" aria-hidden="true">{state === 'done' ? '✓' : state === 'held' ? '–' : ''}</span>
           <strong>{t(('cutover.handover.' + entry.item) as MsgKey)}</strong>
           <span className="cx-lval"><i className="cx-state">{label}</i></span>
-          {(event?.detail ?? entry.detail) && <span className="cx-ev cx-mono">{event?.detail ?? entry.detail}</span>}
+          {(event?.detail ?? entry.detail) && <span className="cx-ev cx-mono" title={event?.detail ?? entry.detail}>{event?.detail ?? entry.detail}</span>}
         </div>
       })}
     </div>

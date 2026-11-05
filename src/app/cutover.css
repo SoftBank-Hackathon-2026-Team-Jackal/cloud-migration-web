@@ -54,8 +54,13 @@
 .cx-more>summary::after{content:"▾";margin-left:auto;color:var(--cx-faint)}
 .cx-more:not([open])>summary::after{transform:rotate(-90deg)}
 .cx-compare{display:grid;gap:5px;margin-top:8px}
-/* 낮은 화면(노트북·프로젝터)에서는 전제 조건 줄마다 붙는 증거 문구를 접어 한 화면에 들어오게 한다 */
-@media(max-height:900px){.cx-approve .cx-ev{display:none}}
+/* 낮은 화면(노트북·프로젝터)에서는 전제 조건·인계 항목마다 붙는 증거 문구와 검증 규칙 문구를 접어 한 화면에 들어오게 한다
+ * (증거 문구는 마우스를 올리면 title로 보인다). 통과한 뒤의 준비 상태 띠는 막대와 설명을 접는다. */
+@media(max-height:900px){
+  .cx-approve .cx-ev,.cx-hand .cx-ev{display:none}
+  .cx-trow em{display:none}
+  .cx-gauge.is-ok .cx-mbar,.cx-gauge.is-ok .cx-g-why{display:none}
+}
 .cx-cmp{display:grid;grid-template-columns:clamp(150px,11vw,250px) minmax(0,1fr) clamp(60px,4.5vw,100px);gap:10px;align-items:center;color:var(--cx-muted);font-size:calc(var(--cx-s) - 2px)}
 .cx-cmp-bar{position:relative;height:8px;border-radius:2px;background:#efefef;overflow:hidden}
 .cx-cmp-bar i{position:absolute;inset:0 auto 0 0;background:#c9c9c9}
@@ -172,6 +177,8 @@
 
 .cx-bottom{min-height:0;display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:clamp(10px,1vw,22px)}
 .cx-vgrid{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:clamp(14px,1.4vw,30px);margin-top:6px;overflow:hidden}
+.cx-table-wrap{min-width:0;min-height:0;overflow-y:auto;scrollbar-width:thin}
+.cx-table-wrap .cx-table th{position:sticky;top:0;background:#fff}
 .cx-table{width:100%;border-collapse:collapse;font-size:calc(var(--cx-s) - 1px)}
 .cx-table th{padding:0 0 4px;color:var(--cx-faint);font-size:calc(var(--cx-s) - 3px);font-weight:400;text-align:right}
 .cx-table th:first-child,.cx-table td:first-child{text-align:left}
