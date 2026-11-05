@@ -58,7 +58,13 @@ const run = name => new Promise(resolve => {
 })
 
 try {
-  const results = await Promise.all(suites.map(run))
+  // 한꺼번에 너무 많이 띄우면 노트북에서 페이지 로드가 시간 초과로 실패한다: 동시에 E2E_PARALLEL(기본 3)개까지만.
+  const limit = Math.max(1, Number(process.env.E2E_PARALLEL) || 3)
+  const queue = [...suites]
+  const results = []
+  await Promise.all(Array.from({ length: Math.min(limit, queue.length) }, async () => {
+    while (queue.length) results.push(await run(queue.shift()))
+  }))
   console.log(`\n요약 (${((Date.now() - started) / 1000).toFixed(1)}s, 목업 시계 ×${process.env.E2E_SPEED ?? '10'})`)
   for (const result of results) console.log(`  ${result.ok ? '✓' : '✗'} ${result.name} ${result.seconds}s`)
   process.exitCode = results.every(result => result.ok) ? 0 : 1
