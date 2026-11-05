@@ -1,4 +1,8 @@
+import { connKo } from './connections.ts'
+
 export const ko = {
+  // 연결 관리·이전 범위 선택(connections.ts)
+  ...connKo,
   "nav.back": "이전",
   "nav.backAria": "이전 단계로",
   "lang.aria": "언어 선택",
@@ -1277,11 +1281,8 @@ export const ko = {
   "setup2.online": "온라인 · {s}초 전",
   "setup2.offline": "오프라인 · {s}초 전",
   "setup2.srcTitle": "AWS · {account}",
-  "setup2.srcDetail": "{region} ({regionName}) · EKS {cluster}",
   "setup2.onpremTitle": "온프레미스 K3s",
-  "setup2.onpremDetail": "에이전트 {agent} · 기본 프로필 {profile}",
   "setup2.gcpTitle": "GCP GKE",
-  "setup2.gcpDetail": "{project} · {region} ({regionName}) · 기본 프로필 {profile}",
   "setup2.loading": "등록 정보를 불러오는 중…",
   "setup2.unavailable": "플랫폼 등록 정보를 불러오지 못했어요. 운영자에게 환경 등록을 요청해 주세요.",
   "setup2.code": "소스 코드",

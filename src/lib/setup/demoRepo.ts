@@ -14,7 +14,7 @@ export const DEMO_SCAN: RepoScan = {
     'src/server.ts', 'tsconfig.json',
   ],
   detections: [
-    { kind: 'runtime', name: 'Node.js 20 · TypeScript', evidence: 'package.json' },
+    { kind: 'runtime', name: 'Node.js 20', evidence: 'Dockerfile' },
     { kind: 'dockerfile', evidence: 'Dockerfile', stages: 2 },
     { kind: 'k8s', count: 4, evidence: 'k8s/' },
     { kind: 'postgres', evidence: 'pg' },

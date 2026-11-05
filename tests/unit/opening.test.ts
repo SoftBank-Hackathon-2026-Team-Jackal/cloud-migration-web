@@ -4,8 +4,9 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { RECORDED_CLIPS } from '../../src/lib/voiceRecorded.ts'
 import { isStartCommand, targetFromUtterance } from '../../src/lib/agent/intent.ts'
 import { classifyKey, crossCheck, parseEnvKeys } from '../../src/lib/setup/envFile.ts'
-import { detectStack, displayTree, scanPublicSource } from '../../src/lib/github/scan.ts'
-import { mockEnvironments, secondsSince } from '../../src/lib/setup/registry.ts'
+import { detectStack, displayTree, runtimeFromDockerfile, scanPublicSource } from '../../src/lib/github/scan.ts'
+import { createMockAgents, createMockConnections, resetMock } from '../../src/lib/connections/mock.ts'
+import { agentState } from '../../src/lib/connections/types.ts'
 import { ko } from '../../src/lib/i18n/ko.ts'
 import { en } from '../../src/lib/i18n/en.ts'
 import { ja } from '../../src/lib/i18n/ja.ts'
@@ -64,12 +65,23 @@ test('저장소 구성에서 런타임·Dockerfile·K8s·PostgreSQL·환경 변�
     '.env.example': 'PORT=8080\nDATABASE_URL=postgres://example\n# c\nJWT_SECRET=\n',
   })
   assert.deepEqual(result.detections.map(item => item.kind), ['runtime', 'dockerfile', 'k8s', 'postgres', 'env'])
-  assert.deepEqual(result.detections[0], { kind: 'runtime', name: 'Node.js 20 · TypeScript', evidence: 'package.json' })
+  assert.deepEqual(result.detections[0], { kind: 'runtime', name: 'Node.js 20', evidence: 'Dockerfile' })
+  // Dockerfile이 없으면 의존성 파일로 짐작하고, 언어(TypeScript) 이름은 붙이지 않는다
+  assert.deepEqual(detectStack(['package.json', 'tsconfig.json'], { 'package.json': JSON.stringify({ engines: { node: '20' }, devDependencies: { typescript: '^5' } }) }).detections[0],
+    { kind: 'runtime', name: 'Node.js 20', evidence: 'package.json' })
   assert.deepEqual(result.detections[1], { kind: 'dockerfile', evidence: 'Dockerfile', stages: 2 })
   assert.deepEqual(result.detections[2], { kind: 'k8s', count: 2, evidence: 'k8s/' })
   assert.deepEqual(result.env_keys, ['PORT', 'DATABASE_URL', 'JWT_SECRET'])
   // 탐지 결과에 파일 내용(예: 접속 문자열)이 섞이지 않는다
   assert.ok(!JSON.stringify(result).includes('postgres://example'))
+})
+
+test('Dockerfile 기반 이미지에서 런타임을 짐작한다', () => {
+  assert.equal(runtimeFromDockerfile('FROM golang:1.22 AS build\nFROM gcr.io/distroless/static'), 'Go 1.22')
+  assert.equal(runtimeFromDockerfile('FROM --platform=linux/amd64 python:3.12-slim'), 'Python 3.12')
+  assert.equal(runtimeFromDockerfile('FROM eclipse-temurin:21-jre'), 'Java 21')
+  assert.equal(runtimeFromDockerfile('FROM node:20 AS build\nFROM gcr.io/distroless/nodejs20'), 'Node.js 20')
+  assert.equal(runtimeFromDockerfile('FROM alpine:3.20'), null)
 })
 
 test('파일 목록은 상한까지만, node_modules는 빼고 보여 준다', () => {
@@ -103,11 +115,13 @@ test('스캔은 고정한 커밋의 트리와 구성 파일만 읽고 원문을 
   await assert.rejects(scanPublicSource({ token: 't', fetchImpl, apiBase: 'https://gh.test' }, 'octo/svc', 'main'))
 })
 
-test('등록 환경 목업은 [가정] 형태를 따른다', () => {
-  const env = mockEnvironments(Date.parse('2026-11-05T00:00:10Z'))
-  assert.equal(env.source.provider, 'AWS')
-  assert.equal(env.targets.onprem.status, 'online')
-  assert.equal(secondsSince(env.targets.onprem.last_heartbeat_at, Date.parse('2026-11-05T00:00:10Z')), 6)
+test('등록 환경 목업은 [가정] 통합 목록 형태를 따른다', async () => {
+  const now = Date.parse('2026-11-05T00:00:10Z')
+  resetMock(now)
+  const connections = await createMockConnections({ delayMs: 0, now: () => now }).listConnections()
+  assert.deepEqual(connections.map(item => [item.kind, item.status]), [['AWS_SOURCE', 'CONNECTED'], ['GCP_TARGET', 'CONNECTED']])
+  const agent = await createMockAgents({ now: () => now }).getAgent('office-seoul-01')
+  assert.equal(agentState(agent, Math.floor(now / 1000)), 'online')
 })
 
 test('자칼의 고정 문구는 한국어 사전과 녹음 목록이 같다(녹음 파일 이름으로 찾는다)', () => {

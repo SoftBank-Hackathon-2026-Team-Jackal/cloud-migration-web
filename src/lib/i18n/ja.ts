@@ -1,6 +1,9 @@
 import type { MsgKey } from './ko'
+import { connJa } from './connections.ts'
 
 export const ja: Record<MsgKey, string> = {
+  // 연결 관리·이전 범위 선택(connections.ts)
+  ...connJa,
   "nav.back": "戻る",
   "nav.backAria": "戻る（前の段階へ）",
   "lang.aria": "言語",
@@ -1279,11 +1282,8 @@ export const ja: Record<MsgKey, string> = {
   "setup2.online": "オンライン・{s}秒前",
   "setup2.offline": "オフライン・{s}秒前",
   "setup2.srcTitle": "AWS · {account}",
-  "setup2.srcDetail": "{region}（{regionName}）・EKS {cluster}",
   "setup2.onpremTitle": "オンプレミス K3s",
-  "setup2.onpremDetail": "エージェント {agent}・既定プロファイル {profile}",
   "setup2.gcpTitle": "GCP GKE",
-  "setup2.gcpDetail": "{project}・{region}（{regionName}）・既定プロファイル {profile}",
   "setup2.loading": "登録情報を読み込み中…",
   "setup2.unavailable": "登録情報を読み込めませんでした。運用担当者に環境の登録を依頼してください。",
   "setup2.code": "ソースコード",

@@ -1,6 +1,9 @@
 import type { MsgKey } from './ko'
+import { connEn } from './connections.ts'
 
 export const en: Record<MsgKey, string> = {
+  // 연결 관리·이전 범위 선택(connections.ts)
+  ...connEn,
   "nav.back": "Back",
   "nav.backAria": "Back to the previous step",
   "lang.aria": "Language",
@@ -1279,11 +1282,8 @@ export const en: Record<MsgKey, string> = {
   "setup2.online": "Online · {s}s ago",
   "setup2.offline": "Offline · {s}s ago",
   "setup2.srcTitle": "AWS · {account}",
-  "setup2.srcDetail": "{region} ({regionName}) · EKS {cluster}",
   "setup2.onpremTitle": "On-prem K3s",
-  "setup2.onpremDetail": "Agent {agent} · default profile {profile}",
   "setup2.gcpTitle": "GCP GKE",
-  "setup2.gcpDetail": "{project} · {region} ({regionName}) · default profile {profile}",
   "setup2.loading": "Loading registered environments…",
   "setup2.unavailable": "Couldn't load the registered environments. Ask an operator to register them.",
   "setup2.code": "Source code",
