@@ -153,7 +153,7 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
 
   const listen = useCallback(() => {
     if (!micRef.current || !activeRef.current || speakingRef.current || !recognitionRef.current) return
-    try { recognitionRef.current.start() } catch { /* 이미 듣는 중 */ }
+    try { recognitionRef.current.start(); console.info('[jackal-voice]', JSON.stringify({ event: 'listen-start', t: Date.now() % 100000 })) } catch { /* 이미 듣는 중 */ }
   }, [])
 
   const stopListening = useCallback(() => {
@@ -422,6 +422,8 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
       setHeard(transcript)
       const command = normalize(transcript)
       const { woke, rest } = parseWake(transcript)
+      // 시연 전 점검용: 음성 인식이 무엇으로 들었는지 콘솔에 남긴다(호출어를 못 알아들을 때 원인 확인).
+      console.info('[jackal-voice]', JSON.stringify({ lang: recognition.lang, heard: transcript, woke }))
       // 호출 직후(띠링 → "네, 말씀하세요")에는 호출어 없이 말해도 다음 한 마디를 받는다.
       const armedNow = askRef.current && Date.now() < awakeUntil.current
       if (callbacksRef.current.onCommand?.(transcript, { armed: armedNow })) { disarm(); callbacksRef.current.onHeard?.(transcript.trim()); return }
@@ -449,6 +451,7 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
       else if (startedRef.current && /(마이그레이션|이전).*(시작|진행)/.test(command)) { callbacksRef.current.onHeard?.(transcript.trim()); callbacksRef.current.onStart() }
     }
     recognition.onerror = event => {
+      console.info('[jackal-voice]', JSON.stringify({ event: 'error', error: event.error, t: Date.now() % 100000 }))
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
         micRef.current = false
         setMicEnabled(false)
@@ -458,6 +461,7 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
       }
     }
     recognition.onend = () => {
+      console.info('[jackal-voice]', JSON.stringify({ event: 'listen-end', speaking: speakingRef.current, t: Date.now() % 100000 }))
       if (micRef.current && activeRef.current && !speakingRef.current) restartTimer.current = window.setTimeout(listen, 350)
     }
     recognitionRef.current = recognition

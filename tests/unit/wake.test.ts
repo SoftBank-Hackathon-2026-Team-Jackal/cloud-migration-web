@@ -20,6 +20,19 @@ test('인식이 잘못 붙인 앞말이 있어도 호출어를 찾는다', () =>
   assert.equal(parseWake('네 헤이 자칼 승인해').rest, '승인해')
 })
 
+test('음성 인식이 다르게 받아 적은 호출어도 찾는다', () => {
+  for (const heard of ['헤이저 걸', '베이저 칼', '페이저 깔', '헤이 젓갈', '헤이즈 칼', '페이저 칼', 'Hey 젓갈', '헤이 저칼', '페이 자칼', '패이 자칼', '케이 자칼', '에이 자칼', '헤이 자 칼', '해이 잭칼', '헤이 자카', '하이 자칼', 'hey jakal', 'Hey, Jackal!', 'ヘー ジャカル', 'ハイ ジャッカー']) {
+    assert.equal(parseWake(heard).woke, true, heard)
+  }
+  assert.equal(parseWake('에이 자칼 다음으로').rest, '다음으로')
+})
+
+test('호출어와 비슷하지만 일반 말인 것은 깨우지 않는다', () => {
+  for (const heard of ['에이 칼로리 계산해', '헤이 갈까요', '하이 갈비', '이전 갈까', '자칼이 뭐야', '다음 칼럼 보여줘']) {
+    assert.equal(parseWake(heard).woke, false, heard)
+  }
+})
+
 test('호출어가 없으면 woke이 아니다', () => {
   assert.deepEqual(parseWake('다음 넘어가자'), { woke: false, rest: '다음 넘어가자' })
   assert.deepEqual(parseWake(''), { woke: false, rest: '' })
