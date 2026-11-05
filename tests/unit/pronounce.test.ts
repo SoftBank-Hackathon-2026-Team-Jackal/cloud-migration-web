@@ -50,7 +50,7 @@ const TABLE: Array<[SpeechLang, string, string]> = [
   ['ko', 'XYZ_FOO', '엑스 와이 지 에프 오 오'],
   ['ko', 'demo-postgres 검사 실패', '데모 포스트그레스 검사 실패'],
   ['ko', 'k3s-pod-net 검사 실패', '케이 쓰리 에스 파드 네트워크 검사 실패'],
-  ['en', 'on-prem K3s', 'on-prem K3s'],
+  ['en', 'on-prem K3s', 'on-prem kay three ess'],
   // 남은 약어는 철자로
   ['ko', '찾았어요: Node.js 20 서비스, Dockerfile, K8s 매니페스트 3개, PostgreSQL. 환경 변수 파일만 주세요.', '찾았어요: 노드 제이에스 20 서비스, 도커파일, 쿠버네티스 매니페스트 3개, 포스트그레스큐엘. 환경 변수 파일만 주세요.'],
   ['ko', '.env.example 확인', '환경 변수 예시 파일 확인'],
@@ -67,17 +67,26 @@ const TABLE: Array<[SpeechLang, string, string]> = [
   ['ja', 'AWS ap-northeast-2', 'エーダブリューエス ソウルリージョン'],
   ['ja', 'VPC', 'ブイピーシー'],
   // 영어: 대부분 그대로
-  ['en', 'Where should it go? On-prem K3s and GCP are connected.', 'Where should it go? On-prem K3s and GCP are connected.'],
+  ['en', 'Where should it go? On-prem K3s and GCP are connected.', 'Where should it go? On-prem kay three ess and gee see pee are connected.'],
   ['en', '2/6 resources ready', '2 of 6 resources ready'],
   ['en', 'Retest 12/12 passed. Ready to deploy', 'Retest 12 of 12 passed. Ready to deploy'],
   ['en', 'Write pause 12 ms', 'Write pause 12 milliseconds'],
   ['en', 'Traffic 50% sent', 'Traffic 50 percent sent'],
   ['en', 'Preflight failed. ROUTE_NOT_TUNNEL', 'Preflight failed. route outside the tunnel'],
-  ['en', 'Provisioning error. db_backup_retention_short', 'Provisioning error. DB backup retention too short'],
+  ['en', 'Provisioning error. db_backup_retention_short', 'Provisioning error. dee bee backup retention too short'],
   ['en', 'Provisioning error. QUOTA_EXCEEDED', 'Provisioning error. quota exceeded'],
   ['en', 'not in the .env.', 'not in the dot env.'],
-  ['en', 'AWS ap-northeast-2', 'AWS Seoul region'],
+  ['en', 'AWS ap-northeast-2', 'ay double you ess Seoul region'],
   ['en', 'PgBouncer p99', 'P G Bouncer P ninety-nine'],
+  // 영어 약어는 글자 이름으로 풀어 읽는다(합성기가 "aws"·"gke"를 한 낱말로 뭉개지 않게). 낱말처럼 읽는 것은 그대로 둔다.
+  ['en', 'Checking EKS, GKE and IAM.', 'Checking ee kay ess, gee kay ee and eye ay em.'],
+  ['en', 'Copy the S3 bucket and EC2 roles.', 'Copy the ess three bucket and ee see two roles.'],
+  ['en', 'TLS, DNS and MTU look fine.', 'tee ell ess, dee en ess and em tee you look fine.'],
+  ['en', 'WAL and CIDR are ready.', 'wall and cider are ready.'],
+  ['en', 'Say PAUSE or RESUME.', 'Say PAUSE or RESUME.'],
+  ['en', 'Env var in YAML or JSON.', 'Env var in yammel or jason.'],
+  ['en', 'Open GitHub, then WireGuard.', 'Open Git Hub, then Wire Guard.'],
+  ['en', 'PostgreSQL 16 on Kubernetes', 'Postgres cue ell 16 on Kubernetes'],
 ]
 
 test('말 다듬기: 입력 → 말(ko·ja·en 표)', () => {
@@ -151,7 +160,7 @@ for (const lang of ['ko', 'ja'] as const) {
   })
 }
 
-test('말 다듬기(en): 분수·단위는 말로, 나머지 문구는 그대로', () => {
+test('말 다듬기(en): 분수·단위는 말로, 약어는 글자 이름으로, 나머지 문구는 그대로', () => {
   const voice = VOICE_MESSAGES.en as Record<string, string>
   for (const text of Object.values(voice)) {
     const spoken = spokenText(fill(text, voice), 'en')
@@ -159,6 +168,9 @@ test('말 다듬기(en): 분수·단위는 말로, 나머지 문구는 그대로
     assert.ok(!/_/.test(spoken), spoken)
   }
   for (const [key, text] of Object.entries(en)) if (key.startsWith('open.jackal.') && !text.includes('/') && !text.includes('.env')) {
-    assert.equal(spokenText(text, 'en'), text.replace(/\s+/g, ' ').trim(), key)
+    const spoken = spokenText(text, 'en')
+    // 약어(AWS·GCP·K3s …)가 없는 문구는 그대로, 있으면 글자 이름으로 풀려 짧은 대문자 약어가 남지 않는다.
+    if (/(?<![A-Za-z0-9])[A-Z0-9]{2,6}(?![A-Za-z0-9])/.test(text)) assert.ok(!/(?<![A-Za-z0-9])[A-Z0-9]{2,3}(?![A-Za-z0-9])/.test(spoken), key + ': ' + spoken)
+    else assert.equal(spoken, text.replace(/\s+/g, ' ').trim(), key)
   }
 })

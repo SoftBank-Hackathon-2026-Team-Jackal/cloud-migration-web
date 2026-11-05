@@ -188,6 +188,27 @@ const TERM_KEYS = Object.keys(TERMS).sort((a, b) => b.length - a.length)
 const TERM_RE = new RegExp(`${NOT_LATIN_BEFORE}(${TERM_KEYS.map(escape).join('|')})${NOT_LATIN_AFTER}`, 'gi')
 const TERM_OF = new Map(TERM_KEYS.map(key => [key.toLowerCase(), TERMS[key]]))
 
+
+/**
+ * 영어 음성: 약어는 글자 이름으로 풀어 읽는다("AWS" → "ay double you ess"). 글자 단위 합성기가 "aws"·"gke"·"iam"을
+ * 한 낱말로 읽어 뭉개거나 "I AM"처럼 잘못 읽는 것을 막는다. 낱말처럼 읽는 약어(WAL·CIDR 등)와 제품 이름은 따로 정한다.
+ */
+const EN_LETTER: Record<string, string> = {
+  A: 'ay', B: 'bee', C: 'see', D: 'dee', E: 'ee', F: 'eff', G: 'gee', H: 'aitch', I: 'eye', J: 'jay', K: 'kay', L: 'ell', M: 'em',
+  N: 'en', O: 'oh', P: 'pee', Q: 'cue', R: 'ar', S: 'ess', T: 'tee', U: 'you', V: 'vee', W: 'double you', X: 'ex', Y: 'why', Z: 'zee',
+}
+const EN_DIGIT = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine']
+function spellEn(token: string): string {
+  return [...token.toUpperCase()].map(char => EN_LETTER[char] ?? (/\d/.test(char) ? EN_DIGIT[Number(char)] : char)).join(' ')
+}
+/** 영어 낱말이 아닌 약어에 쓰는 읽기(소문자 키). 여기 없고 약어 모양이면 글자 이름으로 푼다. */
+const EN_EXTRA: Record<string, string> = {
+  'postgresql': 'Postgres cue ell', 'k3s': 'kay three ess', 'k8s': 'Kubernetes', 'wal': 'wall', 'cidr': 'cider', 'yaml': 'yammel', 'json': 'jason',
+  'nginx': 'engine ex', 'github': 'Git Hub', 'wireguard': 'Wire Guard', 'kubectl': 'kube control', 'node.js': 'Node J S', 'next.js': 'Next J S', 'oidc': 'oh eye dee see',
+}
+/** 대문자 낱말(PAUSE·RESUME·READY)은 약어가 아니다: 네 글자 이상이면서 모음이 있으면 그대로 읽는다. */
+const isEnglishAcronym = (token: string) => /^[A-Z0-9]{2,6}$/.test(token) && /[A-Z]/.test(token) && (token.length <= 3 || !/[AEIOU]/.test(token) || token === 'OIDC' || token === 'SAML')
+
 /** 철자로 읽기: "VPC" → "브이 피 씨"(한국어는 띄어서, 일본어는 붙여서) */
 export function spell(token: string, lang: 'ko' | 'ja'): string {
   const letters = [...token.toUpperCase()].map(char => LETTERS[lang][char] ?? char)
@@ -268,7 +289,9 @@ export function spokenText(text: string, lang: SpeechLang): string {
   // 분수(n/m): IP·CIDR·LSN(0/3AF…)은 건드리지 않는다.
   value = value.replace(/(?<![\d.\w])(\d+)\s*\/\s*(\d+)(?![\d.\w])/g, (_, n: string, m: string) => ({ ko: `${m}개 중 ${n}개`, ja: `${m}個中${n}個`, en: `${n} of ${m}` }[lang]))
   if (lang === 'en') {
-    value = value.replace(TERM_RE, match => TERM_OF.get(match.toLowerCase())?.en ?? match)
+    value = value.replace(TERM_RE, match => TERM_OF.get(match.toLowerCase())?.en ?? EN_EXTRA[match.toLowerCase()] ?? (isEnglishAcronym(match) ? spellEn(match) : match))
+    // 사전에 없는 약어(EBS·ECR·HTTPS …)도 글자 이름으로 푼다. PAUSE·RESUME 같은 대문자 낱말과 소문자는 그대로 둔다.
+    value = value.replace(/(?<![A-Za-z0-9_.])[A-Z0-9]{2,6}(?![A-Za-z0-9_])/g, token => isEnglishAcronym(token) ? spellEn(token) : token)
     return value.replace(/\s+/g, ' ').trim()
   }
   // 용어 사전
