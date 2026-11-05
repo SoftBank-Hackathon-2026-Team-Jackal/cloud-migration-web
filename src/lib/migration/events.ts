@@ -399,10 +399,15 @@ export type TrafficSnapshotData = {
  * 단계 순서·이름·시간·방식·임계값은 모두 이벤트로 오고, 화면은 받은 순서대로 그린다(순서가 바뀌어도 화면은 그대로).
  */
 export type CutoverMethod = 'fast' | 'classic'
-/** 전환 전 조건 한 줄. id로 화면이 이름을 고르고(cut.pre.<id>), value·evidence는 서버 값을 그대로 보인다. */
-export type CutoverPrecondition = { id: string; state: 'pass' | 'wait' | 'fail'; value?: string; evidence?: string }
-/** 전환 단계 한 개(쓰기 중단 구간 안). id로 화면 문구(cut.step.<id>)를 고르고, ms는 리허설 중앙값(미리보기) 또는 실제 측정값이다. */
-export type CutoverStepPlan = { id: string; ms: number }
+/** 전환 전 조건 한 줄. id로 화면이 이름을 고르고(cut.pre.<id>), value·evidence는 서버 값을 그대로 보인다. proposal이면 백엔드에 아직 없는 제안안 조건이다. */
+export type CutoverPrecondition = { id: string; state: 'pass' | 'wait' | 'fail'; value?: string; evidence?: string; proposal?: boolean }
+/** 전환 구간: pre는 PAUSE 전에 미리 하는 일(예: 시퀀스 미리 올림), pause는 쓰기 중단 구간 안이다. */
+export type CutoverWindow = 'pre' | 'pause'
+/**
+ * 전환 단계 한 개. id로 화면 문구(cut.step.<id>)를 고르고, ms는 리허설 중앙값(미리보기) 또는 실제 측정값이다.
+ * start_ms는 쓰기 중단 구간 시작부터의 시각이다. 같은 시각에 시작하는 단계는 동시에 실행된다(겹친 막대). 없으면 앞 단계 뒤에 이어진다.
+ */
+export type CutoverStepPlan = { id: string; ms: number; start_ms?: number; window?: CutoverWindow }
 /** 두 번째 승인 전에 보내는 전환 계획: 조건 · 방식 · 예상 쓰기 중단 · 되돌리는 길 · 구성 · 인계 항목. */
 export type CutoverPlanData = {
   method: CutoverMethod
@@ -432,15 +437,21 @@ export type CutoverReadyData = {
  * 전환 단계. state: running(진행 중) → done(완료), verify는 단계가 끝나고 검증 구간에 들어갔다는 표시다.
  * [가정] id·ms·method·of·result: 단계 이름(id), 걸린 시간(ms), 방식, 전체 단계 수(of), 결과(fail이면 대상 확인 실패, revert는 원본으로 되돌리는 단계).
  */
-export type CutoverStepData = { n: number; state: 'running' | 'done' | 'verify'; id?: string; ms?: number; method?: CutoverMethod; of?: number; result?: 'ok' | 'fail' | 'revert' }
-/** 전환 결과: switched(대상이 주 DB) 또는 refused(전환 거부 → 원본 DB로 RESUME). held_requests는 PAUSE 동안 PgBouncer가 붙잡은 요청 수. */
+export type CutoverStepData = { n: number; state: 'running' | 'done' | 'verify'; id?: string; ms?: number; method?: CutoverMethod; of?: number; result?: 'ok' | 'fail' | 'revert'; window?: CutoverWindow }
+/**
+ * 전환 결과: switched(대상이 주 DB) 또는 refused(전환 거부 → 원본 DB로 RESUME).
+ * 백엔드는 끝났을 때 한 번 알려 준다: 통과면 write_pause_ms와 단계별 시간(steps_ms → steps), 중단이면 stderr 글(message)과 있으면 사유 코드(reason).
+ * 중단된 실행은 단계별 시간·쓰기 중단 시간이 없을 수 있다(null·생략). held_requests는 PAUSE 동안 PgBouncer가 붙잡은 요청 수 [가정].
+ */
 export type CutoverOutcomeData = {
   result: 'switched' | 'refused'
   reason?: string
+  message?: string
   active: 'source' | 'target'
-  pause_ms: number
-  held_requests: number
-  failed_requests: number
+  pause_ms: number | null
+  steps?: CutoverStepPlan[]
+  held_requests?: number
+  failed_requests?: number
   replication: { direction: 'reverse' | 'forward'; lag_ms: number | null }
 }
 /** RESUME 뒤, 전환 순간 스냅샷과 비교한 테이블별 결과. 거부면 target_rows가 없고 checksum은 skipped. */

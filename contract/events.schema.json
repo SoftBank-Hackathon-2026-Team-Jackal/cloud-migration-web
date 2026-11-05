@@ -796,6 +796,12 @@
             "fail",
             "revert"
           ]
+        },
+        "window": {
+          "enum": [
+            "pre",
+            "pause"
+          ]
         }
       },
       "required": [
@@ -3736,6 +3742,10 @@
               },
               "evidence": {
                 "type": "string"
+              },
+              "proposal": {
+                "type": "boolean",
+                "description": "백엔드에 아직 없는 제안안 조건"
               }
             },
             "required": [
@@ -3756,6 +3766,16 @@
               "ms": {
                 "type": "number",
                 "minimum": 0
+              },
+              "start_ms": {
+                "type": "number",
+                "minimum": 0
+              },
+              "window": {
+                "enum": [
+                  "pre",
+                  "pause"
+                ]
               }
             },
             "required": [
@@ -3929,7 +3949,10 @@
           ]
         },
         "pause_ms": {
-          "type": "number",
+          "type": [
+            "number",
+            "null"
+          ],
           "minimum": 0
         },
         "held_requests": {
@@ -3962,14 +3985,47 @@
             "lag_ms"
           ],
           "additionalProperties": false
+        },
+        "message": {
+          "type": "string",
+          "description": "중단 시 stderr 글"
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "ms": {
+                "type": "number",
+                "minimum": 0
+              },
+              "start_ms": {
+                "type": "number",
+                "minimum": 0
+              },
+              "window": {
+                "enum": [
+                  "pre",
+                  "pause"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "ms"
+            ],
+            "additionalProperties": false
+          },
+          "description": "통과 시 steps_ms"
         }
       },
       "required": [
         "result",
         "active",
         "pause_ms",
-        "held_requests",
-        "failed_requests",
         "replication"
       ],
       "additionalProperties": false,

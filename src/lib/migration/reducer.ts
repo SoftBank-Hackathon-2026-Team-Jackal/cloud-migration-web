@@ -250,8 +250,8 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
     case 'cutover.step': {
       const { n, state: stepState } = event.data
       const doneSteps = stepState === 'running' ? Math.max(next.cutover.doneSteps, n - 1) : Math.max(next.cutover.doneSteps, n)
-      // 걸린 시간(ms)이 있는 단계만 쓰기 중단 구간에 쌓는다(같은 n은 덮어쓴다).
-      const steps = stepState === 'verify' || event.data.ms === undefined
+      // 단계 상태를 n순으로 쌓는다(같은 n은 덮어쓴다). 걸린 시간은 끝에 cutover.outcome.steps로 온다.
+      const steps = stepState === 'verify'
         ? next.cutover.steps
         : [...next.cutover.steps.filter(step => step.n !== n), event.data].sort((a, b) => a.n - b.n)
       return { ...next, cutover: { ...next.cutover, doneSteps, steps, verifying: next.cutover.verifying || stepState === 'verify' } }

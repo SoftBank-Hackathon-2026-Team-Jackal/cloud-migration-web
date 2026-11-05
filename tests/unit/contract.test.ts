@@ -9,7 +9,7 @@ import { APPROVAL_ID, DATA_VERIFY_TOTAL_MS, PLAN_ID, TRAFFIC_READY_EVENTS, appro
 import { TrafficSim } from '../../src/lib/migration/trafficSim.ts'
 import { DATA_END_MS, DATA_READY_AT, dataTickAt, dataTimeline, type PreflightScenario } from '../../src/lib/migration/dataScript.ts'
 import { startRequestFor, type Target } from '../../src/lib/migration/events.ts'
-import { cutoverPlan, cutoverRun, type CutoverScenario } from '../../src/lib/migration/cutoverScript.ts'
+import { cutoverPlan, cutoverRefusesFirst, cutoverRun, pauseWindowMs, type CutoverScenario } from '../../src/lib/migration/cutoverScript.ts'
 import { DATA_TABLES } from '../../src/lib/migration/dataScript.ts'
 
 const read = (path: string) => JSON.parse(readFileSync(new URL('../../' + path, import.meta.url), 'utf8'))
@@ -54,38 +54,60 @@ test('목업 대본의 모든 이벤트가 스키마를 통과한다(target × a
   assert.ok(count > 250, '검증한 이벤트 수: ' + count)
 })
 
-test('DB 전환 대본(fast·classic·kill × 시도)이 스키마를 통과하고, 단계는 순서대로·결과는 시나리오대로다 [가정]', () => {
+test('DB 전환 대본(fast·classic·kill·tamper × 시도)이 스키마를 통과하고, 백엔드 PoC 순서·시간 보고 방식을 따른다 [가정]', () => {
+  const scenarios: CutoverScenario[] = ['fast', 'classic', 'kill', 'tamper', 'tamper-classic']
   for (const target of ['gcp', 'onprem'] as Target[]) {
-    for (const scenario of ['fast', 'classic', 'kill'] as CutoverScenario[]) {
-      assertValid(validateEvent, stamp({ type: 'cutover.plan', phase: 'verification', status: 'waiting', data: cutoverPlan(target, scenario) }), 'cutover.plan/' + scenario)
+    for (const scenario of scenarios) {
+      const plan = cutoverPlan(target, scenario)
+      assertValid(validateEvent, stamp({ type: 'cutover.plan', phase: 'verification', status: 'waiting', data: plan }), 'cutover.plan/' + scenario)
+      assert.ok(plan.preconditions.find(item => item.id === 'gate2')?.proposal, 'gate2 조건은 제안안')
       for (const attempt of [1, 2]) {
         const items = cutoverRun(scenario, attempt, DATA_TABLES)
         for (const { event } of items) assertValid(validateEvent, stamp(event), `cutover/${target}/${scenario}/${attempt}/${event.type}`)
         const sorted = [...items].sort((a, b) => a.after - b.after).map(item => item.event)
         const steps = sorted.flatMap(event => event.type === 'cutover.step' && event.data.state === 'done' ? [event.data] : [])
         assert.deepEqual(steps.map(step => step.n), steps.map((_, index) => index + 1), '단계 번호는 1부터 차례대로')
-        assert.ok(steps.every(step => step.of === steps.length && typeof step.ms === 'number'), '단계마다 전체 수와 ms')
+        assert.ok(steps.every(step => step.of === steps.length && step.ms === undefined), '실행 중에는 단계 상태만(시간은 결과로)')
         const outcome = sorted.find(event => event.type === 'cutover.outcome')
-        const refused = scenario === 'kill' && attempt === 1
-        assert.equal(outcome?.type === 'cutover.outcome' && outcome.data.result, refused ? 'refused' : 'switched')
-        if (outcome?.type === 'cutover.outcome') {
-          const total = steps.reduce((sum, step) => sum + (step.ms ?? 0), 0)
-          assert.ok(Math.abs(outcome.data.pause_ms - total) < 0.11, '쓰기 중단 = 단계 합')
-          assert.notEqual(outcome.status, 'failed', '거부는 이전 실패가 아니다(원본으로 RESUME)')
+        assert.ok(outcome?.type === 'cutover.outcome')
+        if (outcome?.type !== 'cutover.outcome') continue
+        const refused = cutoverRefusesFirst(scenario) && attempt === 1
+        assert.equal(outcome.data.result, refused ? 'refused' : 'switched')
+        assert.notEqual(outcome.status, 'failed', '거부는 이전 실패가 아니다(원본으로 RESUME)')
+        if (refused) {
+          assert.equal(outcome.data.pause_ms, null, '중단이면 write_pause_ms가 없다')
+          assert.equal(outcome.data.steps, undefined, '중단이면 단계별 시간이 없다')
+          assert.ok(outcome.data.message, '중단이면 stderr 글')
+        } else {
+          const timed = outcome.data.steps ?? []
+          assert.ok(timed.length > 0, '통과면 steps_ms')
+          assert.equal(outcome.data.pause_ms, pauseWindowMs(timed), '쓰기 중단 = PAUSE 구간 길이')
+          const method = steps[0]?.method
+          if (method === 'fast') {
+            assert.equal(timed.find(step => step.id === 'seq_raise')?.window, 'pre', 'fast는 시퀀스를 PAUSE 전에 올린다')
+            const off = timed.find(step => step.id === 'sub_off'), on = timed.find(step => step.id === 'reverse')
+            assert.ok(off && on && off.start_ms === on.start_ms, '정방향 disable과 역방향 enable은 동시에')
+            assert.ok(!timed.some(step => step.id === 'checksum'), 'fast는 PAUSE 안 체크섬이 없다')
+          } else {
+            assert.ok(timed.some(step => step.id === 'checksum' && step.window === 'pause'), 'classic은 PAUSE 안에서 체크섬')
+          }
         }
-        const ready = sorted.filter(event => event.type === 'cutover.ready')
-        assert.ok(ready.length > 0 && ready.every(event => event.type === 'cutover.ready' && event.data.attempt === attempt))
-        const firstStep = sorted.findIndex(event => event.type === 'cutover.step')
         const lastReady = sorted.map(event => event.type).lastIndexOf('cutover.ready')
-        assert.ok(lastReady < firstStep, '전환 가능 시점을 기다린 뒤 PAUSE')
+        assert.ok(lastReady < sorted.findIndex(event => event.type === 'cutover.step'), '전환 가능 시점을 기다린 뒤 PAUSE')
+        const tables = sorted.flatMap(event => event.type === 'cutover.verify' ? [event.data.checksum] : [])
+        const mismatched = scenario === 'tamper' && !refused
+        assert.equal(tables.includes('mismatch'), mismatched, 'fast 변조는 전환 뒤 검증에서만 불일치')
         const handover = sorted.flatMap(event => event.type === 'cutover.handover' ? [event.data.state] : [])
-        assert.ok(refused ? handover.every(state => state === 'held') : handover.includes('done'), '거부면 인계 보류')
+        assert.ok(refused || mismatched ? handover.every(state => state === 'held') : handover.includes('done'), '거부·불일치면 인계 보류')
       }
     }
   }
-  const classic = cutoverRun('classic', 1, DATA_TABLES).find(item => item.event.type === 'cutover.outcome')!.event
-  const fast = cutoverRun('fast', 1, DATA_TABLES).find(item => item.event.type === 'cutover.outcome')!.event
-  assert.ok(classic.type === 'cutover.outcome' && fast.type === 'cutover.outcome' && classic.data.pause_ms > 50 * fast.data.pause_ms, 'classic은 fast보다 훨씬 오래 멈춘다')
+  const pauseOf = (scenario: CutoverScenario) => { const event = cutoverRun(scenario, 1, DATA_TABLES).find(item => item.event.type === 'cutover.outcome')!.event; return event.type === 'cutover.outcome' ? event.data.pause_ms ?? 0 : 0 }
+  assert.ok(pauseOf('classic') > 50 * pauseOf('fast'), 'classic은 fast보다 훨씬 오래 멈춘다')
+  const tamper = cutoverRun('tamper-classic', 1, DATA_TABLES).find(item => item.event.type === 'cutover.outcome')!.event
+  assert.equal(tamper.type === 'cutover.outcome' && tamper.data.reason, 'CHECKSUM_MISMATCH', 'classic 변조는 사유 코드로 거부')
+  const kill = cutoverRun('kill', 1, DATA_TABLES).find(item => item.event.type === 'cutover.outcome')!.event
+  assert.equal(kill.type === 'cutover.outcome' && kill.data.reason, undefined, 'kill은 사유 코드 없이 stderr만')
 })
 
 test('사람 검토·이미지 불일치 데모 대본도 스키마를 통과한다', () => {

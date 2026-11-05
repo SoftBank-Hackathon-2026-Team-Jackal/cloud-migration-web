@@ -4,19 +4,19 @@ import { useEffect, useState } from 'react'
 import StageShell from './StageShell'
 import ProposalTag from './ProposalTag'
 import CutoverDiagram, { CutoverQueue, type CutoverTopology, type CutoverView } from './CutoverDiagram'
-import CutoverTimeline, { formatMs, useReplay, type TraceStep } from './CutoverTimeline'
+import CutoverTimeline, { formatMs, placeSteps, useReplay, type TraceStep } from './CutoverTimeline'
 import MigrationLanes from './MigrationLanes'
 import MigrationReport from './MigrationReport'
 import { ArriveMorph } from './ScreenFx'
 import { runTransition } from '../lib/particleHandoff'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
 import type { MigrationState } from '../lib/migration/reducer'
-import type { CutoverPlanData, CutoverStepData } from '../lib/migration/events'
+import type { CutoverPlanData, CutoverStepData, CutoverStepPlan } from '../lib/migration/events'
 import type { Target } from '../lib/stages'
 import { useT, useTOr, type MsgKey } from '../lib/i18n'
 
 type Phase = 'approve' | 'running' | 'done'
-type RunView = 'wait' | 'pause' | 'verify' | 'done' | 'refused'
+type RunView = 'wait' | 'pause' | 'verify' | 'done' | 'refused' | 'mismatch'
 
 /** 받은 쓰기 중단 구간(몇 ms)을 화면에서 느리게 다시 보여 주는 시간. 표현용 값이며 데이터가 아니다. */
 const REPLAY_MS = 3600
@@ -47,6 +47,8 @@ function runViewOf(cutover: MigrationState['cutover'], replaying: boolean): RunV
   if (cutover.steps.length === 0) return 'wait'
   if (!cutover.outcome || replaying) return 'pause'
   if (cutover.outcome.result === 'refused') return 'refused'
+  // fast는 PAUSE 안에서 체크섬을 보지 않으므로 변조(tamper)는 전환 뒤 검증에서 불일치로 드러난다.
+  if (cutover.tables.some(table => table.checksum === 'mismatch') || cutover.results.some(result => result.ok === false)) return 'mismatch'
   const tablesOk = cutover.tables.length > 0 && cutover.tables.every(table => table.checksum === 'match')
   const handoverDone = cutover.handover.length > 0 && cutover.handover.every(item => item.state === 'done')
   return tablesOk && handoverDone ? 'done' : 'verify'
@@ -75,7 +77,7 @@ function CutoverApproval({ onApprove }: { onApprove: () => void }) {
   const [checked, setChecked] = useState(false)
   const plan = state.cutover.plan
   const allPass = !plan || plan.preconditions.every(item => item.state === 'pass')
-  const preview: TraceStep[] = (plan?.steps ?? []).map(step => ({ key: step.id, label: stepLabel(tOr, step.id), ms: step.ms }))
+  const preview = timedTrace(plan?.steps ?? [], [], tOr)
   const topology = plan?.topology ?? EMPTY_TOPOLOGY
   const maxRehearsal = Math.max(1, ...(plan?.rehearsal.methods.map(item => item.pause_ms) ?? [1]))
   return <div className="cx-approve">
@@ -85,7 +87,7 @@ function CutoverApproval({ onApprove }: { onApprove: () => void }) {
         {plan ? <div className="cx-ledger">
           {plan.preconditions.map(item => <div key={item.id} className={'cx-lrow is-' + item.state}>
             <span className="cx-ck" aria-hidden="true">{item.state === 'pass' ? '✓' : item.state === 'fail' ? '✕' : ''}</span>
-            <strong>{tOr('cut.pre.' + item.id, item.id)}<em>{tOr('cut.pre.' + item.id + 'Sub')}</em></strong>
+            <strong>{tOr('cut.pre.' + item.id, item.id)}{item.proposal && <> <ProposalTag /></>}<em>{tOr('cut.pre.' + item.id + 'Sub')}</em></strong>
             <span className="cx-lval">{item.value && <b className="cx-mono">{item.value}</b>}<i className={'cx-pill is-' + item.state}>{t(('cut.state.' + item.state) as MsgKey)}</i></span>
             {item.evidence && <span className="cx-ev cx-mono">{item.evidence}</span>}
           </div>)}
@@ -136,7 +138,8 @@ function CutoverApproval({ onApprove }: { onApprove: () => void }) {
       </section>
       <section className="cx-card cx-preview" aria-label={t('cut.preview')}>
         <h3>{t('cut.preview')}<small>{t('cut.previewNote')}</small></h3>
-        {preview.length > 0 ? <CutoverTimeline steps={preview} ariaLabel={t('cut.preview')} /> : <p className="cx-quiet">{t('cut.plan.wait')}</p>}
+        <PreSteps steps={preview.pre} />
+        {preview.pause.length > 0 ? <CutoverTimeline steps={preview.pause} ariaLabel={t('cut.preview')} /> : <p className="cx-quiet">{t('cut.plan.wait')}</p>}
       </section>
     </div>
   </div>
@@ -144,14 +147,42 @@ function CutoverApproval({ onApprove }: { onApprove: () => void }) {
 
 /* ===================== 전환 실행 ===================== */
 
-function traceOf(steps: CutoverStepData[], tOr: ReturnType<typeof useTOr>, t: ReturnType<typeof useT>): TraceStep[] {
-  return steps.map(step => ({
-    key: step.n + '-' + (step.id ?? ''),
-    label: step.id ? stepLabel(tOr, step.id) : String(step.n),
-    ms: step.ms ?? 0,
-    result: step.result,
-    note: step.result === 'fail' ? '✕ ' + t('cut.step.fail') : undefined,
-  }))
+type Trace = { pre: TraceStep[]; pause: TraceStep[] }
+
+const toTrace = (step: CutoverStepPlan, events: CutoverStepData[], tOr: ReturnType<typeof useTOr>, index: number): TraceStep => ({
+  key: index + '-' + step.id, label: stepLabel(tOr, step.id), ms: step.ms, start: step.start_ms,
+  result: events.find(event => event.id === step.id)?.result,
+})
+
+/** 시간이 있는 단계들(계획의 미리보기 또는 통과 결과의 steps_ms)을 PAUSE 전·안으로 나눈다. */
+function timedTrace(steps: CutoverStepPlan[], events: CutoverStepData[], tOr: ReturnType<typeof useTOr>): Trace {
+  const all = steps.map((step, index) => ({ step, row: toTrace(step, events, tOr, index) }))
+  return { pre: all.filter(item => item.step.window === 'pre').map(item => item.row), pause: all.filter(item => item.step.window !== 'pre').map(item => item.row) }
+}
+
+/**
+ * 시간을 모를 때(실행 중 · 중단돼 단계별 시간이 없음)의 상태 줄. 계획의 단계를 뼈대로 두고, 받은 상태를 채우며,
+ * 계획에 없는 단계(예: 원본으로 되돌림)는 받은 순서대로 붙인다. 끝났는데 오지 않은 단계는 '실행 안 함'.
+ */
+function stateTrace(plan: CutoverPlanData | null, events: CutoverStepData[], finished: boolean, tOr: ReturnType<typeof useTOr>, t: ReturnType<typeof useT>): Trace {
+  const planned = plan?.steps ?? []
+  const ids = planned.map(step => ({ id: step.id, window: step.window }))
+  for (const event of events) if (event.id && !ids.some(item => item.id === event.id)) ids.push({ id: event.id, window: event.window })
+  const rows = ids.map((item, index) => {
+    const event = events.find(entry => entry.id === item.id)
+    const note = event
+      ? event.result === 'fail' ? '✕ ' + tOr('cut.step.' + item.id + 'Fail', t('cut.step.fail')) : event.result === 'revert' ? '↩ ' + t('cut.trace.revert') : '✓ ' + t('cut.trace.done')
+      : finished ? t('cut.trace.skip') : ''
+    return { window: item.window, row: { key: index + '-' + item.id, label: stepLabel(tOr, item.id), ms: null, result: event ? event.result : 'skip' as const, note } satisfies TraceStep }
+  })
+  return { pre: rows.filter(item => item.window === 'pre').map(item => item.row), pause: rows.filter(item => item.window !== 'pre').map(item => item.row) }
+}
+
+/** PAUSE 전에 미리 하는 단계(예: 시퀀스 미리 올림) 한 줄. */
+function PreSteps({ steps }: { steps: TraceStep[] }) {
+  const t = useT()
+  if (steps.length === 0) return null
+  return <p className="cx-pre"><b>{t('cut.pre.window')}</b>{steps.map(step => <span key={step.key}>{step.label} <span className="cx-mono">{step.ms === null ? step.note : formatMs(step.ms) + ' ms'}</span></span>)}</p>
 }
 
 function CutoverRun({ stale, onView, onRetry, onNext }: { stale: number; onView: (view: RunView) => void; onRetry: () => void; onNext: () => void }) {
@@ -165,25 +196,27 @@ function CutoverRun({ stale, onView, onRetry, onNext }: { stale: number; onView:
   const plan: CutoverPlanData | null = cutover.plan
   const topology = plan?.topology ?? EMPTY_TOPOLOGY
   const outcome = cutover.outcome
-  const trace = traceOf(cutover.steps, tOr, t)
-  const traceMs = trace.reduce((sum, step) => sum + step.ms, 0)
-  // 결과(outcome)가 오면 받은 단계들을 느리게 다시 보여 준다. 그 전에는 PAUSE 중으로 둔다.
+  // 단계별 시간은 통과했을 때 결과(outcome.steps)로 한 번에 온다. 그 전·중단이면 단계 상태만 보인다.
+  const timed = !!outcome?.steps?.length
+  const trace: Trace = timed ? timedTrace(outcome!.steps!, cutover.steps, tOr) : stateTrace(plan, cutover.steps, !!outcome, tOr, t)
+  const spans = placeSteps(trace.pause)
+  const traceMs = timed ? Math.max(0, ...spans.map(span => span.to)) : 0
+  // 결과가 오면 받은 단계 시간을 느리게 다시 보여 준다(시간이 없으면 바로 끝).
   const { progress, finished, speed } = useReplay(traceMs, outcome ? cutover.attempt + '-' + outcome.result : null, REPLAY_MS)
   const view = runViewOf(cutover, !!outcome && !finished)
   const stage: 'wait' | 'pause' | 'after' = view === 'wait' ? 'wait' : view === 'pause' ? 'pause' : 'after'
   const refused = view === 'refused'
   const method = cutover.steps.find(step => step.method)?.method ?? plan?.method
 
-  // 재생이 실패 단계에 닿으면 대상 DB를 빨갛게.
-  let reached = 0
-  const failSeen = trace.some(step => { const from = reached; reached += step.ms; return step.result === 'fail' && progress >= from })
+  // 대상 확인이 실패한 단계가 오면 대상 DB를 빨갛게.
+  const failSeen = cutover.steps.some(step => step.result === 'fail')
   const lag = outcome?.replication.lag_ms ?? null
   const diagram: CutoverView = stage === 'after'
     ? refused
       ? { active: 'source', paused: false, forward: true, reverse: false, lag: null, failedTarget: true, settled: false }
       : { active: 'target', paused: false, forward: false, reverse: true, lag: lag === null ? null : lag + ' ms', failedTarget: false, settled: view === 'done' }
     : { active: 'source', paused: stage === 'pause', forward: true, reverse: false, lag: null, failedTarget: failSeen, settled: false }
-  const shownMs = stage === 'after' ? outcome?.pause_ms ?? traceMs : stage === 'pause' ? progress : null
+  const shownMs = stage === 'after' ? outcome?.pause_ms ?? null : stage === 'pause' && timed ? progress : null
   const dest = refused || stage !== 'after' ? topology.source_db : topology.target_db
 
   const finishedOk = view === 'done' && state.status === 'done'
@@ -196,17 +229,18 @@ function CutoverRun({ stale, onView, onRetry, onNext }: { stale: number; onView:
         <div className="cx-hero-top">
           <div>
             <h3>{t('cut.pause.head')}{method && <small className="cx-inline">{t(('cut.method.' + method) as MsgKey)}</small>}</h3>
-            {outcome && <p className="cx-slow cx-mono">{t('cut.pause.slow', { x: speed })}</p>}
+            {timed ? <p className="cx-slow cx-mono">{t('cut.pause.slow', { x: speed })}</p> : <p className="cx-slow">{outcome ? t('cut.trace.noTiming') : t('cut.trace.later')}</p>}
           </div>
           <div className={'cx-big' + (stage === 'after' ? (refused ? ' is-neg' : ' is-pass') : '')} role="status">
             <small>{stage === 'after' ? t(refused ? 'cut.pause.refused' : 'cut.pause.pass') : stage === 'pause' ? t('cut.pause.holding') : t('cut.pause.idle')}</small>
-            <b className="cx-mono">{shownMs === null ? '—' : formatMs(shownMs)}<span>ms</span></b>
+            <b className="cx-mono">{shownMs === null ? '—' : <>{formatMs(shownMs)}<span>ms</span></>}</b>
           </div>
         </div>
-        {trace.length > 0
-          ? <CutoverTimeline steps={trace} progress={outcome ? progress : 0} ariaLabel={t('cut.pause.head')} />
-          : plan ? <CutoverTimeline className="is-ghost" steps={plan.steps.map(step => ({ key: step.id, label: stepLabel(tOr, step.id), ms: step.ms }))} progress={0} ariaLabel={t('cut.preview')} /> : <div className="cx-trace" />}
-        <CutoverQueue mode={stage === 'pause' ? 'hold' : stage === 'after' ? 'flush' : 'flow'} held={outcome && stage !== 'wait' ? Math.round(outcome.held_requests * (stage === 'pause' ? Math.min(1, progress / (traceMs || 1)) : 1)) : 0}
+        <PreSteps steps={trace.pre} />
+        {trace.pause.length > 0
+          ? <CutoverTimeline className={stage === 'wait' ? 'is-ghost' : ''} steps={trace.pause} progress={timed ? progress : null} ariaLabel={t('cut.pause.head')} />
+          : <div className="cx-trace" />}
+        <CutoverQueue mode={stage === 'pause' ? 'hold' : stage === 'after' ? 'flush' : 'flow'} held={outcome && stage !== 'wait' ? Math.round((outcome.held_requests ?? 0) * (stage === 'pause' && timed ? Math.min(1, progress / (traceMs || 1)) : 1)) : 0}
           failed={outcome?.failed_requests ?? 0} pooler={topology.pooler} dest={dest} ariaLabel={t('cut.q.app')} />
       </section>
       <section className="cx-card" aria-label={t('cut.d.head')}>
@@ -217,13 +251,13 @@ function CutoverRun({ stale, onView, onRetry, onNext }: { stale: number; onView:
 
     <div className="cx-bottom">
       <VerifyLedger cutover={cutover} show={stage === 'after'} refused={refused} />
-      <Handover cutover={cutover} refused={refused} />
+      <Handover cutover={cutover} held={refused ? 'refused' : view === 'mismatch' ? 'mismatch' : null} />
     </div>
 
     <div className="cx-foot">
       <MigrationLanes stage="cutover" />
       <div className="flow-footer cx-go">
-        <small>{refused ? t('cut.foot.refused') : finishedOk ? t('cut.foot.done') : stage === 'after' ? t('cutover.foot.verify') : t('cutover.foot.running')}</small>
+        <small>{refused ? t('cut.foot.refused') : view === 'mismatch' ? t('cut.foot.mismatch') : finishedOk ? t('cut.foot.done') : stage === 'after' ? t('cutover.foot.verify') : t('cutover.foot.running')}</small>
         {refused
           ? <button type="button" className="flow-primary" onClick={onRetry}>{t('cut.retry')} <span aria-hidden="true">→</span></button>
           : <button type="button" className="flow-primary" disabled={!finishedOk} onClick={onNext}>{t('cutover.next')} <span aria-hidden="true">→</span></button>}
@@ -260,8 +294,9 @@ function VerifyLedger({ cutover, show, refused }: { cutover: MigrationState['cut
   const mismatch = tables.some(table => table.checksum === 'mismatch') || results.some(result => result.ok === false)
   const reason = cutover.outcome?.reason
   const verdict = refused
-    ? { cls: 'is-neg', text: t('cut.v.refused', { reason: reason ? tOr('cut.reason.' + reason, reason) : '—' }) }
-    : mismatch ? { cls: 'is-neg', text: t('cut.v.bad') }
+    // 사유 코드가 오면 그 문구, 없으면 일반 거부 문구
+    ? { cls: 'is-neg', text: reason ? t('cut.v.refused', { reason: tOr('cut.reason.' + reason, reason) }) : t('cut.v.refusedGeneric') }
+    : mismatch ? { cls: 'is-neg', text: t('cut.v.bad', { n: tables.filter(table => table.checksum === 'mismatch').length }) }
     : matched && results.length > 0 ? { cls: 'is-pass', text: t('cut.v.pass', { n: tables.length }) }
     : { cls: '', text: t('cut.v.wait') }
   const fmt = (value: number | null) => (value === null ? '' : value.toLocaleString())
@@ -287,18 +322,18 @@ function VerifyLedger({ cutover, show, refused }: { cutover: MigrationState['cut
             </div>
           })}
         </div>
-        <p className={'cx-verdict ' + verdict.cls} role="status">{verdict.text}</p>
+        <p className={'cx-verdict ' + verdict.cls} role="status">{verdict.text}{refused && cutover.outcome?.message && <span className="cx-abort cx-mono" title={cutover.outcome.message}>{cutover.outcome.message}</span>}</p>
       </div>
     </div>
   </section>
 }
 
-function Handover({ cutover, refused }: { cutover: MigrationState['cutover']; refused: boolean }) {
+function Handover({ cutover, held }: { cutover: MigrationState['cutover']; held: 'refused' | 'mismatch' | null }) {
   const t = useT()
   // 항목·순서는 전환 계획이 정하고, 상태는 cutover.handover 이벤트가 알려 준다(계획이 없으면 받은 순서).
   const items = cutover.plan?.handover ?? cutover.handover.map(item => ({ item: item.item, detail: item.detail }))
   return <section className="cx-card cx-hand" aria-label={t('cutover.handover.title')}>
-    <h3>{t('cutover.handover.title')} <ProposalTag /><small>{refused ? t('cut.h.heldNote') : t('cut.h.after')}</small></h3>
+    <h3>{t('cutover.handover.title')} <ProposalTag /><small>{held === 'refused' ? t('cut.h.heldNote') : held === 'mismatch' ? t('cut.h.heldMismatch') : t('cut.h.after')}</small></h3>
     <div className="cx-ledger">
       {items.map(entry => {
         const event = cutover.handover.find(item => item.item === entry.item)

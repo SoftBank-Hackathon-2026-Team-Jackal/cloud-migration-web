@@ -110,7 +110,7 @@
 .cx-trace.is-ghost{opacity:.55}
 
 /* ---------- 전환 실행 ---------- */
-.cx-run{flex:1;min-height:0;display:grid;grid-template-rows:auto minmax(0,1.45fr) minmax(0,1fr) auto;gap:clamp(8px,1.2vh,18px)}
+.cx-run{flex:1;min-height:0;display:grid;grid-template-rows:auto minmax(0,1.6fr) minmax(0,1fr) auto;gap:clamp(8px,1.2vh,18px)}
 .cx-gauge{display:grid;grid-template-columns:clamp(160px,12vw,260px) repeat(3,minmax(0,1fr)) minmax(0,1.3fr);gap:clamp(12px,1.4vw,36px);align-items:center}
 .cx-g-state{display:flex;align-items:center;gap:10px;font-size:var(--cx-s)}
 .cx-dot{width:10px;height:10px;border-radius:50%;background:#c8c8c8}
@@ -138,7 +138,7 @@
 .cx-big.is-neg small{color:var(--cx-neg-ink)}
 
 /* 요청 줄: 앱 → PgBouncer(PAUSE면 줄을 섬) → DB */
-.cx-queue{position:relative;overflow:hidden;flex:none;height:clamp(46px,6vh,130px);margin-top:2px;border-top:1px solid var(--cx-rule)}
+.cx-queue{position:relative;overflow:hidden;flex:none;height:clamp(40px,5vh,130px);margin-top:2px;border-top:1px solid var(--cx-rule)}
 .cx-q-from,.cx-q-to{position:absolute;top:6px;color:var(--cx-muted);font-size:calc(var(--cx-s) - 3px)}
 .cx-q-from{left:0}
 .cx-q-to{right:0}
@@ -211,3 +211,14 @@
   .cx-foot{grid-template-columns:1fr}
 }
 .cx-grow>.cx-rb{flex:1;align-content:space-evenly}
+/* 동시 실행(정방향 disable ∥ 역방향 enable) 표시 · 시간 모르는 상태 줄 · PAUSE 전 단계 */
+.cx-trace-par{stroke:var(--cx-gold);stroke-width:1.5}
+.cx-trace-row.is-state .cx-trace-ms{fill:var(--cx-ink)}
+.cx-trace-row.is-state.is-fail .cx-trace-ms{fill:var(--cx-neg)}
+.cx-trace-row.is-state.is-revert .cx-trace-ms{fill:var(--cx-muted)}
+.cx-trace-row.is-skip .cx-trace-label,.cx-trace-row.is-skip .cx-trace-ms{fill:var(--cx-faint)}
+.cx-pre{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px;margin-top:6px;color:var(--cx-muted);font-size:calc(var(--cx-s) - 2px)}
+.cx-pre b{color:var(--cx-ink);font-weight:600}
+.cx-pre .cx-mono{color:var(--cx-ink)}
+.cx-abort{display:block;margin:4px 0 0;color:var(--cx-neg-ink);font-size:calc(var(--cx-s) - 2px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cx-lrow strong .proposal-tag{display:inline-block;margin:0 2px;padding:0 6px;line-height:1.5;font-size:10px;vertical-align:1px}
