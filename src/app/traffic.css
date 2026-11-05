@@ -1,7 +1,7 @@
 /* ===== 트래픽 이전: 단계 카드 · 경로 · 게이트 · 실행 기록 =====
  * 무채색 위주. 금색은 통과 순간(판정 안내·완료한 대상)에만, 빨강은 실패에만 쓴다.
  * 글자 크기는 vw·vh를 함께 써서 1536×860에서 읽히고 2000×1590에서 커진다. */
-.traffic-stage{--tr-ink:#0a0a0a;--tr-muted:#6b6b6b;--tr-faint:#a3a3a3;--tr-border:#e6e6e6;--tr-rule:#efefef;--tr-gold:#b08a2e;--tr-gold-bg:#f6eedb;--tr-gold-ink:#6b5113;--tr-neg:#c4242a;--tr-neg-bg:#ffedea;--tr-neg-ink:#831c1e;--tr-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--tr-s:clamp(11px,calc(.35vw + .55vh),16px)}
+.traffic-stage{--tr-ink:#0a0a0a;--tr-muted:#6b6b6b;--tr-faint:#a3a3a3;--tr-border:#e6e6e6;--tr-rule:#efefef;--tr-gold:#b08a2e;--tr-gold-bg:#f6eedb;--tr-gold-ink:#6b5113;--tr-neg:#c4242a;--tr-neg-bg:#ffedea;--tr-neg-ink:#831c1e;--tr-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--tr-s:clamp(12px,calc(.35vw + .55vh),16px)}
 .traffic-stage .flow-head{max-width:none}
 .traffic-stage .flow-body{margin-top:clamp(10px,1.6vh,22px)}
 @media(max-height:900px){.traffic-stage .flow-head>p{display:none}.traffic-stage .flow-rule{margin-top:8px}}
@@ -13,7 +13,8 @@
 .traffic-card{position:relative;overflow:hidden;display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"w ratio chip" "w m chip";gap:3px 14px;align-items:center;padding:clamp(9px,1.3vh,20px) clamp(12px,1vw,22px);border:1px solid var(--tr-border);border-radius:12px;background:#fff;transition:border-color .4s,opacity .4s}
 .traffic-card-w{grid-area:w;font-size:clamp(24px,calc(1vw + 1.3vh),44px);font-weight:700;letter-spacing:-.035em;font-variant-numeric:tabular-nums}
 .traffic-card-ratio,.traffic-card-m{min-width:0;overflow:hidden;color:var(--tr-muted);font-size:var(--tr-s);font-variant-numeric:tabular-nums;white-space:nowrap;text-overflow:ellipsis}
-.traffic-card-ratio{grid-area:ratio}
+/* 단계 카드의 "원본 · 대상 비율" 줄은 아래 경로 그림이 같은 값을 보여 주므로 눈에는 숨기고 화면 읽기 프로그램에는 남긴다 */
+.traffic-card-ratio{grid-area:ratio;position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .traffic-card-m{grid-area:m;color:#3d3d3d}
 .traffic-chip{grid-area:chip;padding:3px 9px;border-radius:6px;background:#eee;color:#3d3d3d;font-size:var(--tr-s);font-weight:600;white-space:nowrap}
 .traffic-card-obs{position:absolute;left:0;bottom:0;width:100%;height:3px;background:var(--tr-ink);transform:scaleX(0);transform-origin:left;transition:transform .5s linear}
@@ -36,7 +37,8 @@
 .traffic-path-svg .tp-flow{animation:tp-dash 1.2s linear infinite}
 @keyframes tp-dash{to{stroke-dashoffset:-16}}
 
-.traffic-side{min-width:0;min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr);gap:14px}
+.traffic-side{min-width:0;min-height:0;display:grid;grid-template-rows:auto auto;align-content:start;gap:14px}
+.traffic-side:has(.traffic-log[open]){grid-template-rows:auto minmax(0,1fr)}
 .traffic-panel{min-height:0;padding:clamp(12px,1.4vh,22px) clamp(14px,1vw,22px);border:1px solid var(--tr-border);border-radius:12px;background:#fff}
 .traffic-panel h2{display:flex;align-items:baseline;gap:8px;margin:0 0 4px;font-size:calc(var(--tr-s) + 2px);font-weight:650;letter-spacing:-.01em}
 .traffic-panel h2 .proposal-tag{align-self:center}
@@ -46,7 +48,7 @@
 .traffic-row b{font-family:var(--tr-mono);font-size:clamp(17px,calc(.6vw + .9vh),28px);font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
 .traffic-row i{grid-column:2;color:var(--tr-faint);font-size:calc(var(--tr-s) - 1px);font-style:normal;text-align:right}
 .traffic-row.is-bad b{color:var(--tr-neg)}
-.traffic-trace{display:block;width:100%;height:clamp(64px,11vh,220px);margin:2px 0 4px;font-family:var(--font-sans)}
+.traffic-trace{display:block;width:100%;height:clamp(52px,8vh,180px);margin:2px 0 4px;font-family:var(--font-sans)}
 .traffic-verdict{margin-top:6px;padding:clamp(8px,1vh,14px) 12px;border-radius:8px;background:#f3f3f3;color:#3d3d3d;font-size:var(--tr-s);line-height:1.5}
 .traffic-verdict code{margin-right:7px;padding:1px 6px;border-radius:4px;background:rgba(0,0,0,.07);font-family:var(--tr-mono);font-size:calc(var(--tr-s) - 1px);font-weight:600}
 .traffic-verdict.is-pass{background:var(--tr-gold-bg);color:var(--tr-gold-ink)}
@@ -59,6 +61,14 @@
 .traffic-checks li code{margin-left:auto;margin-right:0;background:none;padding:0;color:var(--tr-ink)}
 
 .traffic-log{display:flex;flex-direction:column;overflow:hidden}
+.traffic-log>summary{list-style:none;cursor:pointer}
+.traffic-log>summary::-webkit-details-marker{display:none}
+.traffic-log>summary h2{margin:0}
+.traffic-log>summary h2 small{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.traffic-log>summary h2::after{content:"▾";order:3;color:var(--tr-faint);font-size:var(--tr-s);transition:transform .2s}
+.traffic-log:not([open])>summary h2::after{transform:rotate(-90deg)}
+.traffic-log[open]>summary h2{margin-bottom:4px}
+.traffic-log[open]{display:flex}
 .traffic-log-items{flex:1;min-height:0;overflow-y:auto;scrollbar-width:thin}
 .traffic-log-items>p{margin:8px 0 0;color:var(--tr-muted);font-size:var(--tr-s)}
 .traffic-log-item{display:grid;grid-template-columns:clamp(46px,3.6vw,72px) minmax(0,1fr);gap:8px;padding:clamp(5px,.7vh,10px) 0;border-top:1px solid var(--tr-rule);font-size:var(--tr-s);line-height:1.45;animation:analysis-feed-arrive .5s ease-out both}
@@ -77,6 +87,13 @@
 .traffic-foot-note{flex:0 0 clamp(180px,15vw,320px);color:var(--text-muted);font-size:var(--tr-s);line-height:1.45}
 .traffic-actions{flex:none;display:flex;align-items:center;gap:8px}
 .traffic-actions button{height:clamp(38px,3.6vh,56px);padding:0 clamp(16px,1.2vw,28px);font-size:calc(var(--tr-s) + 1px)}
+
+/* 낮은 화면(노트북·프로젝터)에서는 아래 안내 문구를 접어 한 화면에 들어오게 한다 */
+@media(max-height:900px){
+  .traffic-foot-note{display:none}
+  .traffic-panel h2>small:last-child{display:none}
+  .traffic-log>summary h2>small:last-child{display:block}
+}
 
 @media(prefers-reduced-motion:reduce){
   .traffic-path-svg .tp-flow,.traffic-checks li::before,.traffic-log-item{animation:none}

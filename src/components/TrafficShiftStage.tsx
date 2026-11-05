@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import StageShell from './StageShell'
 import ProposalTag from './ProposalTag'
 import TrafficCanvas from './TrafficCanvas'
@@ -63,6 +63,8 @@ function TrafficBody({ ready, target, onNext }: { ready: boolean; target: Target
     tone: LOG_TONE[entry.key] ?? 'ok',
     activity: entry.activity ?? DEFAULT_ACTIVITY[entry.key],
   }))
+  const lastLog = logs[logs.length - 1]
+  const [logOpen, setLogOpen] = useState(false)
   const activeCard = cards.find(card => card.state === 'applying' || card.state === 'observing' || card.state === 'gate')
   const verdictParams = {
     step: verdict.step ?? '', failed, ratio: p99Ratio.toFixed(2), maxFailed: policy.maxFailed, maxRatio: policy.maxP99Ratio,
@@ -116,8 +118,11 @@ function TrafficBody({ ready, target, onNext }: { ready: boolean; target: Target
           </div>
         </section>
 
-        <section className="traffic-panel traffic-log">
-          <h2>{t('traffic.feed.title')} <small>{t('traffic.feed.sub')}</small></h2>
+        {/* 실행 기록은 접어 두고, 접힌 상태에서는 가장 최근 항목 한 줄만 보여 준다(한 화면에 정보가 많아서). */}
+        <details className="traffic-panel traffic-log" open={logOpen} onToggle={event => setLogOpen(event.currentTarget.open)}>
+          <summary>
+            <h2>{t('traffic.feed.title')} <small>{lastLog ? t(('traffic.log.' + lastLog.key) as MsgKey, lastLog.params) : t('traffic.feed.sub')}</small></h2>
+          </summary>
           <div className="traffic-log-items" tabIndex={0} aria-live="polite">
             {logs.length === 0
               ? <p>{t('traffic.feed.empty')}</p>
@@ -130,7 +135,7 @@ function TrafficBody({ ready, target, onNext }: { ready: boolean; target: Target
                   </span>
                 </div>)}
           </div>
-        </section>
+        </details>
       </aside>
     </div>
 
