@@ -8,8 +8,8 @@
 const spaced = (word: string) => [...word].join('\\s*')
 // 실측(11/6, Chrome ko-KR): "헤이 자칼"이 헤이즈 칼 · 페이저 칼 · Hey 젓갈 · 헤이 저칼로도 적혔다.
 // 그래서 한국어는 글자 목록 대신 소리 모양으로 받는다: 앞말 [헤해페패에케게체하]+이(+즈·저·스) / 이름 (자·재·쟈·저·조·잭·차)?+(칼·갈·깔·카·컬) 또는 젓갈.
-const HEY_KO = '[헤해페패에케게체하]\\s*이(?:\\s*[즈저스])?'
-const NAME_KO = '(?:(?:[자재쟈저조잭차]\\s*)?[칼갈깔카컬]|젓\\s*갈)'
+const HEY_KO = '[헤해페패베에케게체하]\\s*이(?:\\s*[즈저스])?'
+const NAME_KO = '(?:(?:[자재쟈저조잭차]\\s*)?[칼갈깔카컬걸]|젓\\s*갈)'
 const HEY_OTHER = ['hey', 'hay', 'hei', 'hi', 'ヘイ', 'ヘー', 'へい', 'ハイ']
 const NAME_OTHER = ['jackal', 'jackel', 'jackle', 'jakal', 'jackall', 'ジャッカル', 'ジャカル', 'ジャッカー', 'ジャカー', 'ジャッカ', 'じゃっかる']
 const HEY = `(?:${HEY_KO}|${HEY_OTHER.map(spaced).join('|')})`
