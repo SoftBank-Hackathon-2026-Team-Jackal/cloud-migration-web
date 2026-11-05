@@ -48,6 +48,21 @@ export function preflightScenario(): PreflightDemo {
   return value === 'route' || value === 'unknown' ? value : 'pass'
 }
 
+export type CutoverDemo = 'fast' | 'classic' | 'kill' | 'tamper' | 'tamper-classic'
+export const CUTOVER_DEMOS: readonly CutoverDemo[] = ['fast', 'classic', 'kill', 'tamper', 'tamper-classic']
+/**
+ * 시연용 ?cutover=…: DB 전환 방식과 장애를 고른다(기본 fast) [가정]. 백엔드 PoC(poc/cdc · poc/demo)의 fault와 같다.
+ *  fast 빠른 전환(체크섬은 RESUME 뒤) 통과 · classic PAUSE 안에서 체크섬까지 하는 전환 통과
+ *  kill 전환 중 대상 DB가 죽어 거부 → 원본 DB로 RESUME(다시 시도하면 fast로 통과)
+ *  tamper fast에서 대상이 변조됨: 전환은 되고, 뒤의 검증이 불일치를 알린다
+ *  tamper-classic classic에서 대상이 변조됨: PAUSE 안 체크섬이 막아 거부(다시 시도하면 통과)
+ */
+export function cutoverScenario(): CutoverDemo {
+  if (typeof window === 'undefined') return 'fast'
+  const value = new URLSearchParams(window.location.search).get('cutover') as CutoverDemo | null
+  return value && CUTOVER_DEMOS.includes(value) ? value : 'fast'
+}
+
 /** 시연용 ?delivery=fail: 승인은 기록되지만 첫 전달이 실패한다(다시 전달하면 성공). */
 export function deliveryFailDemo(): boolean {
   return flag('delivery', 'fail')

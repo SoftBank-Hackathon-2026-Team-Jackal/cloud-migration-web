@@ -446,35 +446,7 @@ export function dataProgressAt(seconds: number): DataProgressData {
 }
 
 // ---- DB 전환 ----
-
-/** 화면이 입자로 만들어지는 동안(2.4초)은 내용이 아직 안 보이므로, 그만큼 기다렸다가 단계를 시작한다. */
-export const CUTOVER_ENTER_MS = 2400
-const CUTOVER_STEP_MS = 1100
-const RESULT_AT = [600, 1500, 2400]
-const CUTOVER_RESULTS: Array<{ id: string; value: string }> = [
-  { id: 'fail', value: '' }, { id: 'delay', value: '' }, { id: 'loss', value: '' },
-]
-
-/** 승인 뒤 시작 시점(approveCutover)부터의 대본. 측정 값은 비워 두고 화면이 id로 자기 문구를 쓴다. */
-function cutoverTimeline(): TimedDraft[] {
-  const items: TimedDraft[] = []
-  for (let n = 1 as 1 | 2 | 3 | 4 | 5 | 6; n <= 6; n = (n + 1) as typeof n) {
-    items.push({ after: CUTOVER_ENTER_MS + n * CUTOVER_STEP_MS, event: { type: 'cutover.step', phase: 'verification', status: 'running', progress: Math.round((n / 6) * 100), data: { n, state: 'done' } } })
-  }
-  const verifyAt = CUTOVER_ENTER_MS + 6 * CUTOVER_STEP_MS + 900
-  items.push({ after: verifyAt, event: { type: 'cutover.step', phase: 'verification', status: 'running', data: { n: 6, state: 'verify' } } })
-  CUTOVER_RESULTS.forEach((result, index) => {
-    items.push({ after: verifyAt + RESULT_AT[index], event: { type: 'cutover.result', phase: 'verification', status: index === CUTOVER_RESULTS.length - 1 ? 'done' : 'running', data: result } })
-  })
-  // 최종 검증 뒤 운영권 인계: DNS 마지막 전환 → 원본 대기 유지 → 운영 권한 이전 (순서대로)
-  const handoverAt = verifyAt + RESULT_AT[RESULT_AT.length - 1] + 500
-  const HANDOVER: Array<'dns' | 'origin' | 'access'> = ['dns', 'origin', 'access']
-  HANDOVER.forEach((item, index) => {
-    items.push({ after: handoverAt + index * 700, event: { type: 'cutover.handover', phase: 'verification', status: 'running', data: { item, state: 'running' } } })
-    items.push({ after: handoverAt + index * 700 + 600, event: { type: 'cutover.handover', phase: 'verification', status: 'done', data: { item, state: 'done' } } })
-  })
-  return items
-}
+// DB 전환 대본은 cutoverScript.ts(전환 계획·전환 가능 시점·쓰기 중단 구간 단계·검증·인계)에 있다.
 
 // ---- 리포트 ----
 
@@ -496,7 +468,7 @@ export function reportFor(aiFixes: number): ReportData {
 
 // ---- 대본 조회 ----
 
-export type ScriptedPhase = 'analysis' | 'build' | 'planning' | 'provisioning' | 'verification'
+export type ScriptedPhase = 'analysis' | 'build' | 'planning' | 'provisioning'
 
 export function timelineFor(phase: ScriptedPhase, context: ScriptContext): TimedDraft[] {
   switch (phase) {
@@ -504,7 +476,6 @@ export function timelineFor(phase: ScriptedPhase, context: ScriptContext): Timed
     case 'build': return context.review ? reviewTimeline() : buildTimeline(context.aiFixes, context.retried, context.sandbox)
     case 'planning': return planTimeline(context.target, context.revision ?? 1, !!context.digestMismatch)
     case 'provisioning': return provisionTimeline(context.target)
-    case 'verification': return cutoverTimeline()
   }
 }
 

@@ -28,7 +28,8 @@ type Report = {
   demoNote: string
 }
 
-function buildReport(t: Translate, target: Target, language: string, data: ReportData): Report {
+/** pause: 전환 결과(cutover.outcome.pause_ms)로 만든 실제 쓰기 중단 시간. 없으면 기본 문구를 쓴다. */
+function buildReport(t: Translate, target: Target, language: string, data: ReportData, pause?: string): Report {
   const targetName = t(('target.' + target) as MsgKey)
   const stages = data.stages.map(stage => ({
     id: stage.id,
@@ -41,10 +42,10 @@ function buildReport(t: Translate, target: Target, language: string, data: Repor
     language,
     demo: true,
     title: t('report.title'),
-    summary: t('cutover.done.lead', { target: targetName }),
+    summary: t('cutover.done.lead', { target: targetName, pause: pause ?? t('report.res.pauseVal') }),
     stages,
     total: clock(data.stages.reduce((sum, stage) => sum + stage.seconds, 0)),
-    results: RESULTS.map(id => ({ label: t(('report.res.' + id) as MsgKey), value: t(('report.res.' + id + 'Val') as MsgKey, { n: data.ai_fixes }) })),
+    results: RESULTS.map(id => ({ label: t(('report.res.' + id) as MsgKey), value: id === 'pause' && pause ? pause : t(('report.res.' + id + 'Val') as MsgKey, { n: data.ai_fixes }) })),
     notes: [
       { label: t('cutover.done.traffic'), value: t(target === 'onprem' ? 'cutover.done.trafficOnprem' : 'cutover.done.trafficGcp') },
       { label: t('cutover.done.rollback'), value: t('cutover.done.rollbackVal') + ' (' + t('tag.proposal') + ')' },
@@ -100,7 +101,8 @@ export default function MigrationReport({ target, onRestart }: { target: Target;
   // 단계별 소요 시간과 AI 수정 개수는 리포트 데이터(GET /migrations/{id}/report)에서 온다.
   const { state, provider } = useMigration()
   useEffect(() => { provider.loadReport() }, [provider])
-  const report = buildReport(t, target, lang, state.report ?? { stages: [], ai_fixes: 0 })
+  const pauseMs = state.cutover.outcome?.result === 'switched' ? state.cutover.outcome.pause_ms : null
+  const report = buildReport(t, target, lang, state.report ?? { stages: [], ai_fixes: 0 }, pauseMs === null ? undefined : (pauseMs < 10 ? pauseMs.toFixed(1) : String(Math.round(pauseMs))) + ' ms')
   const [tab, setTab] = useState<'report' | 'monitor'>('report')
   const stamp = 'migration-report-' + target
   return <div className="flow-center">

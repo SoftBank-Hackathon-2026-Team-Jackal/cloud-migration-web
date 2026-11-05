@@ -3,7 +3,7 @@
  * 같은 id의 이벤트는 덮어쓰므로(upsert) 재접속·단계 재전송으로 같은 이벤트가 다시 와도 결과가 같다.
  */
 import type {
-  AnalysisFindingData, ApprovalDecisionData, ApprovalRequiredData, DataVerifyData, HandoverData, TrafficReadyData, BackendPhase, BuildCheckData, BuildFixData, BuildResultData, BuildReviewData, PlanPreviewData, PlanReadyData, ProvisionCheckData, CutoverResultData,
+  AnalysisFindingData, ApprovalDecisionData, ApprovalRequiredData, DataVerifyData, HandoverData, TrafficReadyData, BackendPhase, BuildCheckData, BuildFixData, BuildResultData, BuildReviewData, PlanPreviewData, PlanReadyData, ProvisionCheckData, CutoverResultData, CutoverPlanData, CutoverReadyData, CutoverStepData, CutoverOutcomeData, CutoverVerifyData,
   DataProgressData, ErrorData, MigrationEvent, MigrationStatus, PlanStepData, ProvisionResourceData,
   ReportData, TrafficNote, TrafficPrepareData, TrafficSnapshotData,
   DataLsnData, DataPhase, DataPreflightData, DataReadinessData, DataTableData,
@@ -44,7 +44,14 @@ export type MigrationState = {
   }
   /** prepare: 사전 확인·연결 정보 [가정]. trace: 관찰 중 p99 비율 추이. startedAt: 이 단계의 첫 이벤트 시각(기록의 +초 기준) */
   traffic: { snapshot: TrafficSnapshotData | null; logs: TrafficLogEntry[]; logCounter: number; ready: TrafficReadyData | null; prepare: TrafficPrepareData | null; trace: number[]; startedAt: string | null }
-  cutover: { doneSteps: number; verifying: boolean; results: CutoverResultData[]; handover: HandoverData[] }
+  /**
+   * plan: 승인 2/2가 읽는 전환 계획 · ready: 전환 가능 시점 · steps: 쓰기 중단 구간 단계(받은 순서, n순) ·
+   * outcome: 전환 결과(통과·거부) · tables: 테이블별 검증 · attempt: 몇 번째 전환 시도인지 [가정]
+   */
+  cutover: {
+    doneSteps: number; verifying: boolean; results: CutoverResultData[]; handover: HandoverData[]
+    plan: CutoverPlanData | null; ready: CutoverReadyData | null; steps: CutoverStepData[]; outcome: CutoverOutcomeData | null; tables: CutoverVerifyData[]; attempt: number
+  }
   report: ReportData | null
   failures: Partial<Record<BackendPhase, Failure>>
   error: ErrorData | null
@@ -63,7 +70,7 @@ export const initialState: MigrationState = {
   provision: { resources: [], checks: [] },
   data: { current: null, lagHistory: [], verify: [], preflight: null, phase: null, lsn: null, lagTrace: [], tables: [], readiness: null },
   traffic: { snapshot: null, logs: [], logCounter: 0, ready: null, prepare: null, trace: [], startedAt: null },
-  cutover: { doneSteps: 0, verifying: false, results: [], handover: [] },
+  cutover: { doneSteps: 0, verifying: false, results: [], handover: [], plan: null, ready: null, steps: [], outcome: null, tables: [], attempt: 0 },
   report: null,
   failures: {},
   error: null,
@@ -232,10 +239,30 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
       return { ...next, traffic: applyTrafficPrepare(next, event.data, event.at) }
     case 'traffic.snapshot':
       return { ...next, traffic: { ...next.traffic, snapshot: event.data, startedAt: next.traffic.startedAt ?? event.at, ...addTrafficLogs(next, event.data, event.at) } }
+    case 'cutover.plan':
+      return { ...next, cutover: { ...next.cutover, plan: event.data } }
+    case 'cutover.ready': {
+      // 새 시도(attempt가 바뀜)면 지난 시도의 단계·결과·검증·인계를 비운다. 계획은 남긴다.
+      const fresh = event.data.attempt !== next.cutover.attempt
+      const base = fresh ? { ...initialState.cutover, plan: next.cutover.plan } : next.cutover
+      return { ...next, cutover: { ...base, ready: event.data, attempt: event.data.attempt } }
+    }
     case 'cutover.step': {
       const { n, state: stepState } = event.data
       const doneSteps = stepState === 'running' ? Math.max(next.cutover.doneSteps, n - 1) : Math.max(next.cutover.doneSteps, n)
-      return { ...next, cutover: { ...next.cutover, doneSteps, verifying: next.cutover.verifying || stepState === 'verify' } }
+      // 단계 상태를 n순으로 쌓는다(같은 n은 덮어쓴다). 걸린 시간은 끝에 cutover.outcome.steps로 온다.
+      const steps = stepState === 'verify'
+        ? next.cutover.steps
+        : [...next.cutover.steps.filter(step => step.n !== n), event.data].sort((a, b) => a.n - b.n)
+      return { ...next, cutover: { ...next.cutover, doneSteps, steps, verifying: next.cutover.verifying || stepState === 'verify' } }
+    }
+    case 'cutover.outcome':
+      return { ...next, cutover: { ...next.cutover, outcome: event.data } }
+    case 'cutover.verify': {
+      const tables = next.cutover.tables.slice()
+      const index = tables.findIndex(item => item.table === event.data.table)
+      if (index < 0) tables.push(event.data); else tables[index] = event.data
+      return { ...next, cutover: { ...next.cutover, tables } }
     }
     case 'cutover.result': {
       const results = upsert(next.cutover.results, event.data)

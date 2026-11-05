@@ -326,7 +326,8 @@ export type DataReadinessData = { longest_tx_ms: number; lock_waits: number; com
 export type TrafficReadyData = { state: 'running' | 'done' | 'waiting'; lag_ms: number; longest_tx_ms: number; commits_per_sec: number }
 
 export type HandoverItem = 'dns' | 'origin' | 'access'
-export type HandoverData = { item: HandoverItem; state: 'running' | 'done' }
+/** held: 전환이 거부돼 인계를 보류했다 [가정]. detail은 서버가 보내는 근거(예: 도메인·TTL, 보존 시간) [가정]. */
+export type HandoverData = { item: HandoverItem; state: 'running' | 'done' | 'held'; detail?: string }
 
 export type TrafficPhase = 'applying' | 'observing' | 'gate' | 'complete' | 'rolledback'
 /** 트래픽 피드에 남길 기록. key로 화면이 자기 문구를 고른다. restart는 피드를 비우라는 뜻이다. */
@@ -393,10 +394,71 @@ export type TrafficSnapshotData = {
   replication?: { lag_ms: number | null }
 }
 
-/** state: running(진행 중) → done(완료) 이고 verify는 6단계가 끝난 뒤 측정 구간에 들어갔다는 표시다. */
-export type CutoverStepData = { n: 1 | 2 | 3 | 4 | 5 | 6; state: 'running' | 'done' | 'verify' }
-/** 측정 결과. fail·delay·loss는 화면이 자기 문구를 쓰고, 그 밖의 id(duplicate, checksum 등)는 label·value를 그대로 보인다 [가정]. */
+/* ==== DB 전환 상세 [가정] (cutover.plan · cutover.ready · cutover.step 확장 · cutover.outcome · cutover.verify) ====
+ * 소울님 리허설(poc/cdc · poc/demo)의 fast switchover 순서에 맞춘 프론트 [가정]이다. 백엔드 문서상 DB 전환·쓰기 제어·역방향 복제는 "확인 필요".
+ * 단계 순서·이름·시간·방식·임계값은 모두 이벤트로 오고, 화면은 받은 순서대로 그린다(순서가 바뀌어도 화면은 그대로).
+ */
+export type CutoverMethod = 'fast' | 'classic'
+/** 전환 전 조건 한 줄. id로 화면이 이름을 고르고(cut.pre.<id>), value·evidence는 서버 값을 그대로 보인다. proposal이면 백엔드에 아직 없는 제안안 조건이다. */
+export type CutoverPrecondition = { id: string; state: 'pass' | 'wait' | 'fail'; value?: string; evidence?: string; proposal?: boolean }
+/** 전환 구간: pre는 PAUSE 전에 미리 하는 일(예: 시퀀스 미리 올림), pause는 쓰기 중단 구간 안이다. */
+export type CutoverWindow = 'pre' | 'pause'
+/**
+ * 전환 단계 한 개. id로 화면 문구(cut.step.<id>)를 고르고, ms는 리허설 중앙값(미리보기) 또는 실제 측정값이다.
+ * start_ms는 쓰기 중단 구간 시작부터의 시각이다. 같은 시각에 시작하는 단계는 동시에 실행된다(겹친 막대). 없으면 앞 단계 뒤에 이어진다.
+ */
+export type CutoverStepPlan = { id: string; ms: number; start_ms?: number; window?: CutoverWindow }
+/** 두 번째 승인 전에 보내는 전환 계획: 조건 · 방식 · 예상 쓰기 중단 · 되돌리는 길 · 구성 · 인계 항목. */
+export type CutoverPlanData = {
+  method: CutoverMethod
+  expected_pause_ms: { min: number; max: number }
+  /** 리허설 근거: 어디서 몇 번 돌렸고 방식별 쓰기 중단이 얼마였는지 */
+  rehearsal: { source: string; runs: number; methods: Array<{ method: CutoverMethod; pause_ms: number }> }
+  preconditions: CutoverPrecondition[]
+  /** 쓰기 중단 구간 미리보기(순서대로) */
+  steps: CutoverStepPlan[]
+  rollback: { standby_hours: number }
+  topology: { app: string; pooler: string; source_db: string; target_db: string; source_where: string; target_where: string; writes_per_sec: number }
+  handover: Array<{ item: HandoverItem; detail?: string }>
+}
+/** 전환 가능 시점 대기: 긴 트랜잭션·잠금이 풀릴 때까지 PAUSE를 미룬다. attempt가 바뀌면 새 시도라 지난 결과를 비운다. */
+export type CutoverReadyData = {
+  attempt: number
+  longest_tx_ms: number
+  lock_waits: number
+  commits_per_sec: number
+  ready: boolean
+  limits: { longest_tx_ms: number; lock_waits: number }
+  /** 기다리는 이유(예: batch 잠금) — 서버 값 그대로 */
+  waiting_on?: string
+  waited_ms?: number
+}
+/**
+ * 전환 단계. state: running(진행 중) → done(완료), verify는 단계가 끝나고 검증 구간에 들어갔다는 표시다.
+ * [가정] id·ms·method·of·result: 단계 이름(id), 걸린 시간(ms), 방식, 전체 단계 수(of), 결과(fail이면 대상 확인 실패, revert는 원본으로 되돌리는 단계).
+ */
+export type CutoverStepData = { n: number; state: 'running' | 'done' | 'verify'; id?: string; ms?: number; method?: CutoverMethod; of?: number; result?: 'ok' | 'fail' | 'revert'; window?: CutoverWindow }
+/**
+ * 전환 결과: switched(대상이 주 DB) 또는 refused(전환 거부 → 원본 DB로 RESUME).
+ * 백엔드는 끝났을 때 한 번 알려 준다: 통과면 write_pause_ms와 단계별 시간(steps_ms → steps), 중단이면 stderr 글(message)과 있으면 사유 코드(reason).
+ * 중단된 실행은 단계별 시간·쓰기 중단 시간이 없을 수 있다(null·생략). held_requests는 PAUSE 동안 PgBouncer가 붙잡은 요청 수 [가정].
+ */
+export type CutoverOutcomeData = {
+  result: 'switched' | 'refused'
+  reason?: string
+  message?: string
+  active: 'source' | 'target'
+  pause_ms: number | null
+  steps?: CutoverStepPlan[]
+  held_requests?: number
+  failed_requests?: number
+  replication: { direction: 'reverse' | 'forward'; lag_ms: number | null }
+}
+/** RESUME 뒤, 전환 순간 스냅샷과 비교한 테이블별 결과. 거부면 target_rows가 없고 checksum은 skipped. */
+export type CutoverVerifyData = { table: string; source_rows: number; target_rows: number | null; checksum: 'match' | 'mismatch' | 'pending' | 'skipped' }
+/** 측정 결과(합계). id로 화면 문구(cutover.tile.<id>)를 고르고, 모르는 id는 label·value를 그대로 보인다 [가정]. */
 export type CutoverResultData = { id: string; value: string; label?: string; ok?: boolean }
+/* ==== DB 전환 상세 끝 ==== */
 
 export type ErrorData = { code: string; message: string; phase: BackendPhase | null; retryable: boolean }
 
@@ -455,6 +517,10 @@ export type MigrationEvent =
   | Base<'cutover.step', CutoverStepData>
   | Base<'cutover.result', CutoverResultData>
   | Base<'cutover.handover', HandoverData>
+  | Base<'cutover.plan', CutoverPlanData>
+  | Base<'cutover.ready', CutoverReadyData>
+  | Base<'cutover.outcome', CutoverOutcomeData>
+  | Base<'cutover.verify', CutoverVerifyData>
   | Base<'error', ErrorData>
 
 export type MigrationEventType = MigrationEvent['type']

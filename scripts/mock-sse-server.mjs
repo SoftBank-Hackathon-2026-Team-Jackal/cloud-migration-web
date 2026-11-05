@@ -16,7 +16,8 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { APPROVAL_ID, PLAN_ID, PLAN_REVEAL_MS, approvalTimeline, REPORT_SECONDS, TRAFFIC_READY_EVENTS, trafficPrepareTimeline, timelineEnd, timelineFor } from '../src/lib/migration/script.ts'
-import { DATA_END_MS, DATA_LSN_TICK_MS, dataTickAt, dataTimeline } from '../src/lib/migration/dataScript.ts'
+import { DATA_END_MS, DATA_LSN_TICK_MS, DATA_TABLES, dataTickAt, dataTimeline } from '../src/lib/migration/dataScript.ts'
+import { cutoverPlan, cutoverRefusesFirst, cutoverRun } from '../src/lib/migration/cutoverScript.ts'
 import { targetOfRequest } from '../src/lib/migration/events.ts'
 import { TrafficSim } from '../src/lib/migration/trafficSim.ts'
 
@@ -224,11 +225,19 @@ const phaseRunners = {
     state.sim = null
   },
   async verification(record) {
-    emit(record, { type: 'approval.required', phase: 'verification', status: 'waiting', data: { excluded: [], rollback_policy: '', gate: 'cutover' } })
-    record.status = 'waiting'
-    await waitApproval(record, 'cutover')
-    record.status = 'running'
-    await play(record, timelineFor('verification', context(record)))
+    // 전환 계획(승인 2/2 화면) → 승인 → 전환. 전환이 거부되면(?cutover=kill|tamper-classic 첫 시도) 원본에 남고 다시 승인을 기다린다 [가정].
+    const scenario = record.cutover ?? 'fast'
+    emit(record, { type: 'cutover.plan', phase: 'verification', status: 'waiting', data: cutoverPlan(record.target, scenario) })
+    for (let attempt = 1; ; attempt++) {
+      emit(record, { type: 'approval.required', phase: 'verification', status: 'waiting', data: { excluded: [], rollback_policy: '', gate: 'cutover' } })
+      record.status = 'waiting'
+      await waitApproval(record, 'cutover')
+      record.status = 'running'
+      await play(record, cutoverRun(scenario, attempt, DATA_TABLES))
+      if (!(cutoverRefusesFirst(scenario) && attempt === 1)) break
+      record.approved.cutover = false
+      save()
+    }
   },
 }
 
@@ -299,6 +308,7 @@ const server = http.createServer(async (req, res) => {
       id: 'm-' + randomUUID().slice(0, 8), target: targetOfRequest(body), status: 'running', phase: 'analysis',
       revision: 1, review: url.searchParams.get('review') === '1', retried: false,
       preflight: ['route', 'unknown'].includes(url.searchParams.get('preflight')) ? url.searchParams.get('preflight') : 'pass',
+      cutover: ['classic', 'kill', 'tamper', 'tamper-classic'].includes(url.searchParams.get('cutover')) ? url.searchParams.get('cutover') : 'fast',
       seq: 0, history: [], approved: { plan: false, cutover: false, review: false }, aiFixes: Number(body.ai_fixes) >= 1 && Number(body.ai_fixes) <= 4 ? Number(body.ai_fixes) : 1, pending: 'analysis',
     }
     migrations.set(record.id, record)
