@@ -1,4 +1,8 @@
+import { connKo } from './connections.ts'
+
 export const ko = {
+  // 연결 관리·이전 범위 선택(connections.ts)
+  ...connKo,
   "nav.back": "이전",
   "nav.backAria": "이전 단계로",
   "lang.aria": "언어 선택",

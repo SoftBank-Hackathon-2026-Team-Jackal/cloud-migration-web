@@ -5,7 +5,8 @@ import { RECORDED_CLIPS } from '../../src/lib/voiceRecorded.ts'
 import { isStartCommand, targetFromUtterance } from '../../src/lib/agent/intent.ts'
 import { classifyKey, crossCheck, parseEnvKeys } from '../../src/lib/setup/envFile.ts'
 import { detectStack, displayTree, scanPublicSource } from '../../src/lib/github/scan.ts'
-import { mockEnvironments, secondsSince } from '../../src/lib/setup/registry.ts'
+import { createMockAgents, createMockConnections, resetMock } from '../../src/lib/connections/mock.ts'
+import { agentState } from '../../src/lib/connections/types.ts'
 import { ko } from '../../src/lib/i18n/ko.ts'
 import { en } from '../../src/lib/i18n/en.ts'
 import { ja } from '../../src/lib/i18n/ja.ts'
@@ -103,11 +104,13 @@ test('스캔은 고정한 커밋의 트리와 구성 파일만 읽고 원문을 
   await assert.rejects(scanPublicSource({ token: 't', fetchImpl, apiBase: 'https://gh.test' }, 'octo/svc', 'main'))
 })
 
-test('등록 환경 목업은 [가정] 형태를 따른다', () => {
-  const env = mockEnvironments(Date.parse('2026-11-05T00:00:10Z'))
-  assert.equal(env.source.provider, 'AWS')
-  assert.equal(env.targets.onprem.status, 'online')
-  assert.equal(secondsSince(env.targets.onprem.last_heartbeat_at, Date.parse('2026-11-05T00:00:10Z')), 6)
+test('등록 환경 목업은 [가정] 통합 목록 형태를 따른다', async () => {
+  const now = Date.parse('2026-11-05T00:00:10Z')
+  resetMock(now)
+  const connections = await createMockConnections({ delayMs: 0, now: () => now }).listConnections()
+  assert.deepEqual(connections.map(item => [item.kind, item.status]), [['AWS_SOURCE', 'CONNECTED'], ['GCP_TARGET', 'CONNECTED']])
+  const agent = await createMockAgents({ now: () => now }).getAgent('office-seoul-01')
+  assert.equal(agentState(agent, Math.floor(now / 1000)), 'online')
 })
 
 test('자칼의 고정 문구는 한국어 사전과 녹음 목록이 같다(녹음 파일 이름으로 찾는다)', () => {
