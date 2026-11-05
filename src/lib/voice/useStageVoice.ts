@@ -25,6 +25,8 @@ const PHASE_OF: Record<string, BackendPhase> = {
 /** 호출어 없이 받는 명령의 최대 길이(정규화한 글자 수): 발표 중의 긴 설명이 명령으로 잡히지 않게 */
 const BARE_COMMAND_MAX = 14
 const CONFIRM_MS = 12000
+/** "지금 어디야"를 모델로 답할 때 기다리는 최대 시간(그 뒤에는 고정 문장) */
+const STATUS_MODEL_MS = 5000
 /** 자칼이 되묻거나 말을 시킨 뒤, 호출어 없이 짧은 대답("응", "승인해")을 받는 시간 */
 const ANSWER_MS = 15000
 const WAKE = /^(헤이(자칼|재칼|쟈칼)|heyjackal|ヘイジャッカル)/
@@ -32,7 +34,7 @@ const WAKE = /^(헤이(자칼|재칼|쟈칼)|heyjackal|ヘイジャッカル)/
 /** 자막은 두 번째 인자(화면 언어 문구)로 받는다. 음성 언어와 화면 언어가 같으면 비어 있다. */
 type Speak = (text: string, caption?: string) => void
 
-export function useStageVoice({ stage, lang, captionLang, speaking, lastLine, speak, onSetupStart }: {
+export function useStageVoice({ stage, lang, captionLang, speaking, lastLine, speak, onSetupStart, askStatus }: {
   stage: string
   /** 말하고 알아듣는 언어(음성 언어) */
   lang: VoiceLang
@@ -44,12 +46,17 @@ export function useStageVoice({ stage, lang, captionLang, speaking, lastLine, sp
   speak: Speak
   /** 설정 화면의 "좋아, 시작하자" */
   onSetupStart: () => void
+  /**
+   * "지금 어디야"를 모델(AI)로 답한다. 모델 답을 말했으면 true, 모델이 없거나 실패했으면 false(그러면 고정 문장으로 답한다).
+   * isStale()이 true가 되면(시간이 지나 고정 문장으로 이미 답함) 말하지 않아야 한다.
+   */
+  askStatus?: (isStale: () => boolean) => Promise<boolean>
 }) {
   const { subscribe, state } = useMigration()
   const engine = useRef(new ReportEngine())
   const queue = useRef(new ReportQueue())
-  const live = useRef({ stage, lang, captionLang, speaking, lastLine, speak, onSetupStart, state })
-  live.current = { stage, lang, captionLang, speaking, lastLine, speak, onSetupStart, state }
+  const live = useRef({ stage, lang, captionLang, speaking, lastLine, speak, onSetupStart, askStatus, state })
+  live.current = { stage, lang, captionLang, speaking, lastLine, speak, onSetupStart, askStatus, state }
   const [paused, setPaused] = useState(false)
   const [confirming, setConfirming] = useState<CommandId | null>(null)
   const pending = useRef<{ command: CommandId; until: number } | null>(null)
@@ -133,7 +140,18 @@ export function useStageVoice({ stage, lang, captionLang, speaking, lastLine, sp
         const parts = statusLine(current, live.current.state)
         const { lang: spoken, captionLang: shown } = live.current
         const join = (language: VoiceLang) => parts.map(part => voiceText(language, part.key, part.params)).join(' ')
-        speakLine(join(spoken), shown !== spoken ? join(shown) : undefined)
+        const fixed = () => speakLine(join(spoken), shown !== spoken ? join(shown) : undefined)
+        const ask = live.current.askStatus
+        if (!ask) { fixed(); return }
+        // 모델이 있으면 풀어서 답한다. 시간 안에 못 받거나 모델이 없으면 기존 고정 문장으로 답한다.
+        let settled = false
+        const timer = window.setTimeout(() => { if (!settled) { settled = true; fixed() } }, STATUS_MODEL_MS)
+        void ask(() => settled).then(spokeByModel => {
+          if (settled) return
+          settled = true
+          window.clearTimeout(timer)
+          if (!spokeByModel) fixed()
+        }, () => { if (!settled) { settled = true; window.clearTimeout(timer); fixed() } })
         return
       }
       case 'confirm':

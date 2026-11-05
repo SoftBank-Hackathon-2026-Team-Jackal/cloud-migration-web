@@ -97,6 +97,10 @@ try {
   check(true, '말한 의도로 설정 화면에 왔다')
   await waitHint('시작하자')
   await say('좋아, 시작하자')
+  // 이전 범위 선택: 음성으로 시작하면 범위 분석 화면이 열린다. 후보 확인·범위 확정은 화면에서(근거를 보고 사람이 확정).
+  await page.locator('.scope [data-scope-action=analyze]:not([disabled])').click()
+  await page.locator('.scope-row').first().waitFor()
+  await page.locator('.scope [data-scope-action=confirm]').click()
   await page.locator('.analysis-next-area').waitFor()
   check(true, '"좋아, 시작하자" → 분석')
   await openChat()
@@ -151,11 +155,11 @@ try {
   await say('다음')
 
   // DB 전환: "다음"은 승인이 아니다 → 사실 읽기 → "승인할게"
-  await page.locator('.cutover-approval').waitFor()
+  await page.locator('.cx-approve').waitFor()
   await waitChat(/진행하려면 '승인'이라고 해 주세요/, 'DB 전환 승인 방법을 알려 준다')
   await say('다음')
   await page.waitForTimeout(1500)
-  check(await page.locator('.cutover-approval').count() === 1, '"다음"으로는 DB 전환을 승인하지 않는다')
+  check(await page.locator('.cx-approve').count() === 1, '"다음"으로는 DB 전환을 승인하지 않는다')
   await say('승인할게')
   await page.waitForFunction(() => document.querySelectorAll('.cutover-tile').length >= 3)
   check(true, '"승인할게" → DB 전환·검증')

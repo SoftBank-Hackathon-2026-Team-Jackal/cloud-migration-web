@@ -18,6 +18,8 @@
     "test:e2e:agent": "node tests/e2e/agent.mjs",
     "test:e2e:github": "node tests/e2e/github.mjs",
     "test:e2e:voice": "node tests/e2e/voice.mjs",
+    "test:e2e:voice-lang": "node tests/e2e/voice-lang.mjs",
+    "test:e2e:voice-wake": "node tests/e2e/voice-wake.mjs",
     "tts:download": "node scripts/download-tts-model.mjs",
     "tts:pregen": "node scripts/pregen-tts.ts",
     "tts:clips": "node scripts/generate-voice-clips.ts",

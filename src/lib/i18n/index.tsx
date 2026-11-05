@@ -33,6 +33,11 @@ export function isLang(value: unknown): value is Lang {
   return value === 'ko' || value === 'en' || value === 'ja'
 }
 
+/** 화면 언어와 상관없이 지정한 언어의 문구(자칼이 화면 언어와 다른 언어로 말할 때 쓴다). 없는 키는 한국어로 대신한다. */
+export function translateIn(language: Lang, key: MsgKey, params?: Params): string {
+  return format(lookup(DICTS[language], key) ?? lookup(ko, key), params)
+}
+
 /** 사전에 없는 키(서버가 보낸 새 id 등)도 예외 없이 빈 문구가 된다. */
 export function format(text: string | undefined, params?: Params) {
   if (typeof text !== 'string') return ''
