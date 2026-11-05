@@ -54,9 +54,9 @@ type ChatMessage = { id: number; role: 'user' | 'agent'; text: string; tag?: 're
 
 /** "지금 어디야"를 모델에 물을 때의 질문(음성 언어별) */
 const STATUS_QUESTION: Record<Lang, string> = {
-  ko: '지금 어느 단계이고, 무엇을 하고 있고, 내가 해야 할 일이 있어?',
-  en: 'Which stage are we in, what is happening now, and do I need to do anything?',
-  ja: '今どの段階で、何が進んでいて、私がやることはありますか？',
+  ko: '지금 어느 단계인지, 내가 할 일이 있는지 딱 한 문장으로 짧게 말해 줘.',
+  en: 'In one short sentence: which stage are we in, and do I need to do anything?',
+  ja: '今どの段階か、私がやることがあるか、短く一文で教えてください。',
 }
 
 export default function FlowApp() {
