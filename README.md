@@ -106,6 +106,10 @@ NEXT_PUBLIC_API_MODE=sse NEXT_PUBLIC_SSE_START=legacy npm run dev   # 다른 터
 ```bash
 npm run typecheck
 npm test                    # reducer·GitHub API(가짜 GitHub, 네트워크 없음) 단위 테스트
+npm run test:quick          # 평소: 타입 검사 + 단위 테스트(약 15초)
+npm run build && npm run test:e2e:merge   # Minseo에 합칠 때: flow·opening e2e를 동시에(약 1분 30초)
+npm run build && npm run test:e2e:all     # push·발표 전: e2e 전체를 동시에. BASE_URL이 없으면 빌드된 앱을 빈 포트에 띄운다
+# e2e는 목업 시계를 E2E_SPEED(기본 10)배로 돌린다(?speed=N, 화면 애니메이션은 그대로). 단위 시험의 목업 SSE 서버는 MOCK_SPEED=10.
 BASE_URL=http://127.0.0.1:3000 npm run test:e2e:review   # ?review=1, ?digest=mismatch 시험
 BASE_URL=http://127.0.0.1:3000 npm run test:e2e       # 핵심 흐름 브라우저 테스트(목업 모드의 앱, playwright 필요)
 npm run build && npm run test:e2e:github                # GitHub 로그인·저장소 선택(가짜 GitHub 서버, 실제 호출 없음). SSE는 같은 NEXT_PUBLIC_* 값으로 빌드·실행

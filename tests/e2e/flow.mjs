@@ -37,7 +37,7 @@ const text = () => page.evaluate(() => document.querySelector('main')?.innerText
 
 try {
   console.log(`흐름 시험: ${BASE_URL} (lang=${LANG})`)
-  await page.goto(`${BASE_URL}/?lang=${LANG}&target=gcp`)
+  await page.goto(`${BASE_URL}/?lang=${LANG}&target=gcp&speed=${process.env.E2E_SPEED ?? '10'}`)
 
   // 소개 화면은 클릭하면 입자가 구로 모이고, 문장이 다 쓰이면 "예" 버튼이 나온다.
   // 개발 서버처럼 느린 첫 로드에서는 하이드레이션 전의 클릭이 무시되므로 "예" 버튼이 나올 때까지 클릭을 되풀이한다.

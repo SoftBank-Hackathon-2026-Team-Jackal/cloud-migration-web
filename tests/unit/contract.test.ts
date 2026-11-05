@@ -206,7 +206,7 @@ test('목업 서버가 SSE로 보내는 이벤트(snapshot 포함)가 스키마�
   const port = 18000 + Math.floor(Math.random() * 1000)
   const state = join(mkdtempSync(join(tmpdir(), 'contract-')), 'state.json')
   const server: ChildProcess = spawn(process.execPath, ['--disable-warning=MODULE_TYPELESS_PACKAGE_JSON', 'scripts/mock-sse-server.mjs'], {
-    cwd: new URL('../../', import.meta.url), env: { ...process.env, PORT: String(port), MOCK_STATE_FILE: state }, stdio: 'ignore',
+    cwd: new URL('../../', import.meta.url), env: { ...process.env, PORT: String(port), MOCK_STATE_FILE: state, MOCK_SPEED: '10' }, stdio: 'ignore',
   })
   const base = `http://127.0.0.1:${port}`
   const controller = new AbortController()
@@ -254,7 +254,14 @@ test('목업 서버가 SSE로 보내는 이벤트(snapshot 포함)가 스키마�
     assertValid(validateRest('Report'), report, 'Report')
     // 이어 받기: Last-Event-ID 뒤의 이벤트만 담긴 snapshot(reset=false)이 온다
     const resumed = await fetch(`${base}/migrations/${id}/events`, { headers: { 'Last-Event-ID': '5' }, signal: controller.signal })
-    const first = new TextDecoder().decode((await resumed.body!.getReader().read()).value)
+    // 첫 조각에는 `retry:` 줄만 있을 수 있다: data 줄이 나올 때까지 읽는다.
+    const resumeReader = resumed.body!.getReader()
+    let first = ''
+    while (!first.split('\n').some(item => item.startsWith('data: '))) {
+      const { done, value } = await resumeReader.read()
+      if (done) break
+      first += new TextDecoder().decode(value)
+    }
     const snapshotLine = first.split('\n').find(item => item.startsWith('data: '))!
     const snapshot = JSON.parse(snapshotLine.slice(6))
     assertValid(validateEvent, snapshot, 'resume snapshot')

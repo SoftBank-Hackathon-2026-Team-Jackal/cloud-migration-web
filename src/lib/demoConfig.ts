@@ -52,3 +52,13 @@ export function preflightScenario(): PreflightDemo {
 export function deliveryFailDemo(): boolean {
   return flag('delivery', 'fail')
 }
+
+/**
+ * 시험용 ?speed=N(1–20): 목업 대본·트래픽 모의의 시계를 N배 빠르게 돌린다(화면 애니메이션은 그대로).
+ * e2e가 실제 시간만큼 기다리지 않게 하려는 값이다. 발표에서는 쓰지 않는다.
+ */
+export function mockSpeed(): number {
+  if (typeof window === 'undefined') return 1
+  const value = Number(new URLSearchParams(window.location.search).get('speed'))
+  return Number.isFinite(value) && value >= 1 ? Math.min(value, 20) : 1
+}

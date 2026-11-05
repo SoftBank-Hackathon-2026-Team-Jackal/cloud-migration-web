@@ -32,7 +32,7 @@ async function open(size, lang = 'ko') {
   page.setDefaultTimeout(30000)
   page.on('pageerror', error => problems.push('pageerror: ' + error))
   page.on('console', message => { consoleText.push(message.text()); if (message.type() === 'error' && !/favicon/.test(message.text() + (message.location()?.url ?? ''))) problems.push('console.error: ' + message.text().slice(0, 200)) })
-  await page.goto(`${BASE_URL}/?lang=${lang}`)
+  await page.goto(`${BASE_URL}/?lang=${lang}&speed=${process.env.E2E_SPEED ?? '10'}`)
   // 하이드레이션 전의 키 입력은 무시되므로 첫 화면 버튼이 나올 때까지 L을 되풀이한다.
   for (let attempt = 0; attempt < 8; attempt++) {
     await page.keyboard.press('l')

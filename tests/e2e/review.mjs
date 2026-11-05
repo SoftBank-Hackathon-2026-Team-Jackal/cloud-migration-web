@@ -24,7 +24,7 @@ async function open(query) {
   page.setDefaultTimeout(30000)
   page.on('pageerror', error => problems.push('pageerror: ' + error))
   page.on('console', message => { if (message.type() === 'error') problems.push('console.error: ' + message.text().slice(0, 160)) })
-  await page.goto(`${BASE_URL}/?${query}`)
+  await page.goto(`${BASE_URL}/?${query}${/(^|&)speed=/.test(query) ? '' : `&speed=${process.env.E2E_SPEED ?? '10'}`}`)
   return page
 }
 const overflow = page => page.evaluate(() => document.documentElement.scrollWidth > innerWidth || document.documentElement.scrollHeight > innerHeight)
@@ -68,7 +68,8 @@ try {
 
   console.log('승인 전달 실패 → 다시 전달 (?delivery=fail)')
   {
-    const page = await open('stage=approval&delivery=fail&target=gcp&lang=ko')
+    // 잠깐 지나가는 '전달 중' 상태를 확인해야 하므로 이 시험은 실제 시간(×1)으로 돈다.
+    const page = await open('stage=approval&delivery=fail&target=gcp&lang=ko&speed=1')
     await page.waitForSelector('.approval-digest')
     await page.locator('.approval-check input').check()
     await page.locator('.approval-actions .flow-primary').click()

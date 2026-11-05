@@ -107,7 +107,7 @@ try {
     page.on('response', async response => {
       if (new URL(response.url()).origin === BASE && /^\/api\//.test(new URL(response.url()).pathname)) bodies.push(await response.text().catch(() => ''))
     })
-    await page.goto(BASE + '/?stage=setup&target=gcp&lang=ko')
+    await page.goto(BASE + '/?stage=setup&target=gcp&lang=ko&speed=' + (process.env.E2E_SPEED ?? '10'))
     await page.waitForSelector('.migration-setup')
     return { context, page, bodies }
   }
@@ -221,7 +221,7 @@ try {
     const page = await context.newPage()
     const posts = []
     await page.route(API + '/**', route => { if (route.request().method() === 'POST') posts.push(route.request().url()); return route.fulfill({ status: 404, body: '' }) })
-    await page.goto(BASE + '/?stage=analysis&target=gcp&lang=ko')
+    await page.goto(BASE + '/?stage=analysis&target=gcp&lang=ko&speed=' + (process.env.E2E_SPEED ?? '10'))
     await page.waitForSelector('[role="alert"][aria-label="백엔드 연결 대기"]')
     await page.waitForTimeout(500)
     check(posts.length === 0, '저장소 없이 단계를 열면 POST /migrations 없이 대기 안내를 보여 준다')

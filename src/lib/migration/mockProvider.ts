@@ -3,7 +3,7 @@ import type { EnterContext, MigrationProvider, ProviderHost } from './provider'
 import { TRAFFIC_READY_EVENTS, trafficPrepareTimeline, approvalTimeline, reportFor, timelineFor, type ScriptedPhase, type TimedDraft } from './script'
 import { DATA_LSN_TICK_MS, dataTickAt, dataTimeline } from './dataScript'
 import { TrafficSim } from './trafficSim'
-import { aiFixCount, deliveryFailDemo, digestMismatchDemo, preflightScenario, reviewDemo, sandboxScenario } from '../demoConfig'
+import { aiFixCount, deliveryFailDemo, digestMismatchDemo, preflightScenario, reviewDemo, sandboxScenario, mockSpeed } from '../demoConfig'
 
 /**
  * 백엔드 없이 지금까지와 똑같이 움직이게 하는 공급자. 단계 화면이 준비되면 그 단계의 대본(script.ts)을
@@ -40,7 +40,8 @@ export class MockProvider implements MigrationProvider {
 
   /** 대본을 시각대로 내보내고, 멈추는 함수를 돌려준다. */
   private play(items: TimedDraft[]): () => void {
-    const timers = items.map(({ after, event }) => window.setTimeout(() => this.emit(event), after))
+    const speed = mockSpeed()
+    const timers = items.map(({ after, event }) => window.setTimeout(() => this.emit(event), after / speed))
     return () => timers.forEach(timer => window.clearTimeout(timer))
   }
 
@@ -92,21 +93,21 @@ export class MockProvider implements MigrationProvider {
         const began = performance.now()
         const stopScript = this.play(dataTimeline(this.target, scenario, Date.now()))
         const timer = window.setInterval(() => {
-          for (const event of dataTickAt(performance.now() - began, scenario)) this.emit(event)
-        }, DATA_LSN_TICK_MS)
+          for (const event of dataTickAt((performance.now() - began) * mockSpeed(), scenario)) this.emit(event)
+        }, DATA_LSN_TICK_MS / mockSpeed())
         stop = () => { stopScript(); window.clearInterval(timer) }
         break
       }
       case 'traffic': {
-        const sim = new TrafficSim(data => this.emit({ type: 'traffic.snapshot', phase: 'traffic', status: data.phase === 'complete' ? 'done' : 'running', data }))
+        const sim = new TrafficSim(data => this.emit({ type: 'traffic.snapshot', phase: 'traffic', status: data.phase === 'complete' ? 'done' : 'running', data }), undefined, mockSpeed())
         this.traffic = sim
         // 먼저 전환 조건을 확인하고(전환 가능 시점), 확인이 끝나면 트래픽을 옮기기 시작한다.
-        const timers = TRAFFIC_READY_EVENTS.map(item => window.setTimeout(() => this.emit({ type: 'traffic.ready', phase: 'traffic', status: 'running', data: item.data }), item.after))
+        const timers = TRAFFIC_READY_EVENTS.map(item => window.setTimeout(() => this.emit({ type: 'traffic.ready', phase: 'traffic', status: 'running', data: item.data }), item.after / mockSpeed()))
         // [가정] 사전 확인(traffic_prepare): 인계 상태·ready·external_endpoint·헬스를 확인하고 연결 정보를 알린다.
         const prepare = trafficPrepareTimeline(this.target)
-        for (const item of prepare) timers.push(window.setTimeout(() => this.emit({ type: 'traffic.prepare', phase: 'traffic', status: item.data.state === 'done' ? 'done' : 'running', data: item.data }), item.after))
+        for (const item of prepare) timers.push(window.setTimeout(() => this.emit({ type: 'traffic.prepare', phase: 'traffic', status: item.data.state === 'done' ? 'done' : 'running', data: item.data }), item.after / mockSpeed()))
         const startAt = Math.max(TRAFFIC_READY_EVENTS[TRAFFIC_READY_EVENTS.length - 1].after, prepare[prepare.length - 1].after)
-        timers.push(window.setTimeout(() => sim.start(), startAt))
+        timers.push(window.setTimeout(() => sim.start(), startAt / mockSpeed()))
         stop = () => { timers.forEach(timer => window.clearTimeout(timer)); sim.stop(); if (this.traffic === sim) this.traffic = null }
         break
       }

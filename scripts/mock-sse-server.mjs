@@ -24,6 +24,8 @@ const PORT = Number(process.env.PORT || 8000)
 const HOST = process.env.HOST || '127.0.0.1'
 const STATE_FILE = process.env.MOCK_STATE_FILE || join(tmpdir(), 'mock-sse-state.json')
 const HEARTBEAT_MS = 15000
+// 시험용 MOCK_SPEED=N(1–20): 대본 시계를 N배 빠르게 돌린다(단위 시험이 실제 시간만큼 기다리지 않게).
+const SPEED = Math.min(20, Math.max(1, Number(process.env.MOCK_SPEED) || 1))
 const PHASE_GAP_MS = 800
 
 const CORS = {
@@ -100,7 +102,7 @@ function wait(record, ms) {
   const state = runtime(record.id)
   return new Promise((resolve, reject) => {
     if (state.cancelled) return reject(CANCELLED)
-    const waiter = { timer: setTimeout(() => { state.waiters.delete(waiter); resolve() }, ms), reject }
+    const waiter = { timer: setTimeout(() => { state.waiters.delete(waiter); resolve() }, ms / SPEED), reject }
     state.waiters.add(waiter)
   })
 }
@@ -119,7 +121,7 @@ function cancelRun(record) {
 async function play(record, items) {
   const began = Date.now()
   for (const { after, event } of [...items].sort((a, b) => a.after - b.after)) {
-    await wait(record, Math.max(0, after - (Date.now() - began)))
+    await wait(record, Math.max(0, after - (Date.now() - began) * SPEED))
     emit(record, event)
   }
 }
@@ -185,8 +187,8 @@ const phaseRunners = {
     const script = play(record, dataTimeline(record.target, scenario, began)).finally(() => { finished = true })
     for (;;) {
       await wait(record, DATA_LSN_TICK_MS)
-      for (const event of dataTickAt(Date.now() - began, scenario)) emit(record, event)
-      if (scenario === 'pass' && finished && Date.now() - began > DATA_END_MS) break
+      for (const event of dataTickAt((Date.now() - began) * SPEED, scenario)) emit(record, event)
+      if (scenario === 'pass' && finished && (Date.now() - began) * SPEED > DATA_END_MS) break
       // 시작 차단: 판정 뒤에는 더 보낼 것이 없다. 취소될 때까지 기다린다.
       if (scenario !== 'pass' && finished) await wait(record, 2 ** 31 - 1)
     }
@@ -212,7 +214,7 @@ const phaseRunners = {
       const sim = new TrafficSim(data => {
         emit(record, { type: 'traffic.snapshot', phase: 'traffic', status: data.phase === 'complete' ? 'done' : 'running', data })
         if (data.phase === 'complete' && data.residual.requests_per_sec === 0 && data.residual.streams === 0) resolve()
-      })
+      }, undefined, SPEED)
       state.sim = sim
       state.approvals.set('traffic', { resolve, reject })
       sim.start()
