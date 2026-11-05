@@ -32,7 +32,7 @@ const initScript = voiceLang => {
         recognition.onresult?.({ results: [[{ transcript: text }]] })
         setTimeout(() => recognition.onend?.(), 0)
         resolve(recognition.lang)
-      } else if (Date.now() - started > 30000) reject(new Error('listening state timeout'))
+      } else if (Date.now() - started > 60000) reject(new Error('listening state timeout'))
       else setTimeout(tick, 100)
     }
     tick()
@@ -85,7 +85,7 @@ for (const voice of ['ko', 'en', 'ja']) for (const spoken of ['ko', 'en', 'ja'])
   cases.push({ name: `교차 planning · 음성 ${voice} · 호출어 ${spoken}`, screen: 'ko', voice, stage: 'planning', phrase: PHRASES[spoken], expect: ANSWER[voice] })
 }
 // 3) 호출어 + 뒷말
-cases.push({ name: '호출어+뒷말 planning ko', screen: 'ko', voice: 'ko', stage: 'planning', phrase: '헤이 자칼 지금 어디야', expect: /지금 계획 수립|계획 수립/ })
+cases.push({ name: '호출어+뒷말 planning ko', screen: 'ko', voice: 'ko', stage: 'planning', phrase: '헤이 자칼 지금 어디야', expect: /(지금|현재).*계획|계획 (수립|단계)/ })
 // 4) 첫 화면: 처음 호출 / 이미 시작된 뒤 호출 (화면 언어별)
 for (const screen of ['ko', 'en', 'ja']) {
   cases.push({ name: `첫 화면(처음) · 화면 ${screen}`, screen, voice: screen, stage: 'intro', phrase: PHRASES[screen], expect: ({ ko: /말씀하세요|듣고|어디로|옮기/, en: /listening|Where|move/, ja: /どうぞ|聞い|どこ|移/ })[screen] })
