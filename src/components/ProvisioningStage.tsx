@@ -1,37 +1,12 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import StageShell from './StageShell'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
 import type { Target } from '../lib/stages'
 import { useT, useTOr, type MsgKey } from '../lib/i18n'
-import { reportsStorage } from '../lib/migration/planModel'
-import ArchitectureDiagram, { type NodeState } from './ArchitectureDiagram'
-import ZoomableDiagram from './ZoomableDiagram'
-import { ViewTabs } from './DiagramParts'
-
-/** 새 줄은 빈 줄로 붙은 뒤 다음 프레임에 펼쳐진다(펼침 전환이 보이게). */
-function RevealRow({ index, category, name, info }: { index: number; category: string; name: string; info: string }) {
-  const [open, setOpen] = useState(false)
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => setOpen(true))
-    return () => cancelAnimationFrame(frame)
-  }, [])
-  return <div className={'analysis-result' + (open ? ' is-discovered' : '')}>
-    <span className="analysis-result-point" aria-hidden="true" />
-    <div className="analysis-result-content">
-      <small>{String(index + 1).padStart(2, '0')}{category ? ' / ' + category : ''}</small>
-      <strong>{name}</strong>
-      <p>{info}</p>
-    </div>
-  </div>
-}
-
-// 만들어지는 리소스가 구성도의 어느 요소에 해당하는지
-const NODE_MAP: Record<Target, Record<string, string[]>> = {
-  gcp: { network: ['group'], cluster: ['group'], db: ['db'], app: ['app'], lb: ['entry'], cert: ['dns', 'user'] },
-  onprem: { agent: ['group'], cluster: ['group'], db: ['db'], app: ['app'], relay: ['entry'], cert: ['dns', 'user'] },
-}
+import { KIND_ORDER, REGION, addressOf, kindOf, readyKinds, specOf } from '../lib/migration/provisionModel'
+import ProvisioningScene, { KindSwatch, type SceneResource } from './ProvisioningScene'
 
 export default function ProvisioningStage({ target, onNext, onComplete }: { target: Target; onNext: () => void; onComplete?: () => void }) {
   const t = useT()
@@ -41,40 +16,69 @@ export default function ProvisioningStage({ target, onNext, onComplete }: { targ
   </StageShell>
 }
 
+type Line = { mark: string; text: string; note?: string; gold?: boolean }
+
 function ProvisioningBody({ ready, target, onNext, onComplete }: { ready: boolean; target: Target; onNext: () => void; onComplete?: () => void }) {
   const t = useT()
-  // 만들어진 리소스는 provision.resource 이벤트로 받는다.
+  const tOr = useTOr()
+  // 만들어진 리소스는 provision.resource 이벤트로, 준비 상태 검사는 provision.check로 받는다(이름은 서버가 정한다).
   const { state: migration } = useMigration()
   const events = migration.provision.resources
-  // 리소스가 만들어진 뒤의 준비 상태 검사 3개와, 승인 뒤 같은 테스트 묶음 재실행(retest)
   const checks = migration.provision.checks
-  // 받은 검사가 모두 끝나야 다음으로 간다(검사 이름은 서버가 정한다).
   const checksDone = checks.length > 0 && checks.every(check => check.state === 'done')
   useStageFeed('provisioning', ready, target)
-  const tOr = useTOr()
   // 이벤트에 이름·설명이 있으면 그대로, 없으면 알려진 key의 문구, 그것도 없으면 key 자체
   const text = (key: string, field: 'name' | 'detail' | 'log' | 'info') => tOr('prov.' + target + '.' + key + '.' + field, field === 'name' || field === 'log' ? key : '')
-  const nameOf = (event: (typeof events)[number]) => event.name || text(event.key, 'name')
-  const infoOf = (event: (typeof events)[number]) => event.detail || text(event.key, 'info')
   const targetName = t(('target.' + target) as MsgKey)
-  const listRef = useRef<HTMLDivElement>(null)
-  const [view, setView] = useState<'diagram' | 'log'>('diagram')
-  const [swapped, setSwapped] = useState(false)
+  const region = REGION[target]
   const progress = events.length ? events[events.length - 1].progress : 0
   const finished = progress === 100
   useEffect(() => { if (finished) onComplete?.() }, [finished, onComplete])
-  const nodeStates: Record<string, NodeState> = {}
-  events.forEach((event, index) => {
-    const latest = index === events.length - 1 && !finished
-    for (const node of NODE_MAP[target][event.key] ?? []) nodeStates[node] = latest ? 'on' : 'done'
-  })
 
+  // 장면에서 면(생성됨)까지 조립이 끝난 블록. 명령줄·상태표가 이것을 따라 created로 바뀐다.
+  const [settled, setSettled] = useState<ReadonlySet<string>>(() => new Set())
+  const onSettled = useCallback((id: string) => setSettled(prev => prev.has(id) ? prev : new Set(prev).add(id)), [])
+
+  const goldKinds = readyKinds(checks)
+  const allReady = finished && checksDone
+  const resources: SceneResource[] = events.map((event, index) => {
+    const kind = kindOf({ key: event.key, name: event.name })
+    return {
+      id: event.id, num: index + 1, kind, state: event.state,
+      title: event.name || text(event.key, 'name'),
+      spec: event.detail || specOf(target, event.key) || text(event.key, 'detail'),
+      ready: event.state === 'done' && settled.has(event.id) && (allReady || goldKinds === 'all' || goldKinds.has(kind)),
+    }
+  })
+  const presentKinds = KIND_ORDER.filter(kind => resources.some(r => r.kind === kind))
+  const builtAll = finished && resources.every(r => settled.has(r.id))
+
+  // 명령줄: 받은 이벤트를 테라폼 적용 기록처럼 보인다(마지막 세 줄)
+  const plan = migration.plan.meta
+  const lines: Line[] = [{ mark: '$', text: `agent apply ${plan?.plan_id ?? 'plan'}${plan ? ' · rev ' + plan.revision : ''} --target ${region.command}` }]
+  for (const event of events) {
+    const address = addressOf(target, event.key)
+    lines.push({ mark: '+', text: address, note: 'creating…' })
+    if (event.state === 'failed') lines.push({ mark: '✗', text: address, note: 'failed' })
+    else if (settled.has(event.id)) lines.push({ mark: '✓', text: address, note: 'created · ' + (event.detail || specOf(target, event.key) || text(event.key, 'detail')) })
+  }
+  if (builtAll) for (const check of checks) {
+    lines.push({ mark: '›', text: 'check ' + check.name, note: 'running…' })
+    if (check.state === 'done') lines.push({ mark: '✓', gold: true, text: 'check ' + check.name, note: 'passed' + (check.total !== undefined ? ' · ' + (check.passed ?? 0) + ' / ' + check.total : '') })
+    if (check.state === 'failed') lines.push({ mark: '✗', text: 'check ' + check.name, note: 'failed' })
+  }
+  if (allReady && builtAll) lines.push({ mark: '●', gold: true, text: 'environment ready', note: t(target === 'onprem' ? 'prov.handoffOnprem' : 'prov.handoffGcp') })
+  const shown = lines.slice(-3)
+
+  const listRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })
-  }, [events.length, checks.length])
+  }, [events.length, checks.length, builtAll])
 
-  return <div className="flow-split">
-    <section className="analysis-cluster analysis-infrastructure flow-cluster" aria-label={t('prov.clusterTitle', { target: targetName })}>
+  const pill = (resource: SceneResource) => resource.state === 'failed' ? 'failed' : resource.ready ? 'ready' : settled.has(resource.id) ? 'created' : 'creating'
+
+  return <div className="flow-split prov-split">
+    <section className="analysis-cluster analysis-infrastructure flow-cluster prov-build" aria-label={t('prov.clusterTitle', { target: targetName })}>
       <div className="analysis-cluster-heading">
         <span className="analysis-cluster-icon" aria-hidden="true">◫</span>
         <div>
@@ -86,47 +90,62 @@ function ProvisioningBody({ ready, target, onNext, onComplete }: { ready: boolea
       <div className="analysis-progress" role="progressbar" aria-label={t('prov.progressAria')} aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}>
         <span style={{ width: progress + '%' }} />
       </div>
-      <div className="analysis-stream">
-        <div ref={listRef} tabIndex={0} className={'analysis-result-list' + (events.length > 0 ? ' has-results' : '')}>
-          {events.map((event, index) => <RevealRow key={event.id} index={index} category={text(event.key, 'detail')} name={nameOf(event)} info={infoOf(event)} />)}
-          {checks.map((check, index) => {
-            const known = 'prov.check.' + check.name
-            const info = check.state !== 'done' ? t('prov.check.running')
-              : check.name === 'retest' ? t('prov.check.retest.info', { passed: check.passed ?? 0, total: check.total ?? 0 })
-              : tOr(known + '.info', check.total !== undefined ? (check.passed ?? 0) + ' / ' + check.total : '')
-            return <RevealRow key={'check-' + check.name} index={events.length + index} category={tOr(known + '.detail')} name={tOr(known + '.name', check.name)} info={info} />
-          })}
+      <div className="prov-term" role="log" aria-label={t('prov.terminalAria')} aria-live="off">
+        {shown.map((line, index) => <div key={lines.length - shown.length + index} className={index === shown.length - 1 ? 'is-current' : ''}>
+          <span className={'prov-term-mark' + (line.gold ? ' is-gold' : '')}>{line.mark}</span> {line.text}{line.note && <span className="prov-term-note"> {line.note}</span>}
+          {index === shown.length - 1 && !(allReady && builtAll) && <span className="prov-term-caret" aria-hidden="true" />}
+        </div>)}
+      </div>
+      <div className="prov-scene-wrap">
+        <ProvisioningScene resources={resources} floorLabel={region.floor} subnets={region.subnets} userLabel={t('prov.user')}
+          ariaLabel={t('prov.sceneAria', { target: targetName, count: resources.length })}
+          traffic={allReady && builtAll ? 'ready' : builtAll ? 'on' : 'off'} onSettled={onSettled} />
+        <div className="prov-legend">
+          {presentKinds.map(kind => <span key={kind}><KindSwatch kind={kind} />{t(('prov.kind.' + kind) as MsgKey)}</span>)}
+          <span className="prov-legend-phase">{t('prov.legendPhase')}</span>
         </div>
-        {!finished
-          ? <div className="analysis-scanning" aria-hidden="true"><span />{t('prov.nextResource')}</div>
-          : <div className="analysis-complete" aria-hidden="true"><span>✓</span>{t('prov.ready')}</div>}
       </div>
     </section>
 
-    <aside className={'analysis-discovery flow-cluster' + (swapped ? ' is-swapped' : '')} aria-label={t('prov.logAria')}>
+    <aside className="analysis-discovery flow-cluster prov-status" aria-label={t('prov.statusTitle')}>
       <div className="analysis-discovery-title">
         <span className="analysis-live-dot" />
-        <ViewTabs label={t('tab.aria')} value={view} onChange={next => { setSwapped(true); setView(next) }}
-          items={[{ id: 'diagram', label: t('tab.diagram') }, { id: 'log', label: t('tab.log') }]} />
+        <h2>{t('prov.statusTitle')}</h2>
         <small>DEMO</small>
       </div>
-      {view === 'diagram' && <div className="prov-diagram">
-        <ZoomableDiagram><ArchitectureDiagram view="after" target={target} states={nodeStates} adaptive storage={reportsStorage(migration)} /></ZoomableDiagram>
-        <p className="flow-note">{t('prov.diagramNote')}</p>
-      </div>}
-      {view === 'log' && <div className="analysis-discovery-items" tabIndex={0} aria-live="polite">
-        {events.length === 0
-          ? <p>{t('prov.logEmpty')}</p>
-          : [...events].reverse().map(event => <div className="analysis-discovery-item" key={event.id}>
-              <small>{String(events.indexOf(event) + 1).padStart(2, '0')}</small>
-              <strong>{event.name || text(event.key, 'log')}</strong>
-              <em>{infoOf(event)}</em>
-            </div>)}
-      </div>}
-      {finished && <div className="flow-handoff">
-        <strong>{t('prov.handoffTitle')}</strong>
-        <p>{t(target === 'onprem' ? 'prov.handoffOnprem' : 'prov.handoffGcp')}</p>
-      </div>}
+      <div ref={listRef} className="prov-status-list" tabIndex={0}>
+        {resources.length === 0 && <p className="prov-empty">{t('prov.logEmpty')}</p>}
+        {resources.map(resource => {
+          const state = pill(resource)
+          return <div key={resource.id} className={'prov-svc is-' + state}>
+            <span className="prov-svc-num" aria-hidden="true">{resource.num}</span>
+            <KindSwatch kind={resource.kind} />
+            <div className="prov-svc-body">
+              <strong>{resource.title}</strong>
+              <code>{addressOf(target, events[resource.num - 1].key)}</code>
+            </div>
+            <span className={'prov-pill is-' + state}>{state}</span>
+          </div>
+        })}
+        {checks.length > 0 && <div className="prov-checks">
+          <h3>{t('prov.checksTitle')}</h3>
+          {checks.map(check => {
+            const known = 'prov.check.' + check.name
+            const info = check.state !== 'done' ? t('prov.check.running')
+              : check.total !== undefined ? (check.passed ?? 0) + ' / ' + check.total
+              : tOr(known + '.detail', '')
+            return <div key={check.name} className={'prov-check is-' + check.state}>
+              <span aria-hidden="true">{check.state === 'done' ? '✓' : check.state === 'failed' ? '✗' : '◌'}</span>
+              <strong>{tOr(known + '.name', check.name)}</strong>
+              <em>{info}</em>
+            </div>
+          })}
+        </div>}
+        {finished && <div className="flow-handoff">
+          <strong>{t('prov.handoffTitle')}</strong>
+          <p>{t(target === 'onprem' ? 'prov.handoffOnprem' : 'prov.handoffGcp')}</p>
+        </div>}
+      </div>
     </aside>
 
     <div className="flow-footer flow-footer-wide">
