@@ -1,5 +1,6 @@
 import { githubAuthConfigured } from './authCallbacks.ts'
 import { GithubError, listPublicRepos, pinPublicSource } from './repos.ts'
+import { scanPublicSource } from './scan.ts'
 
 /**
  * /api/github/* 라우트의 본체. 세션 읽기와 fetch를 주입받아 단위 테스트에서 가짜 GitHub로 시험한다.
@@ -48,6 +49,19 @@ export async function handleListRepos(request: Request, deps: HandlerDeps): Prom
     const page = await listPublicRepos({ token: current.token, fetchImpl: deps.fetchImpl, apiBase: deps.apiBase },
       { page: params.get('page'), perPage: params.get('per_page'), q: params.get('q') ?? '' })
     return json(200, { viewer: current.login, ...page })
+  } catch (error) {
+    return fromError(error)
+  }
+}
+
+/** POST /api/github/scan {full_name, commit_sha} → 파일 목록·탐지 결과(소스 원문은 돌려주지 않는다) */
+export async function handleScan(request: Request, deps: HandlerDeps): Promise<Response> {
+  const current = await session(request, deps)
+  if (current instanceof Response) return current
+  let body: { full_name?: unknown; commit_sha?: unknown }
+  try { body = await request.json() as typeof body } catch { return fail(400, 'bad_request') }
+  try {
+    return json(200, await scanPublicSource({ token: current.token, fetchImpl: deps.fetchImpl, apiBase: deps.apiBase }, body?.full_name, body?.commit_sha))
   } catch (error) {
     return fromError(error)
   }
