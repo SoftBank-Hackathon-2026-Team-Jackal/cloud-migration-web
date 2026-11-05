@@ -1,45 +1,54 @@
 'use client'
 
-import { useT, type MsgKey } from '../lib/i18n'
+import { useT, useTOr, type MsgKey } from '../lib/i18n'
 import type { Target } from '../lib/stages'
-
-/**
- * 이전 전/후 고정 요금 비교. 공개 가격표에서 확인한 항목만 계산한다(2026-11-03 조회).
- * - EKS 컨트롤 플레인 $0.10/시간, GKE 클러스터 관리 $0.10/시간(영구 무료 크레딧 월 $74.40은 한 청구 계정당 1개 클러스터)
- * - ALB 고정 요금 $0.0225/시간(서울 리전, LCU 사용료 별도)
- * - NAT 게이트웨이 고정 요금 $0.059/시간(서울 리전, 처리 데이터 $0.059/GB 별도)
- * 노드·스토리지·데이터 전송은 사양과 사용량에 따라 달라 포함하지 않는다.
- */
-const HOURS_PER_MONTH = 730
-const CONTROL_PLANE = 0.1 * HOURS_PER_MONTH // $73.0
-const ALB_FIXED = 0.0225 * HOURS_PER_MONTH // $16.4
-const NAT_FIXED = 0.059 * HOURS_PER_MONTH // $43.1
-const GKE_CREDIT = 74.4
+import type { CostEstimate, CostLine } from '../lib/migration/events'
 
 const usd = (value: number) => '$' + value.toFixed(1)
 
-export default function CostCompare({ target }: { target: Target }) {
+/** 합계는 양쪽 값이 모두 있는 줄만 더한다(한쪽이 추정 대기면 비교가 맞지 않는다). */
+function totals(lines: CostLine[]) {
+  const comparable = lines.filter(line => !line.excluded && line.source_usd !== null && line.target_usd !== null)
+  return {
+    source: comparable.reduce((sum, line) => sum + (line.source_usd ?? 0), 0),
+    target: comparable.reduce((sum, line) => sum + (line.target_usd ?? 0), 0),
+    pending: lines.filter(line => !line.excluded && (line.source_usd === null || line.target_usd === null)).length,
+  }
+}
+
+/**
+ * 이전 전/후 고정 요금 비교. 값은 계획 미리보기의 요금 추정(plan.preview.cost [가정])에서 읽는다.
+ * 추정이 없거나 한쪽 값이 없으면 숫자를 지어내지 않고 '추정 대기'로 보인다.
+ */
+export default function CostCompare({ target, cost }: { target: Target; cost: CostEstimate | null | undefined }) {
   const t = useT()
-  const afterControl = target === 'gcp' ? t('cost.gcpControl', { fee: usd(CONTROL_PLANE), credit: usd(GKE_CREDIT) }) : t('cost.onpremControl')
-  const afterLb = target === 'gcp' ? t('cost.unknown') : t('cost.onpremLb')
-  const afterNat = target === 'gcp' ? t('cost.unknown') : t('cost.onpremNat')
-  const afterTotal = target === 'gcp' ? '$0 ~ ' + usd(CONTROL_PLANE) : '$0'
-  const rows: Array<{ label: string; before: string; after: string }> = [
-    { label: t('cost.control'), before: usd(CONTROL_PLANE) + t('cost.perMonth'), after: afterControl },
-    { label: t('cost.lb'), before: usd(ALB_FIXED) + t('cost.perMonth'), after: afterLb },
-    { label: t('cost.nat'), before: usd(NAT_FIXED) + t('cost.perMonth'), after: afterNat },
-    { label: t('cost.nodes'), before: t('cost.excluded'), after: t('cost.excluded') },
-  ]
+  const tOr = useTOr()
+  if (!cost || cost.lines.length === 0) return <div className="cost-pending" role="status">
+    <strong>{t('cost.pending.title')}</strong>
+    <p>{t('cost.pending.lead')}</p>
+  </div>
+
+  const sum = totals(cost.lines)
+  const credit = cost.credits_usd ?? 0
+  const value = (amount: number | null, line: CostLine) => line.excluded ? t('cost.excluded') : amount === null ? t('cost.pendingShort') : usd(amount)
+  const noteOf = (line: CostLine) => tOr('cost.note.' + target + '.' + line.id, '')
   return <div className="cost">
     <div className="cost-row cost-head">
       <span>{t('cost.item')}</span><span>AWS</span><span>{t(('target.' + target + '.short') as MsgKey)}</span>
     </div>
-    {rows.map(row => <div key={row.label} className="cost-row">
-      <span>{row.label}</span><span>{row.before}</span><span>{row.after}</span>
-    </div>)}
+    {cost.lines.map(line => {
+      const note = noteOf(line)
+      return <div key={line.id} className={'cost-row' + (line.excluded ? ' is-excluded' : '') + (!line.excluded && line.target_usd === null ? ' is-pending' : '')}>
+        <span>{line.label || tOr('cost.' + line.id, line.id)}</span>
+        <span>{value(line.source_usd, line)}</span>
+        <span>{value(line.target_usd, line)}{note && <small>{note}</small>}</span>
+      </div>
+    })}
     <div className="cost-row cost-total">
-      <span>{t('cost.total')}</span><span>{usd(CONTROL_PLANE + ALB_FIXED + NAT_FIXED)}{t('cost.perMonth')}</span><span>{afterTotal}{t('cost.perMonth')}</span>
+      <span>{t('cost.total')}</span>
+      <span>{usd(sum.source)}{t('cost.perMonth')}</span>
+      <span>{usd(sum.target)}{t('cost.perMonth')}{credit > 0 && <small>{t('cost.withCredit', { total: usd(Math.max(0, sum.target - credit)), credit: usd(credit) })}</small>}</span>
     </div>
-    <p className="flow-note">{t('cost.note')}</p>
+    <p className="flow-note">{sum.pending > 0 ? t('cost.notePending', { n: sum.pending }) + ' ' : ''}{t('cost.note', { date: cost.basis ?? '—' })}</p>
   </div>
 }

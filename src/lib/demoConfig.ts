@@ -35,3 +35,8 @@ export function reviewDemo(): boolean {
 export function digestMismatchDemo(): boolean {
   return flag('digest', 'mismatch')
 }
+
+/** 시연용 ?delivery=fail: 승인은 기록되지만 첫 전달이 실패한다(다시 전달하면 성공). */
+export function deliveryFailDemo(): boolean {
+  return flag('delivery', 'fail')
+}

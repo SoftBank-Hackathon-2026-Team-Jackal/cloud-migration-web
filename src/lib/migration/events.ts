@@ -148,6 +148,24 @@ export type EnvRemap = { key: string; from: string; to: string; secret: boolean;
 export type SecurityRule = { from: string; to: string; port: number | null; protocol: 'TCP' | 'UDP' | 'ANY'; action: 'ALLOW' | 'DENY' }
 /** 검증 문제. message가 비면 화면이 id로 자기 문구를 쓴다. resource는 걸린 리소스 id. */
 export type PlanIssue = { id: string; resource?: string; message: string }
+/**
+ * 전환 방법 [가정: 백엔드 계약 없음]. traffic_steps는 대상 비율(%) 단계, traffic_method는 정해졌을 때만 온다
+ * (Route 53 가중치·중계 프록시 중 아직 미정이라 비어 있으면 화면은 방식을 이름 붙이지 않는다).
+ * expected_write_pause_ms는 DB 전환 순간의 예상 쓰기 중단, data_method는 데이터 복제 방식이다.
+ */
+export type PlanRollout = {
+  traffic_steps: number[]
+  traffic_method?: 'DNS_WEIGHTED' | 'PROXY_WEIGHTED' | (string & {})
+  expected_write_pause_ms?: number
+  data_method?: 'DUMP_CDC' | (string & {})
+}
+/**
+ * 고정 요금 추정 한 줄 [가정]. id는 control·lb·nat·nodes 같은 항목 이름(모르는 id는 label을 보인다).
+ * 값이 null이면 그 쪽은 아직 추정하지 못했다(화면은 '추정 대기'로 보인다). 단위는 USD/월.
+ */
+export type CostLine = { id: string; label?: string; source_usd: number | null; target_usd: number | null; excluded?: boolean }
+/** 고정 요금 추정 [가정]. credits_usd는 대상 쪽에 적용되는 월 크레딧(예: GKE 클러스터 하나 무료), basis는 가격 조회 근거. */
+export type CostEstimate = { currency: 'USD'; lines: CostLine[]; credits_usd?: number; basis?: string }
 export type PlanPreviewData = {
   plan_id: string
   revision: number
@@ -157,6 +175,8 @@ export type PlanPreviewData = {
   env_remap: EnvRemap[]
   security_rules: SecurityRule[]
   validation: { errors: PlanIssue[]; warnings: PlanIssue[] }
+  rollout?: PlanRollout
+  cost?: CostEstimate
 }
 
 const LEGACY_GRADE: Record<string, Grade> = { direct: 'DIRECT', convert: 'API_DIFF', partial: 'PARTIAL', none: 'NONE' }
@@ -192,6 +212,25 @@ export type ApprovalRequiredData = {
   rollback_policy: string
   /** 두 번째 승인(DB 전환)이면 'cutover'. 비어 있으면 계획 승인이다. */
   gate?: 'cutover'
+}
+
+/*
+ * 승인 결정의 접수·전달·실행 상태 [가정: SSE 이벤트 이름]. 필드는 백엔드 ApprovalResponse(openapi)와 같다.
+ * ADR-002: 결정이 기록돼도 실행 엔진(Workflow)에 전달되지(DELIVERED) 않았으면 완료로 보이지 않는다.
+ * SSE 공급자는 승인 API의 응답도 같은 모양으로 상태에 넣는다.
+ */
+export type DeliveryStatus = 'PENDING' | 'DELIVERED' | 'FAILED'
+export type ExecutionStatus = 'NOT_STARTED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN'
+export type ApprovalDecisionData = {
+  approval_id: string
+  plan_id: string
+  revision: number
+  decision: 'APPROVE' | 'REJECT'
+  scope: 'INFRASTRUCTURE' | 'WORKLOADS' | 'FULL'
+  delivery_status: DeliveryStatus
+  delivery_attempts: number
+  execution_status: ExecutionStatus
+  workflow_state?: string
 }
 
 /** 만든 리소스. name·detail이 오면 그대로 보이고, 없으면 화면이 key로 자기 문구를 쓴다(알려진 key만) [가정]. */
@@ -294,6 +333,7 @@ export type MigrationEvent =
   | Base<'plan.ready', PlanReadyData>
   | Base<'plan.preview', PlanPreviewData>
   | Base<'approval.required', ApprovalRequiredData>
+  | Base<'approval.decision', ApprovalDecisionData>
   | Base<'provision.resource', ProvisionResourceData>
   | Base<'provision.check', ProvisionCheckData>
   | Base<'data.progress', DataProgressData>

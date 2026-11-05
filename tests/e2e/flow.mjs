@@ -70,8 +70,12 @@ try {
   await press('.plan-next button')
   check(/v2/.test(await page.locator('.approval-digest').innerText()), '승인 화면의 계획 버전이 v2다')
   await page.locator('.approval-check input').check()
-  await press('.approval-actions .flow-primary')
-  note('승인')
+  await page.locator('.approval-actions .flow-primary').first().click()
+  // 승인은 기록 → 실행 엔진 전달을 거친다. 전달되기 전에는 승인 화면에 머문다(ADR-002).
+  await page.waitForSelector('.approval-delivery').then(() => check(true, '승인 뒤 전달 상태가 보인다'), () => check(false, '승인 뒤 전달 상태가 보인다'))
+  await page.waitForSelector('.approval-panel', { state: 'detached' })
+  await page.waitForTimeout(1800)
+  note('승인 전달됨')
 
   // 구축: 준비 상태 검사 3개와 같은 테스트 묶음 재실행이 끝나야 다음으로 넘어간다.
   await press('.flow-footer .flow-primary')

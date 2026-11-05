@@ -11,16 +11,10 @@ import { diagramSteps } from '../lib/migration/planModel'
  * 원본 유지 항목은 대상 쪽을 점선·흐리게, 검증한 이미지(Digest 고정)는 자물쇠 표시로 보인다.
  */
 
-const W = 880
-const PANEL = 340
-const RIGHT_X = W - PANEL
-const NODE_W = 228
-const NODE_H = 56
-const PITCH = 98
-const FRAME_TOP = 52
-const FIRST_ROW = FRAME_TOP + 84
-const CX = { source: PANEL / 2, target: RIGHT_X + PANEL / 2 }
-const GUTTER_X = W / 2
+/** 배치 치수. compact는 승인 화면처럼 좁은 칸용(글자 크기는 같고 판과 노드만 좁다). */
+type Geometry = { W: number; PANEL: number; NODE_W: number; NODE_H: number; PITCH: number; FRAME_TOP: number; FIRST_ROW: number }
+const WIDE: Geometry = { W: 880, PANEL: 340, NODE_W: 228, NODE_H: 56, PITCH: 98, FRAME_TOP: 52, FIRST_ROW: 52 + 84 }
+const COMPACT: Geometry = { W: 720, PANEL: 268, NODE_W: 214, NODE_H: 52, PITCH: 84, FRAME_TOP: 52, FIRST_ROW: 52 + 78 }
 
 type Side = 'source' | 'target'
 type Node = { step: PlanStepData; kind: PlanNodeKind; row: number; y: number; source: Text2; target: Text2 }
@@ -61,7 +55,8 @@ function Flow({ path, count = 3, duration = 2.6, className = '' }: { path: strin
   </circle>)}</>
 }
 
-function NodeShape({ kind, x, y, side, keep, entry }: { kind: PlanNodeKind; x: number; y: number; side: Side; keep: boolean; entry: boolean }) {
+function NodeShape({ kind, x, y, side, keep, entry, g }: { kind: PlanNodeKind; x: number; y: number; side: Side; keep: boolean; entry: boolean; g: Geometry }) {
+  const { NODE_W, NODE_H } = g
   const cls = 'topo-box' + (side === 'target' ? ' is-target' : '') + (keep ? ' is-keep' : '') + (entry ? ' is-entry' : '')
   if (kind === 'database' || kind === 'cache') {
     const ry = 7
@@ -77,7 +72,7 @@ function NodeShape({ kind, x, y, side, keep, entry }: { kind: PlanNodeKind; x: n
   return <g className={cls}><rect x={x} y={y} width={NODE_W} height={NODE_H} rx="10" /></g>
 }
 
-export default function PlanTopology({ steps, preview, digest, revealed, sourceLabel, targetLabel, textOf }: {
+export default function PlanTopology({ steps, preview, digest, revealed, sourceLabel, targetLabel, textOf, compact = false }: {
   steps: PlanStepData[]
   /** 매핑 항목의 원본·대상 문구(계획 화면과 같은 규칙: 이벤트 값 → 대상별 사전 → id) */
   textOf: (step: PlanStepData, field: 'before' | 'after') => string
@@ -88,9 +83,16 @@ export default function PlanTopology({ steps, preview, digest, revealed, sourceL
   revealed: number
   sourceLabel: { provider: string; place: string }
   targetLabel: { provider: string; place: string }
+  /** 좁은 칸(승인 화면)용 배치 */
+  compact?: boolean
 }) {
   const t = useT()
   const reduced = useReducedMotion()
+  const g = compact ? COMPACT : WIDE
+  const { W, PANEL, NODE_W, NODE_H, PITCH, FRAME_TOP, FIRST_ROW } = g
+  const RIGHT_X = W - PANEL
+  const CX = { source: PANEL / 2, target: RIGHT_X + PANEL / 2 }
+  const GUTTER_X = W / 2
 
   const ordered = diagramSteps(steps).filter(item => item.kind !== 'network')
   const nodes: Node[] = ordered.map((item, row) => ({
@@ -136,10 +138,16 @@ export default function PlanTopology({ steps, preview, digest, revealed, sourceL
 
   if (nodes.length === 0) return <p className="plan-empty">{t('plan.diagram.empty')}</p>
 
-  const frame = (side: Side, label: { provider: string; place: string }) => {
+  const frame = (side: Side) => {
     const x = side === 'source' ? 0 : RIGHT_X
     return <g className={'topo-frame' + (side === 'target' ? ' is-target' : '')}>
       <rect x={x + 0.5} y={FRAME_TOP} width={PANEL - 1} height={frameBottom - FRAME_TOP} rx="18" />
+    </g>
+  }
+  // 판 제목은 선(사용자 → 진입) 위에 흰 테두리로 그린다: 긴 지역 이름이 가운데 선과 겹쳐도 글자가 끊겨 보이지 않는다.
+  const frameLabel = (side: Side, label: { provider: string; place: string }) => {
+    const x = side === 'source' ? 0 : RIGHT_X
+    return <g className="topo-frame-label">
       <text className="topo-frame-title" x={x + 20} y={FRAME_TOP + 30}>{label.provider}</text>
       <text className="topo-frame-sub" x={x + 20} y={FRAME_TOP + 49}>{label.place}</text>
     </g>
@@ -155,8 +163,8 @@ export default function PlanTopology({ steps, preview, digest, revealed, sourceL
 
   return <svg className="plan-topo-svg" viewBox={`0 0 ${W} ${H}`} role="img"
     aria-label={t('plan.diagram.aria', { source: sourceLabel.provider + ' ' + sourceLabel.place, target: targetLabel.provider + ' ' + targetLabel.place })}>
-    {frame('source', sourceLabel)}
-    {frame('target', targetLabel)}
+    {frame('source')}
+    {frame('target')}
     <text className="topo-gutter-label" x={GUTTER_X} y={FRAME_TOP + 30} textAnchor="middle">{t('plan.diagram.mapping')}</text>
     {users('source')}
     {users('target')}
@@ -168,6 +176,8 @@ export default function PlanTopology({ steps, preview, digest, revealed, sourceL
         {side === 'source' && !reduced && visible(edge.row) && <Flow path={edge.d} count={2} duration={2.4} />}
       </g>)}
     </g>)}
+    {frameLabel('source', sourceLabel)}
+    {frameLabel('target', targetLabel)}
 
     {nodes.map(node => {
       const keep = node.step.keep_source
@@ -180,6 +190,8 @@ export default function PlanTopology({ steps, preview, digest, revealed, sourceL
       const link = `M${x1} ${mid} H${x2}`
       const lock = pinned && node.kind === 'compute' && !!digest && !keep
       const entry = node.kind === 'ingress'
+      // 원통(DB·캐시)은 위쪽 타원이 글자에 닿지 않게 글자를 조금 내린다.
+      const dy = node.kind === 'database' || node.kind === 'cache' ? 4 : 0
       return <g key={node.step.id} className={'topo-reveal topo-row' + (visible(node.row) ? ' is-visible' : '')}>
         {/* 매핑선: 원본 노드 → 대상 노드. 등급 칩은 가운데 */}
         <path className={'topo-link' + (keep ? ' is-keep' : '') + (node.step.action === 'BLOCK' ? ' is-block' : '')} d={link} />
@@ -194,9 +206,9 @@ export default function PlanTopology({ steps, preview, digest, revealed, sourceL
           const label = side === 'source' ? node.source : keep ? { name: node.source.name, sub: t('plan.diagram.keepNode') } : node.target
           const dim = side === 'target' && keep
           return <g key={side} className={'topo-node' + (dim ? ' is-keep' : '')}>
-            <NodeShape kind={node.kind} x={x} y={y} side={side} keep={dim} entry={entry && !dim} />
-            <text className={'topo-name' + (entry && !dim ? ' is-inv' : '')} x={CX[side]} y={mid + (label.sub ? -2 : 5)} textAnchor="middle">{label.name}</text>
-            {label.sub && <text className={'topo-sub' + (entry && !dim ? ' is-inv' : '')} x={CX[side]} y={mid + 15} textAnchor="middle">{label.sub}</text>}
+            <NodeShape kind={node.kind} x={x} y={y} side={side} keep={dim} entry={entry && !dim} g={g} />
+            <text className={'topo-name' + (entry && !dim ? ' is-inv' : '')} x={CX[side]} y={mid + dy + (label.sub ? -2 : 5)} textAnchor="middle">{label.name}</text>
+            {label.sub && <text className={'topo-sub' + (entry && !dim ? ' is-inv' : '')} x={CX[side]} y={mid + dy + 15} textAnchor="middle">{label.sub}</text>}
           </g>
         })}
 
@@ -207,6 +219,7 @@ export default function PlanTopology({ steps, preview, digest, revealed, sourceL
         </g>}
       </g>
     })}
-    {ready && configCount > 0 && compute && <text className="topo-note" x={CX.target} y={frameBottom - 10} textAnchor="middle">{t('plan.diagram.config', { n: configCount })}</text>}
+    {/* 좁은 배치에서는 칸 밖으로 넘칠 수 있어 그리지 않는다(쓰는 화면이 범례에 따로 보인다). */}
+    {!compact && ready && configCount > 0 && compute && <text className="topo-note" x={CX.target} y={frameBottom - 10} textAnchor="middle">{t('plan.diagram.config', { n: configCount })}</text>}
   </svg>
 }

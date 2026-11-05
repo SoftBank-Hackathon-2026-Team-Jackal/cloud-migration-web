@@ -1,8 +1,8 @@
 import { targetOfRequest, type BackendPhase, type DraftEvent, type MigrationEvent, type StartRequest, type Target } from './events'
 import type { EnterContext, MigrationProvider, ProviderHost } from './provider'
-import { DATA_TICK_MS, TRAFFIC_READY_EVENTS, dataProgressAt, dueDataVerify, reportFor, timelineFor, type ScriptedPhase, type TimedDraft } from './script'
+import { DATA_TICK_MS, TRAFFIC_READY_EVENTS, approvalTimeline, dataProgressAt, dueDataVerify, reportFor, timelineFor, type ScriptedPhase, type TimedDraft } from './script'
 import { TrafficSim } from './trafficSim'
-import { aiFixCount, digestMismatchDemo, reviewDemo, sandboxScenario } from '../demoConfig'
+import { aiFixCount, deliveryFailDemo, digestMismatchDemo, reviewDemo, sandboxScenario } from '../demoConfig'
 
 /**
  * 백엔드 없이 지금까지와 똑같이 움직이게 하는 공급자. 단계 화면이 준비되면 그 단계의 대본(script.ts)을
@@ -22,6 +22,9 @@ export class MockProvider implements MigrationProvider {
   private buildPlay: (() => void) | null = null
   private traffic: TrafficSim | null = null
   private cutoverCancel: (() => void) | null = null
+  /** 승인 결정 대본(접수 → 전달)과 전달 시도 횟수 */
+  private approvalPlay: (() => void) | null = null
+  private deliveryAttempts = 0
   private disposers = new Set<() => void>()
 
   constructor(host: ProviderHost) {
@@ -74,10 +77,11 @@ export class MockProvider implements MigrationProvider {
         stop = this.play(this.scripted(phase))
         break
       case 'awaiting_approval': {
-        // 승인 화면은 계획 결과(Digest·버전)를 읽는다. 계획 단계를 거치지 않고 열었을 때도 같은 값이 있도록 한 번 알린다.
-        const ready = this.scripted('planning').find(item => item.event.type === 'plan.ready')
-        if (ready) this.emit(ready.event)
+        // 승인 화면은 계획 결과(매핑·미리보기·Digest·버전)로 요약을 그린다. 계획 단계를 거치지 않고 열었을 때도 같은 값이 있도록 한 번 알린다(같은 id는 덮어써 결과가 같다).
+        for (const item of this.scripted('planning')) this.emit(item.event)
         this.emit({ type: 'approval.required', phase: 'awaiting_approval', status: 'waiting', data: { excluded: [], rollback_policy: '' } })
+        this.deliveryAttempts = 0
+        stop = () => { this.approvalPlay?.(); this.approvalPlay = null }
         break
       }
       case 'data_copy': {
@@ -122,7 +126,16 @@ export class MockProvider implements MigrationProvider {
     return cleanup
   }
 
-  approve(_revision?: number) { /* 목업은 승인을 기다리지 않는다: 다음 단계는 화면이 넘긴다. */ }
+  /**
+   * 승인: 결정 기록(PENDING) → 실행 엔진에 전달(DELIVERED). 화면은 전달 완료를 받은 뒤에 다음 단계로 넘어간다.
+   * ?delivery=fail이면 첫 전달이 실패하고(FAILED), 다시 누르면(다시 전달) 성공한다.
+   */
+  approve(_revision?: number) {
+    this.approvalPlay?.()
+    this.deliveryAttempts += 1
+    const fail = deliveryFailDemo() && this.deliveryAttempts === 1
+    this.approvalPlay = this.play(approvalTimeline(this.revision, { attempt: this.deliveryAttempts, fail }))
+  }
 
   /** 계획 수정 요청: 계획 버전을 하나 올린다. 화면이 계획 단계로 돌아가면 새 버전의 계획이 다시 나온다. */
   revisePlan() { this.revision += 1 }
