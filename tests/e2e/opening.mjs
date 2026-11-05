@@ -36,7 +36,7 @@ async function open(size, lang = 'ko') {
   // 하이드레이션 전의 키 입력은 무시되므로 첫 화면 버튼이 나올 때까지 L을 되풀이한다.
   for (let attempt = 0; attempt < 8; attempt++) {
     await page.keyboard.press('l')
-    if (await page.locator('.prompt-intent').waitFor({ timeout: 6000 }).then(() => true, () => false)) break
+    if (await page.waitForFunction(() => document.querySelector('.jv-log')?.textContent?.includes('듣고 있어요'), null, { timeout: 6000 }).then(() => true, () => false)) break
   }
   return page
 }
@@ -47,7 +47,7 @@ try {
     const tag = size.width + 'x' + size.height
     console.log('오프닝 ' + tag)
     const page = await open(size)
-    check(await page.locator('.prompt-intent').isVisible(), '호출 뒤 예시 의도 버튼이 보인다')
+    check(await page.locator('.prompt-intent, .prompt-setup').count() === 0, '호출 뒤 선택지 버튼 없이 말·채팅으로만 진행한다')
     check((await page.locator('.jv-log').innerText()).includes('네, 듣고 있어요.'), '자칼: "네, 듣고 있어요."')
     await shot(page, `1-listening-${tag}`)
 

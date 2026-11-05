@@ -1222,7 +1222,7 @@ export const en: Record<MsgKey, string> = {
   "setup2.envReadError": "Couldn't read the file.",
   "setup2.keysAria": "Environment keys",
   "setup2.masked": "value hidden",
-  "setup2.start": "OK, let's start",
+  "setup2.start": "Start with this setup",
   "setup2.waiting": "Waiting for the repository and .env",
-  "setup2.ready": "Ready · say “OK, let's start” or press the button",
+  "setup2.ready": "Ready · say “let's start” or press the button",
 }

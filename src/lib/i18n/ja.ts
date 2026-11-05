@@ -1222,7 +1222,7 @@ export const ja: Record<MsgKey, string> = {
   "setup2.envReadError": "ファイルを読めませんでした。",
   "setup2.keysAria": "環境変数のキー",
   "setup2.masked": "値は非表示",
-  "setup2.start": "よし、始めよう",
+  "setup2.start": "この構成で開始",
   "setup2.waiting": "リポジトリと .env を待っています",
-  "setup2.ready": "準備完了・「よし、始めよう」と話すかボタンを押してください",
+  "setup2.ready": "準備完了・「始めよう」と話すかボタンを押してください",
 }

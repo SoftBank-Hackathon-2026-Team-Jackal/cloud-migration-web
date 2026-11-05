@@ -43,9 +43,13 @@ try {
   // 개발 서버처럼 느린 첫 로드에서는 하이드레이션 전의 클릭이 무시되므로 "예" 버튼이 나올 때까지 클릭을 되풀이한다.
   for (let attempt = 0; attempt < 6; attempt++) {
     await page.mouse.click(768, 400)
-    if (await page.locator('.prompt-yes').waitFor({ timeout: 10000 }).then(() => true, () => false)) break
+    if (await page.locator('.prompt-overlay').waitFor({ state: 'attached', timeout: 10000 }).then(() => true, () => false)) break
   }
-  await press('.prompt-setup')
+  // 첫 화면에는 선택지 버튼이 없다: 발표자 단축키 I(예시 의도)로 말한 것처럼 넣어 설정 화면으로 간다.
+  for (let attempt = 0; attempt < 10; attempt++) {
+    await page.keyboard.press('i')
+    if (await page.locator('.setup2').waitFor({ timeout: 6000 }).then(() => true, () => false)) break
+  }
   note('소개 → 설정')
   // 설정 화면: 등록된 환경은 읽기 전용이다. 대상을 GCP로 고르면 플랫폼 기본 리전(asia-northeast3)이 보인다.
   check(await page.locator('input[name=accessKeyId], input[name=agentId], select[name=destRegion]').count() === 0, '설정 화면에 AWS 키·에이전트 ID·리전 입력이 없다')

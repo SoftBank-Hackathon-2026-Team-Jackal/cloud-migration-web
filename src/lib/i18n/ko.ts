@@ -1220,9 +1220,9 @@ export const ko = {
   "setup2.envReadError": "파일을 읽지 못했어요.",
   "setup2.keysAria": "환경 변수 키",
   "setup2.masked": "값 숨김",
-  "setup2.start": "좋아, 시작하자",
+  "setup2.start": "이 구성으로 시작",
   "setup2.waiting": "저장소와 .env를 기다리는 중",
-  "setup2.ready": "준비됐어요 · “좋아, 시작하자”라고 말하거나 버튼을 누르세요",
+  "setup2.ready": "준비됐어요 · “시작하자”라고 말하거나 버튼을 누르세요",
 } as const
 
 export type MsgKey = keyof typeof ko

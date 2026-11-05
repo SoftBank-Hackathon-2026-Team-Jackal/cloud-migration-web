@@ -348,14 +348,10 @@ export default function FlowApp() {
     {stage === 'intro' && showPrompt && <section className="prompt-overlay" aria-label={t('prompt.aria')}>
       <ParticlePrompt key={lang} onComplete={() => setTextReady(true)} />
       <div className="prompt-action">
-        {textReady && !askingTarget && <button type="button" className="prompt-yes prompt-intent" aria-label={t('open.sampleAria')}
-          onClick={() => sayIntent(t('open.sample'))}>“{t('open.sample')}” <kbd>I</kbd></button>}
         {textReady && askingTarget && <div className="prompt-targets" role="group" aria-label={t('open.pickAria')}>
           <button type="button" className="prompt-yes prompt-target" onClick={() => sayIntent(t('open.target.onprem'))}>{t('open.target.onprem')} <kbd>O</kbd></button>
           <button type="button" className="prompt-yes prompt-target" onClick={() => sayIntent(t('open.target.gcp'))}>{t('open.target.gcp')} <kbd>G</kbd></button>
         </div>}
-        {textReady && <button type="button" className="prompt-yes prompt-setup"
-          onClick={() => go('setup')}>{t('open.direct')}</button>}
       </div>
     </section>}
     {stage === 'setup' && <MigrationSetup target={choice} onTarget={setTarget} onNext={startFromSetup} onSay={text => { if (!kickoff.current) say(text) }} startRef={setupStart} />}
