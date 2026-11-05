@@ -132,7 +132,7 @@
 .cx-howto{margin:0;padding:0;display:grid;gap:0;list-style:none;counter-reset:cx}
 .cx-howto li{padding:14px 0 14px 34px;display:grid;gap:10px;position:relative;border-top:1px solid var(--cx-rule);counter-increment:cx}
 .cx-howto li::before{content:counter(cx);position:absolute;left:0;top:14px;width:22px;height:22px;display:grid;place-items:center;border-radius:50%;background:#111;color:#fff;font:600 11px/1 var(--font-sans);font-variant-numeric:tabular-nums}
-.cx-howto li>div{display:grid;gap:3px}
+.cx-howto li>div:first-child{display:grid;gap:3px}
 .cx-howto strong{font:600 13.5px/1.35 var(--font-sans)}
 .cx-howto span{color:var(--cx-muted);font:400 12.5px/1.45 var(--font-sans)}
 .cx-howto .cx-primary{justify-self:start}

@@ -57,6 +57,12 @@ try {
   await page.locator('.senv-card.is-selected[data-target=gcp]').waitFor()
   check((await page.locator('.senv-card.is-selected').innerText()).includes('asia-northeast3'), 'GCP 선택 시 대상 리전 기본값 asia-northeast3')
   await press('.migration-next')
+  // 이전 범위 선택: 기본값(첫 워크로드)으로 분석 → 후보 확인 → 범위 확정해야 분석 단계로 넘어간다.
+  await page.locator('.scope [data-scope-action=analyze]:not([disabled])').click()
+  await page.locator('.scope-row').first().waitFor()
+  check(await page.locator('.analysis-discovery-item').count() === 0, '범위 확정 전에는 다음 단계로 넘어가지 않는다')
+  check(await page.locator('.scope-evi b[data-evidence=MANIFEST]').count() > 0, '범위 후보에 근거 배지가 보인다')
+  await press('.scope [data-scope-action=confirm]')
 
   await press('.analysis-next-area button')
   note('분석 완료')

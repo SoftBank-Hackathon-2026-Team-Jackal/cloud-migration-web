@@ -197,6 +197,11 @@ try {
       return route.fulfill({ status: 404, body: '' })
     })
     await page.click('.migration-next')
+    // 목업·SSE source: 이전 범위를 확정해야 시작한다(SSE wait는 범위 선택 전에 대기 안내).
+    if (MODE === 'mock' || START !== 'wait') {
+      await page.click('.scope [data-scope-action=analyze]:not([disabled])')
+      await page.click('.scope [data-scope-action=confirm]:not([disabled])')
+    }
     if (MODE === 'mock') {
       await page.waitForSelector('.analysis-discovery-item', { timeout: 20000 })
       check(posts.length === 0, '목업: 분석 화면으로 넘어가고 백엔드는 부르지 않는다')
