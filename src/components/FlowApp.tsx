@@ -210,7 +210,9 @@ export default function FlowApp() {
   // 첫 화면 대화: 호출 → 의도 → (대상이 모호하면 되묻기) → 되짚기 → 설정 화면
   const [askingTarget, setAskingTarget] = useState(false)
   function wake() {
-    if (stage !== 'intro' || started) return
+    if (stage !== 'intro') return
+    // 이미 시작한 뒤에 다시 부르면 조용히 넘기지 않고 다시 듣고 있다고 답한다(음성 호출 시험에서 무응답으로 확인).
+    if (started) { if (!voiceStarting.current) say(t('open.jackal.listening')); return }
     voice.armAudio()
     setStarted(true)
     say(t('open.jackal.listening')) // 호출 응답 중에는 파동을 만들지 않는다.
