@@ -2,12 +2,11 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import ParticleReveal from './ParticleReveal'
-import ReviewGatePanel, { useReviewGate } from './ReviewGatePanel'
 import { useT, useTOr, type MsgKey, type TranslateOr } from '../lib/i18n'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
 import { ALWAYS_UNVERIFIED, EVIDENCE_KINDS, KIND_OF_METHOD, type AnalysisFindingData, type AnalysisScanData, type Evidence, type EvidenceKind, type Target } from '../lib/migration/events'
 import { useVoiceActions } from '../lib/voice/actions'
-import { reviewBlocked, reviewWaiting } from '../lib/migration/review'
+import { analysisFinished, type ReviewView } from '../lib/migration/review'
 
 /** 발견 항목. message·detail이 비어 있으면 화면에서 key로 사전을 찾아 현재 언어로 보여 준다. 백엔드 값은 그대로 쓴다. */
 export type AnalysisUpdate = AnalysisFindingData
@@ -183,12 +182,17 @@ function AnalysisCluster({ title, subtitle, root, stream, status, nodes }: {
   </section>
 }
 
+export type StageReview = { view: ReviewView | null; known: boolean; pastAnalysis: boolean }
+const NO_REVIEW: StageReview = { view: null, known: false, pastAnalysis: false }
+
 type Handoff = {
   sources: Array<{ x: number; y: number; dx: number; dy: number }>
 }
 
-export default function AnalysisStage({ target, onAdvance, onComplete, orbHandoff = false }: {
+export default function AnalysisStage({ target, review = NO_REVIEW, onAdvance, onComplete, orbHandoff = false }: {
   target: Target
+  /** 실제 모드의 검토 게이트 상태(FlowApp이 앱 전체에서 읽는다). 목업은 쓰지 않는다. */
+  review?: StageReview
   onAdvance: () => void
   onComplete?: () => void
   /** 분석 직후에 계획 화면이 올 때만 쓰는 오브 이동 연출. 단계 순서가 바뀌어(분석 → 샌드박스) 지금은 끄고, 화면 전환 입자 층이 대신한다. */
@@ -217,10 +221,9 @@ export default function AnalysisStage({ target, onAdvance, onComplete, orbHandof
   const infraStatus = finishedIf(analysisDone, progressFor(activeUpdates, scans, 'infrastructure'))
   const codeStatus = finishedIf(analysisDone, progressFor(activeUpdates, scans, 'code'))
   const tOr = useTOr()
-  // 실제 서버는 매핑 뒤 사람의 결정(검토 게이트)을 기다린다. 스캔이 100%여도 그동안은 다음으로 갈 수 없다.
-  const { view: review, setView: setReview } = useReviewGate(true)
-  const reviewing = reviewWaiting(review) || reviewBlocked(review)
-  const finished = (analysisDone || (infraStatus.percent === 100 && codeStatus.percent === 100)) && !reviewing
+  // 실제 서버는 analysis.done 뒤에 매핑하고 사람의 결정(검토 게이트)을 기다린다. 검토 상태를 읽기 전이나 기다리는 동안은 다음으로 갈 수 없다.
+  // 검토 패널은 FlowApp이 어느 화면에서든 띄운다.
+  const finished = analysisFinished({ mode, done: analysisDone, streamsFull: infraStatus.percent === 100 && codeStatus.percent === 100, ...review })
   useEffect(() => { if (finished) onComplete?.() }, [finished, onComplete])
   useVoiceActions({ next: finished && ready && !proceed && (() => setProceed(true)) })
   // 피드: 스캔이 오면 스캔 요약, 아니면 예전 항목. 근거는 Evidence.kind로 같은 칩을 쓴다.
@@ -327,6 +330,5 @@ export default function AnalysisStage({ target, onAdvance, onComplete, orbHandof
       } as CSSProperties}><span>{index === 0 ? '◫' : '⌘'}</span></span>)}
     </div>}
     {!ready && <ParticleReveal stage={stageRef} onComplete={() => setReady(true)} />}
-    {review && reviewing && <ReviewGatePanel view={review} onView={setReview} />}
   </section>
 }

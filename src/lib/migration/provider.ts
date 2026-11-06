@@ -15,6 +15,8 @@ export interface MigrationProvider {
   readonly mode: 'mock' | 'sse'
   /** 이전을 시작한다(설정 화면의 "시작"). 이전 값은 모두 지운다. */
   start(request: StartRequest): void
+  /** 이미 돌고 있는 이전에 다시 붙는다(새로 고침·새 탭). 목업은 아무것도 하지 않는다. */
+  attach(migrationId: string): void
   /**
    * 단계 화면이 준비됐음을 알린다. 목업은 이때부터 그 단계의 대본을 흘리고, SSE는 연결이 없으면 연결한다.
    * 반환한 함수는 화면을 떠날 때 부른다(목업은 타이머를 멈추고 그 단계 값을 비운다).
@@ -37,9 +39,10 @@ export interface MigrationProvider {
   loadReport(): void
   /**
    * 분석 검토 게이트(필수 기능 확정 → 손실·보안 승인)의 지금 상태. 이 이전에 검토가 없거나 서버에 그 API가 없으면 null.
+   * 지금 읽지 못했으면(네트워크·서버 오류) undefined: 화면은 아직 모르는 것으로 보고 다시 읽는다.
    * 목업은 검토 단계가 없어 늘 null이다.
    */
-  loadReview(): Promise<ReviewView | null>
+  loadReview(): Promise<ReviewView | null | undefined>
   /** 필수 기능 확정: 모든 행의 필수 여부(행 ID → true/false). 서버 거절은 코드로 돌려준다(화면에 문구를 보인다). */
   confirmReview(required: Record<string, boolean>): Promise<ReviewResult>
   /** 손실·보안 승인: 승인이 필요한 모든 항목의 승인·거절. */

@@ -148,3 +148,38 @@ export const REVIEW_ERROR_KEYS: Record<string, string> = {
   REVIEW_UNAVAILABLE: 'reviewGate.err.unavailable',
 }
 export const reviewErrorKey = (code: string) => REVIEW_ERROR_KEYS[code] ?? 'reviewGate.err.generic'
+
+/**
+ * 실제 모드에서 분석을 '끝났다'고 볼 수 있는지(다음 화면으로 갈 수 있는지).
+ * 서버는 analysis.done을 매핑 전에 보내고, 매핑 뒤 검토 게이트에서 사람의 결정을 기다린다(GET이 그동안 ANALYZING).
+ * 그래서 검토 상태를 analysis.done 뒤에 한 번이라도 읽기 전에는 끝나지 않은 것으로 본다. 검토가 없으면(404) 끝난 것이다.
+ * 서버가 이미 다음 단계(build 등)의 이벤트를 보냈으면 게이트는 지나갔다.
+ * - known: analysis.done 뒤에 검토 상태를 한 번 이상 읽었는지(404도 읽은 것)
+ * - pastAnalysis: 분석 다음 단계의 이벤트가 왔는지
+ */
+export function reviewSettled({ view, known, pastAnalysis }: { view: ReviewView | null; known: boolean; pastAnalysis: boolean }): boolean {
+  if (reviewWaiting(view) || reviewBlocked(view)) return false
+  if (pastAnalysis) return true
+  if (!known) return false
+  if (!view) return true
+  return view.phase !== 'ANALYZING'
+}
+
+/** 분석 화면의 '다음'을 열 수 있는지. 목업은 예전 그대로(검토 게이트가 없다). */
+export function analysisFinished({ mode, done, streamsFull, view, known, pastAnalysis }: {
+  mode: 'mock' | 'sse'
+  done: boolean
+  streamsFull: boolean
+  view: ReviewView | null
+  known: boolean
+  pastAnalysis: boolean
+}): boolean {
+  if (!(done || streamsFull)) return false
+  if (mode !== 'sse') return true
+  return reviewSettled({ view, known, pastAnalysis })
+}
+
+/** 검토 패널을 띄울지: 실제 모드에서 검토가 사람을 기다리거나 막혔으면 어느 화면에서든(첫 화면 제외) 띄운다. */
+export function showReviewPanel({ mode, stage, view }: { mode: 'mock' | 'sse'; stage: string; view: ReviewView | null }): boolean {
+  return mode === 'sse' && stage !== 'intro' && (reviewWaiting(view) || reviewBlocked(view))
+}

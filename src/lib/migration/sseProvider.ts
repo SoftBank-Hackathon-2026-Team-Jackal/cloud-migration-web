@@ -1,4 +1,4 @@
-import { isBackendPreview, normalizePlanStep, startRequestFor, type ApprovalDecisionData, type BackendPhase, type ErrorData, type MigrationEvent, type MigrationStatus, type PlanReadyData, type StartRequest } from './events.ts'
+import { isBackendPreview, normalizePlanStep, startRequestFor, type ApprovalDecisionData, type BackendPhase, type ErrorData, type MigrationEvent, type MigrationStatus, type PlanReadyData, type StartRequest, type ApprovalScope } from './events.ts'
 import type { EnterContext, MigrationProvider, ProviderHost } from './provider'
 import type { ReportData } from './events'
 import type { SseStartMode } from './config'
@@ -22,6 +22,8 @@ type Options = {
   approvalBase?: string
   /** 백엔드에 API가 있는 동작(capabilities.ts). 없으면 SSE 기본값. 목록에 없는 동작은 요청을 보내지 않는다. */
   capabilities?: ReadonlySet<Capability>
+  /** 스트림에서 이 시간(ms) 동안 아무것도(이벤트·: heartbeat) 오지 않으면 멈춘 것으로 보고 다시 연결한다. 기본 STALL_MS. */
+  stallMs?: number
 }
 
 /** 이전을 시작하지 않고 멈춘 이유(StatusPanel이 실패가 아니라 대기 안내로 보여 준다). */
@@ -32,6 +34,14 @@ export const SOURCE_REQUIRED = 'source_required'
 const PROJECT_ID = 'demo'
 const RETRY_FIRST_MS = 500
 const RETRY_MAX_MS = 5000
+/** 서버는 15초마다 `: heartbeat`를 보낸다. 세 번(45초) 연속 아무것도 오지 않으면 연결이 조용히 멈춘 것이다. */
+export const STALL_MS = 45_000
+/** 승인 요청의 scope 값(백엔드 PlanManifest.scope). plan.ready에 없으면(옛 이벤트) FULL. */
+const APPROVAL_SCOPES: ReadonlySet<string> = new Set(['INFRASTRUCTURE', 'WORKLOADS', 'FULL'])
+export function approvalScope(plan: PlanReadyData | null): ApprovalScope {
+  const scope = plan?.scope
+  return typeof scope === 'string' && APPROVAL_SCOPES.has(scope) ? scope : 'FULL'
+}
 /** 서버가 이 상태가 되면 남은 이벤트를 보내고 스트림을 닫는다(event_stream.py). 그 뒤의 정상 종료는 끊김이 아니다. */
 const TERMINAL: ReadonlySet<MigrationStatus> = new Set(['done', 'failed', 'cancelled'])
 
@@ -144,6 +154,8 @@ export class SseProvider implements MigrationProvider {
     this.lastId = ''
     this.status = 'idle'
     this.plan = null
+    this.decision = null
+    this.review = null
     this.starting = null
     this.host.dispatch({ type: 'reset' })
     // [#60 전] 백엔드 /migrations는 source를 아직 받지 않는다: 부르지 않는다.
@@ -171,6 +183,25 @@ export class SseProvider implements MigrationProvider {
     })()
   }
 
+  /**
+   * 이미 돌고 있는 이전에 다시 붙는다(새로 고침·새 탭: 주소의 ?migration=<id>).
+   * 처음부터(Last-Event-ID 없이) 연결해 서버가 보내는 snapshot(reset)으로 상태를 다시 쌓는다.
+   * 서버가 그 이전을 모르면(404) 다른 연결과 같이 migration_not_found 실패를 알린다(화면이 저장한 ID를 지운다).
+   */
+  attach(id: string) {
+    this.closeStream()
+    this.migrationId = id
+    this.lastId = ''
+    this.status = 'idle'
+    this.plan = null
+    this.decision = null
+    this.review = null
+    this.starting = null
+    this.host.dispatch({ type: 'reset' })
+    this.host.dispatch({ type: 'started', migrationId: id })
+    this.connect(id)
+  }
+
   enter(_phase: BackendPhase, context: EnterContext): () => void {
     // 설정 화면을 거치지 않고 주소로 단계를 연 경우: 저장소(source)가 없으므로 시작하지 않고 대기 안내를 띄운다.
     // 목업 SSE 서버 시험(legacy)만 예전처럼 기본 요청으로 이전을 하나 시작한다.
@@ -183,7 +214,9 @@ export class SseProvider implements MigrationProvider {
 
   /**
    * 계획 승인·거절. [백엔드 openapi 확정] POST /provisioning/plans/{plan_id}/revisions/{revision}/approvals
-   * 본문 {decision: APPROVE|REJECT, scope, manifest_digest, preview_digest}, 승인자 인증은 Bearer 토큰.
+   * 본문 {decision: APPROVE|REJECT, scope, manifest_digest, preview_digest}. scope는 plan.ready의 scope(그 Revision의 PlanManifest.scope)를
+   * 그대로 보낸다: 다르면 서버가 409 APPROVAL_TARGET_MISMATCH로 거절한다. 옛 이벤트처럼 없으면 FULL.
+   * (GET /migrations/{id}/plan에도 scope가 있지만 승인자 토큰이 필요해 브라우저는 부를 수 없다.), 승인자 인증은 Bearer 토큰.
    * approvalBase가 있으면(실제 모드) 웹 서버 중계 {approvalBase}/{plan_id}/{revision}로 보내고, 웹 서버가 토큰을 붙인다.
    * plan.ready에 계획 ID·버전·digest가 없으면 옛 경로로 보낸다. 옛 경로 [확정: 학습용 뼈대] POST /migrations/{id}/approve
    */
@@ -200,7 +233,7 @@ export class SseProvider implements MigrationProvider {
     const redeliver = decision === 'APPROVE' && last && last.decision === 'APPROVE' && last.plan_id === plan.plan_id && last.revision === plan.revision && last.delivery_status === 'FAILED'
     const request = redeliver
       ? this.post(path + '/' + encodeURIComponent(last.approval_id) + '/delivery', undefined, to)
-      : this.post(path, { decision, scope: 'FULL', manifest_digest: plan.manifest_digest, preview_digest: plan.preview_digest }, to)
+      : this.post(path, { decision, scope: approvalScope(plan), manifest_digest: plan.manifest_digest, preview_digest: plan.preview_digest }, to)
     void request.then(body => this.takeDecision(body))
   }
 
@@ -240,15 +273,17 @@ export class SseProvider implements MigrationProvider {
 
   private reviewUrl() { return this.options.baseUrl + '/migrations/' + this.migrationId + '/analysis/review' }
 
-  async loadReview(): Promise<ReviewView | null> {
+  /** null: 검토할 것이 없다(404 포함). undefined: 지금은 읽지 못했다(네트워크·5xx): 화면은 다음에 다시 읽는다. */
+  async loadReview(): Promise<ReviewView | null | undefined> {
     if (!this.migrationId) return null
     try {
       const response = await fetch(this.reviewUrl(), { headers: await this.headers() })
       // 404: 아직 분석이 시작되지 않았거나 이 서버에 검토 API가 없다. 검토할 것이 없는 것으로 본다.
-      if (!response.ok) return (this.review = null)
+      if (response.status === 404) return (this.review = null)
+      if (!response.ok) return undefined
       return (this.review = parseReview(await response.json().catch(() => null)))
     } catch {
-      return (this.review = null)
+      return undefined
     }
   }
 
@@ -266,7 +301,7 @@ export class SseProvider implements MigrationProvider {
         const code = typeof data?.detail === 'string' && /^[A-Z0-9_]{1,64}$/.test(data.detail) ? data.detail : 'HTTP_' + response.status
         return { ok: false, code }
       }
-      return { ok: true, view: await this.loadReview() }
+      return { ok: true, view: (await this.loadReview()) ?? null }
     } catch {
       return { ok: false, code: 'REVIEW_UNAVAILABLE' }
     }
@@ -294,10 +329,16 @@ export class SseProvider implements MigrationProvider {
   private async run(id: string, signal: AbortSignal) {
     let delay = RETRY_FIRST_MS
     while (!signal.aborted) {
+      // 연결 하나마다 감시견을 둔다: 응답이나 바이트(이벤트·: heartbeat)가 STALL_MS 동안 오지 않으면 이 연결만 끊고 다시 연결한다.
+      const attempt = new AbortController()
+      const stopAttempt = () => attempt.abort()
+      signal.addEventListener('abort', stopAttempt, { once: true })
+      const watchdog = new Watchdog(this.options.stallMs ?? STALL_MS, stopAttempt)
       try {
         const extra: Record<string, string> = { Accept: 'text/event-stream' }
         if (this.lastId) extra['Last-Event-ID'] = this.lastId
-        const response = await fetch(this.options.baseUrl + '/migrations/' + id + '/events', { headers: await this.headers(extra), signal })
+        const response = await fetch(this.options.baseUrl + '/migrations/' + id + '/events', { headers: await this.headers(extra), signal: attempt.signal })
+        watchdog.poke()
         if (response.status === 404) {
           // 서버가 이 이전을 모른다(서버가 다시 시작되며 기록을 잃은 경우): 다시 연결해도 소용없다.
           this.host.dispatch({ type: 'connection', value: 'connected' })
@@ -307,11 +348,15 @@ export class SseProvider implements MigrationProvider {
         if (!response.ok || !response.body) throw new Error('HTTP ' + response.status)
         this.host.dispatch({ type: 'connection', value: 'connected' })
         delay = RETRY_FIRST_MS
-        await this.read(response.body, signal)
+        await this.read(response.body, attempt.signal, watchdog)
         // 끝난 이전이면 서버가 남은 이벤트를 보내고 스트림을 닫는다: 정상 종료다(다시 연결하지 않는다).
         if (TERMINAL.has(this.status)) return
       } catch {
         if (signal.aborted) return
+      } finally {
+        watchdog.stop()
+        signal.removeEventListener('abort', stopAttempt)
+        attempt.abort()
       }
       if (signal.aborted) return
       // 끊겼다: 잠시 뒤 다시 연결한다(마지막으로 받은 id부터 이어 받는다).
@@ -321,14 +366,20 @@ export class SseProvider implements MigrationProvider {
     }
   }
 
-  private async read(body: ReadableStream<Uint8Array>, signal: AbortSignal) {
+  private async read(body: ReadableStream<Uint8Array>, signal: AbortSignal, watchdog?: Watchdog) {
     const reader = body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
+    // 감시견이 연결을 끊으면 대기 중인 read()도 끝낸다(fetch 구현에 따라 신호만으로는 안 끝나는 경우가 있다).
+    const onAbort = () => { reader.cancel().catch(() => {}) }
+    signal.addEventListener('abort', onAbort, { once: true })
     try {
       while (!signal.aborted) {
         const { done, value } = await reader.read()
+        if (signal.aborted) throw new Error('stalled')
         if (done) return
+        // 바이트가 왔으면 살아 있다: 이벤트든 주석(: heartbeat)이든 같다.
+        watchdog?.poke()
         buffer += decoder.decode(value, { stream: true }).replace(/\r\n?/g, '\n')
         let split = buffer.indexOf('\n\n')
         while (split >= 0) {
@@ -338,6 +389,7 @@ export class SseProvider implements MigrationProvider {
         }
       }
     } finally {
+      signal.removeEventListener('abort', onAbort)
       reader.cancel().catch(() => {})
     }
   }
@@ -362,6 +414,22 @@ export class SseProvider implements MigrationProvider {
       }
     }
     this.host.dispatch({ type: 'event', event })
+  }
+}
+
+/** 마지막 활동 뒤 ms가 지나면 onStall을 한 번 부른다. poke()로 시계를 다시 잰다. */
+class Watchdog {
+  private timer: ReturnType<typeof setTimeout> | null = null
+  private readonly ms: number
+  private readonly onStall: () => void
+  constructor(ms: number, onStall: () => void) { this.ms = ms; this.onStall = onStall; this.poke() }
+  poke() {
+    if (this.timer !== null) clearTimeout(this.timer)
+    this.timer = setTimeout(() => { this.timer = null; this.onStall() }, this.ms)
+  }
+  stop() {
+    if (this.timer !== null) clearTimeout(this.timer)
+    this.timer = null
   }
 }
 

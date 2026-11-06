@@ -29,6 +29,8 @@ export type MigrationState = {
   /** 연결이 끊겨 다시 연결하는 중이면 reconnecting */
   connection: 'connected' | 'reconnecting'
   lastSeq: number
+  /** 마지막으로 받은 이벤트의 phase(snapshot 제외). 다시 붙었을 때 어느 화면을 열지 고른다. */
+  lastPhase: BackendPhase | null
   /** findings: 예전 방식(항목마다 한 건) · scans: 스캔 Activity가 끝날 때마다 한 건(백엔드 방식, 개수 묶음) */
   analysis: { findings: AnalysisFindingData[]; scans: AnalysisScanData[]; done: boolean }
   /** attempt: 지금 몇 번째 시도인지(build.check·build.result에서). review: 사람 검토 대기 */
@@ -67,6 +69,7 @@ export const initialState: MigrationState = {
   status: 'idle',
   connection: 'connected',
   lastSeq: 0,
+  lastPhase: null,
   analysis: { findings: [], scans: [], done: false },
   build: { checks: {}, lastCheck: null, fixes: [], attempt: null, result: null, review: null },
   sandbox: { env: null, steps: {}, tests: null, attempts: [], done: null },
@@ -160,6 +163,7 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
   let next: MigrationState = state
   // 일시 정지(승인 대기) 중이던 이전은 다음 이벤트가 오면 다시 진행 중이다.
   if (state.status === 'idle' || state.status === 'waiting') next = { ...next, status: 'running' }
+  if (event.type !== 'snapshot' && event.phase && next.lastPhase !== event.phase) next = { ...next, lastPhase: event.phase }
   if (event.status === 'failed' && event.type !== 'error') {
     next = fail(next, event.phase, { code: event.type, message: event.message ?? '', retryable: false })
   }
