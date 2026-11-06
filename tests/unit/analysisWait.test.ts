@@ -8,7 +8,7 @@ import { ja } from '../../src/lib/i18n/ja.ts'
 
 const view = (phase: string, pending: ReviewView['pending'] = null): ReviewView =>
   ({ phase, analysis_ref: null, pending, items: [], security: [], blocked: [] })
-const sse = { mode: 'sse' as const, done: true, finished: false }
+const sse = { mode: 'sse' as const, done: true, known: false, past: false }
 
 test('목업 모드는 대기 표시가 없다', () => {
   assert.equal(analysisWait({ ...sse, mode: 'mock', view: null }), null)
@@ -28,9 +28,11 @@ test('검토가 사람을 기다리면 검토 대기', () => {
   assert.equal(analysisWait({ ...sse, view: view('WAITING_APPROVAL', 'approve_losses') }), 'review')
 })
 
-test('게이트를 지나면(finished) 원래 완료 표시로 돌아간다', () => {
-  assert.equal(analysisWait({ ...sse, finished: true, view: null }), null)
-  assert.equal(analysisWait({ ...sse, finished: true, view: view('APPROVED') }), null)
+test('게이트를 지나거나(승인·다음 단계) 검토할 것이 없으면(404) 대기 표시가 없다', () => {
+  assert.equal(analysisWait({ ...sse, past: true, view: null }), null)
+  assert.equal(analysisWait({ ...sse, view: view('APPROVED') }), null)
+  assert.equal(analysisWait({ ...sse, known: true, view: null }), null, '404')
+  assert.equal(analysisWait({ ...sse, known: true, view: view('ANALYZING') }), 'mapping')
 })
 
 test('막힘 등 다른 상태는 대기 표시를 하지 않는다', () => {

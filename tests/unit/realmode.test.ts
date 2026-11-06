@@ -18,15 +18,13 @@ import { clearMigration, readMigration, saveMigration, stageForPhase, SESSION_KE
 const view = (phase: string, pending: ReviewView['pending'] = null): ReviewView =>
   ({ phase, analysis_ref: { id: 'a', version: '1' }, pending, items: [], security: [], blocked: [] })
 
-test('① 실제 모드: analysis.done이 와도 검토 상태를 읽기 전에는 분석이 끝나지 않았다', () => {
+test('① 실제 모드: analysis.done이면 막힘이 아닌 한 다음으로 간다', () => {
   const base = { mode: 'sse' as const, done: true, streamsFull: true, pastAnalysis: false }
-  assert.equal(analysisFinished({ ...base, view: null, known: false }), false, '아직 읽지 않았다')
-  assert.equal(analysisFinished({ ...base, view: view('ANALYZING'), known: true }), false, '서버가 아직 매핑 중(게이트 전)')
-  assert.equal(analysisFinished({ ...base, view: view('WAITING_CONFIRMATION', 'confirm_requirements'), known: true }), false, '사람을 기다린다')
+  // 새 흐름: analysis.done이면 바로 샌드박스로 간다(게이트는 그 화면 위에 뜬다). 막혔을 때만 가지 않는다.
+  assert.equal(analysisFinished({ ...base, view: null, known: false }), true, '아직 읽지 않았어도 간다')
+  assert.equal(analysisFinished({ ...base, view: view('ANALYZING'), known: true }), true, '매핑 중이어도 간다')
+  assert.equal(analysisFinished({ ...base, view: view('WAITING_CONFIRMATION', 'confirm_requirements'), known: true }), true, '게이트는 다음 화면 위에서 처리')
   assert.equal(analysisFinished({ ...base, view: view('BLOCKED'), known: true }), false, '막혔다')
-  assert.equal(analysisFinished({ ...base, view: null, known: true }), true, '404: 검토할 것이 없다')
-  assert.equal(analysisFinished({ ...base, view: view('APPROVED'), known: true }), true, '승인을 마쳤다')
-  assert.equal(analysisFinished({ ...base, view: view('ANALYZING'), known: false, pastAnalysis: true }), true, '서버가 다음 단계로 넘어갔다')
   assert.equal(analysisFinished({ ...base, done: false, streamsFull: false, view: null, known: true }), false)
 })
 

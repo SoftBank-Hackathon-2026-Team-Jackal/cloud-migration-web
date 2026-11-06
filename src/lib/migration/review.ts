@@ -171,7 +171,7 @@ export function reviewSettled({ view, known, pastAnalysis }: { view: ReviewView 
 }
 
 /** 분석 화면의 '다음'을 열 수 있는지. 목업은 예전 그대로(검토 게이트가 없다). */
-export function analysisFinished({ mode, done, streamsFull, view, known, pastAnalysis }: {
+export function analysisFinished({ mode, done, streamsFull, view }: {
   mode: 'mock' | 'sse'
   done: boolean
   streamsFull: boolean
@@ -180,8 +180,8 @@ export function analysisFinished({ mode, done, streamsFull, view, known, pastAna
   pastAnalysis: boolean
 }): boolean {
   if (!(done || streamsFull)) return false
-  if (mode !== 'sse') return true
-  return reviewSettled({ view, known, pastAnalysis })
+  // 실제 모드도 analysis.done이면 바로 다음(샌드박스)으로 간다. 검토 게이트는 FlowApp이 그 화면 위에 띄운다. 막혔으면 가지 않는다.
+  return mode !== 'sse' || !reviewBlocked(view)
 }
 
 /** 검토 패널을 띄울지: 실제 모드에서 검토가 사람을 기다리거나 막혔으면 어느 화면에서든(첫 화면 제외) 띄운다. */

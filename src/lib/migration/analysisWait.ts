@@ -9,14 +9,17 @@ import type { ReviewView } from './review'
  */
 export type AnalysisWait = 'mapping' | 'review' | null
 
-export function analysisWait({ mode, done, finished, view }: {
+export function analysisWait({ mode, done, view, known, past }: {
   mode: 'mock' | 'sse'
   done: boolean
-  finished: boolean
   view: ReviewView | null
+  /** analysis.done 뒤에 검토 상태를 한 번 이상 읽었는지(404도 읽은 것) */
+  known: boolean
+  /** 서버가 분석 다음 단계로 넘어갔는지 */
+  past: boolean
 }): AnalysisWait {
-  if (mode !== 'sse' || !done || finished) return null
+  if (mode !== 'sse' || !done || past) return null
   if (view?.pending != null) return 'review'
-  if (!view || view.phase === 'ANALYZING') return 'mapping'
-  return null
+  if (!view) return known ? null : 'mapping'
+  return view.phase === 'ANALYZING' ? 'mapping' : null
 }
