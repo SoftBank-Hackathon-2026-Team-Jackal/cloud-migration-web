@@ -155,3 +155,57 @@ test('승인 요약은 받은 계획 데이터에서 계산하고, 없는 값은
   const asked = approvalFacts({ ...state, approval: { pendingDecisions: ['CLEANUP_POLICY_REQUIRED', 'INSPECTION_REQUIRED', 'NEW_CODE'] } })
   assert.deepEqual(asked.pending, { rollback: ['CLEANUP_POLICY_REQUIRED'], excluded: ['INSPECTION_REQUIRED', 'NEW_CODE'] })
 })
+
+test('계획 화면: 12줄을 넘는 실제 계획도 연출이 끝나면 완료되고, 12줄 이하는 그대로다', async () => {
+  const { planReveal, PLAN_MAX_REVEAL } = await import('../../src/lib/migration/planModel.ts')
+  assert.equal(PLAN_MAX_REVEAL, 12)
+  // 15줄(실제 데모 계획): 연출 중에는 미완료, 12번째 타이머 뒤 15줄 모두 드러나고 완료
+  assert.deepEqual(planReveal(11, 15, true), { visibleCount: 11, complete: false })
+  assert.deepEqual(planReveal(PLAN_MAX_REVEAL, 15, true), { visibleCount: 15, complete: true })
+  // 서버가 계획 끝을 아직 안 알렸으면 미완료
+  assert.equal(planReveal(PLAN_MAX_REVEAL, 15, false).complete, false)
+  // 12줄 이하: 기존과 같다
+  assert.deepEqual(planReveal(3, 8, true), { visibleCount: 3, complete: false })
+  assert.deepEqual(planReveal(8, 8, true), { visibleCount: 8, complete: true })
+  assert.deepEqual(planReveal(12, 8, true), { visibleCount: 8, complete: true })
+  assert.deepEqual(planReveal(12, 12, true), { visibleCount: 12, complete: true })
+  // 줄이 없으면 완료가 아니다
+  assert.equal(planReveal(12, 0, true).complete, false)
+})
+
+test('계획 화면(실제 모드): 백엔드 Preview 이름을 읽을 수 있는 줄 제목으로 쓴다', async () => {
+  const { backendResourceTitle } = await import('../../src/lib/migration/planModel.ts')
+  assert.equal(backendResourceTitle('NetworkPolicy chat-app → chat-db'), 'NetworkPolicy · chat-app → chat-db')
+  assert.equal(backendResourceTitle('Namespace chat가 없으면 플랫폼 관리 라벨로 생성'), 'Namespace · chat가 없으면 플랫폼 관리 라벨로 생성')
+  assert.equal(backendResourceTitle('chat-app Service'), 'chat-app Service')
+  assert.equal(backendResourceTitle('기존 K3s k3s-1 · Agent agent-7 · Namespace chat'), '기존 K3s k3s-1 · Agent agent-7 · Namespace chat')
+  // 같은 종류가 여러 줄이어도(vpc-2…) 백엔드 이름이 어댑터를 지나 그대로 남는다
+  const preview = adaptBackendPreview({ contract_version: '1', manifest_digest: 'sha256:' + 'a'.repeat(64), changes: [
+    { resource_type: 'NETWORK', action: 'CREATE', name: 'NetworkPolicy default deny' },
+    { resource_type: 'NETWORK', action: 'CREATE', name: 'NetworkPolicy chat-app → chat-db' },
+  ] } as never, { steps: [], meta: null })
+  assert.deepEqual(preview.resources.map(resource => [resource.id, resource.backend_name, resource.resource_type]), [['vpc', 'NetworkPolicy default deny', 'NETWORK'], ['vpc-2', 'NetworkPolicy chat-app → chat-db', 'NETWORK']])
+})
+
+test('계획 화면: MAPPING_NOT_RUN 경고의 이유를 꺼낸다', async () => {
+  const { mappingNotRunReason } = await import('../../src/lib/migration/planModel.ts')
+  const of = (warnings: Array<{ id: string; message: string }>) => ({ validation: { errors: [], warnings } })
+  assert.equal(mappingNotRunReason(of([])), null)
+  assert.equal(mappingNotRunReason(null), null)
+  assert.equal(mappingNotRunReason(of([{ id: 'MAPPING_NOT_RUN', message: 'LLM이 꺼져 있음' }])), 'LLM이 꺼져 있음')
+  assert.equal(mappingNotRunReason(of([{ id: 'X', message: 'MAPPING_NOT_RUN: LLM disabled' }])), 'LLM disabled')
+  assert.equal(mappingNotRunReason(of([{ id: 'MAPPING_NOT_RUN', message: 'MAPPING_NOT_RUN: LLM disabled' }])), 'LLM disabled')
+})
+
+test('계획 화면: 실제 모드는 AWS 스캔이 무언가 찾아 왔을 때만 인프라 분석 완료, 목업은 그대로', async () => {
+  const { infraScanState } = await import('../../src/lib/migration/planModel.ts')
+  const scan = (stream: 'infrastructure' | 'code', items: number) => ({ id: stream, activity: 'a', stream, completed: 1, total: 1, items: Array.from({ length: items }, (_, i) => ({ key: 'k' + i, n: 1 })), evidence: [] })
+  // 목업: 분석 없이 열면 완료, 코드만 왔으면 대기(기존 동작)
+  assert.equal(infraScanState('mock', { findings: [], scans: [] }), 'done')
+  assert.equal(infraScanState('mock', { findings: [], scans: [scan('code', 2)] }), 'waiting')
+  assert.equal(infraScanState('mock', { findings: [], scans: [scan('infrastructure', 0)] }), 'done')
+  // 실제: 안 왔거나 NOT_COLLECTED(빈 묶음)면 skipped
+  assert.equal(infraScanState('sse', { findings: [], scans: [] }), 'skipped')
+  assert.equal(infraScanState('sse', { findings: [], scans: [scan('code', 2), scan('infrastructure', 0)] }), 'skipped')
+  assert.equal(infraScanState('sse', { findings: [], scans: [scan('infrastructure', 3)] }), 'done')
+})

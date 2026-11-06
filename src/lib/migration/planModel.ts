@@ -149,3 +149,51 @@ export function approvalFacts(state: Pick<MigrationState, 'plan' | 'sandbox' | '
 export function fixerEnvKeys(fixes: BuildFixData[]): string[] {
   return [...new Set(fixes.flatMap(fix => fix.new_env_keys ?? []))]
 }
+
+/** 계획 화면이 연출 타이머로 한 줄씩 드러내는 최대 줄 수. 이보다 많은 줄은 마지막 타이머에 한꺼번에 드러난다. */
+export const PLAN_MAX_REVEAL = 12
+
+/**
+ * 계획 화면의 드러난 줄 수와 완료 여부.
+ * - units: 받은 줄 수(매핑·리소스 중 많은 쪽), revealed: 연출 타이머가 센 수(최대 PLAN_MAX_REVEAL)
+ * - 타이머가 끝까지 돌면 12줄을 넘는 실제 계획도 나머지 줄까지 모두 드러나고, 서버가 "계획 끝"을 알렸으면 완료다.
+ */
+export function planReveal(revealed: number, units: number, ready: boolean): { visibleCount: number; complete: boolean } {
+  const visibleCount = revealed >= PLAN_MAX_REVEAL ? units : Math.min(revealed, units)
+  return { visibleCount, complete: ready && units > 0 && visibleCount === units }
+}
+
+/**
+ * 실제 백엔드 Preview 줄의 제목. 백엔드 name(예: "NetworkPolicy chat-app → chat-db", "chat-app Service")이 사람이 읽는 값이라
+ * 화면 id(vpc-2·app-2…) 대신 이것을 쓴다. NetworkPolicy처럼 앞에 종류가 붙은 이름은 "종류 · 나머지"로 나눠 보인다.
+ */
+export function backendResourceTitle(name: string): string {
+  const match = /^(NetworkPolicy|Namespace|Secret|Service|Deployment|StatefulSet|PVC)\s+(.+)$/.exec(name.trim())
+  return match ? match[1] + ' · ' + match[2] : name.trim()
+}
+
+/**
+ * 매핑이 돌지 않았다는 백엔드 경고(MAPPING_NOT_RUN)의 이유. code가 MAPPING_NOT_RUN이거나
+ * 메시지가 "MAPPING_NOT_RUN: <이유>"이면 이유를, 경고가 없으면 null을 준다(이유가 비었으면 '').
+ */
+export function mappingNotRunReason(preview: Pick<PlanPreviewData, 'validation'> | null | undefined): string | null {
+  const issues = [...(preview?.validation.warnings ?? []), ...(preview?.validation.errors ?? [])]
+  const prefix = /^\s*MAPPING_NOT_RUN\s*:?\s*/
+  const hit = issues.find(issue => issue.id === 'MAPPING_NOT_RUN' || prefix.test(issue.message ?? ''))
+  if (!hit) return null
+  return (hit.message ?? '').replace(prefix, '').trim()
+}
+
+/**
+ * 계획 화면 왼쪽 "인프라 분석" 상태. 목업은 기존 그대로(분석 없이 열면 완료, 코드만 왔으면 대기).
+ * 실제 모드는 인프라 스캔이 무언가를 찾아 왔을 때만 완료다. 스캔을 안 했거나(NOT_COLLECTED: 빈 묶음) 아예 안 왔으면 skipped.
+ */
+export function infraScanState(mode: 'mock' | 'sse', analysis: Pick<MigrationState['analysis'], 'findings' | 'scans'>): 'done' | 'waiting' | 'skipped' {
+  if (mode === 'mock') {
+    const streams = [...analysis.findings.map(update => update.stream), ...analysis.scans.map(scan => scan.stream)]
+    return streams.length === 0 || streams.includes('infrastructure') ? 'done' : 'waiting'
+  }
+  const collected = analysis.scans.some(scan => scan.stream === 'infrastructure' && scan.items.length > 0)
+    || analysis.findings.some(update => update.stream === 'infrastructure')
+  return collected ? 'done' : 'skipped'
+}

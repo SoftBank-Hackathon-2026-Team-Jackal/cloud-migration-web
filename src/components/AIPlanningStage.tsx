@@ -8,7 +8,7 @@ import { useT, useTOr, type MsgKey, type TranslateOr } from '../lib/i18n'
 import { ViewTabs } from './DiagramParts'
 import PlanTopology from './PlanTopology'
 import { issueText, placeText, stepText } from './planText'
-import { LEDGER_GROUPS, SOURCE_FALLBACK, costViewOf, ledgerGroupOf, planSummary, planWarnings, targetEnvOf } from '../lib/migration/planModel'
+import { LEDGER_GROUPS, PLAN_MAX_REVEAL, SOURCE_FALLBACK, backendResourceTitle, costViewOf, infraScanState, ledgerGroupOf, mappingNotRunReason, planReveal, planSummary, planWarnings, targetEnvOf } from '../lib/migration/planModel'
 import CostCompare from './CostCompare'
 import FixerEnvNotice from './FixerEnvNotice'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
@@ -28,7 +28,7 @@ function WarnDot({ label }: { label?: string }) {
   return <i className="plan-warn-dot" role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : true} />
 }
 
-function Ledger({ preview, path, revealed, warnings, fixes }: { preview: PlanPreviewData; path: Target; revealed: number; warnings: PlanIssue[]; fixes: BuildFixData[] }) {
+function Ledger({ preview, path, revealed, warnings, fixes, real }: { preview: PlanPreviewData; path: Target; revealed: number; warnings: PlanIssue[]; fixes: BuildFixData[]; real: boolean }) {
   const t = useT()
   const tOr = useTOr()
   const groups = LEDGER_GROUPS.map(group => ({ group, rows: preview.resources.filter(resource => ledgerGroupOf(resource) === group) })).filter(item => item.rows.length > 0)
@@ -42,13 +42,18 @@ function Ledger({ preview, path, revealed, warnings, fixes }: { preview: PlanPre
         {rows.map(resource => {
           const order = index++
           const warn = warnOf(resource.id)
+          // 실제 모드: 백엔드 name이 사람이 읽는 제목이다(화면 id·사전의 고정 설명은 실제와 다를 수 있다). 보조 줄은 리소스 종류.
+          const fromBackend = real && !!resource.backend_name
+          const name = fromBackend ? backendResourceTitle(resource.backend_name!) : resourceText(tOr, resource, path, 'name')
+          const detail = fromBackend ? tOr('plan.type.' + resource.resource_type, resource.resource_type ?? '') : resourceText(tOr, resource, path, 'detail') || resource.backend_name
+          const size = resource.size || '—'
           return <tr key={resource.id} className={'plan-ledger-row plan-reveal' + (revealed > order ? ' is-visible' : '') + (resource.change === 'KEEP_SOURCE' ? ' is-keep' : '')}>
             <th scope="row">
-              <span className="plan-cell-main">{resourceText(tOr, resource, path, 'name')}{warn && <WarnDot label={t('plan.warnAria', { text: issueText(tOr, warn) })} />}</span>
-              <span className="plan-cell-sub">{resourceText(tOr, resource, path, 'detail') || resource.backend_name}{resource.defaulted && <em className="plan-default">{t('plan.defaulted')}</em>}</span>
+              <span className="plan-cell-main"><span className="plan-cell-text" title={name}>{name}</span>{warn && <WarnDot label={t('plan.warnAria', { text: issueText(tOr, warn) })} />}</span>
+              <span className="plan-cell-sub">{detail}{resource.defaulted && <em className="plan-default">{t('plan.defaulted')}</em>}</span>
             </th>
-            <td className="is-num">
-              <span className="plan-cell-main">{resource.size || '—'}</span>
+            <td className="is-num" title={resource.size_detail ? size + ' · ' + resource.size_detail : size}>
+              <span className="plan-cell-main">{size}</span>
               {resource.size_detail && <span className="plan-cell-sub">{resource.size_detail}</span>}
             </td>
             <td className="is-change"><span className={'plan-chip is-' + resource.change}>{t(('plan.change.' + resource.change) as MsgKey)}</span></td>
@@ -127,8 +132,8 @@ function MappingTable({ steps, target, revealed }: { steps: PlanStep[]; target: 
 const FIRST_REVEAL = PLAN_FIRST_REVEAL_MS
 const REVEAL_GAP = PLAN_REVEAL_GAP_MS
 const FLOW_END = PLAN_REVEAL_MS
-// 서버가 항목을 몇 개 보내든 연출 타이머는 이 개수까지만 건다.
-const MAX_REVEAL = 12
+// 서버가 항목을 몇 개 보내든 연출 타이머는 이 개수까지만 건다. 넘는 줄은 마지막 타이머에 한꺼번에 드러난다.
+const MAX_REVEAL = PLAN_MAX_REVEAL
 
 // 입자는 "어느 기준점에서 얼마나 떨어져 있는가"만 기억하고, 기준점(원·구체·문서)의 실제 위치는 매 프레임 읽는다.
 // 구체가 커지거나 원이 둥둥 떠다니거나 창 크기가 바뀌어도 입자가 항상 제자리로 들어간다.
@@ -231,7 +236,7 @@ function PlanParticleFlow({ stage }: { stage: RefObject<HTMLElement | null> }) {
 }
 
 export default function AIPlanningStage({ target, onNext }: { target: Target; onNext: () => void }) {
-  const { state } = useMigration()
+  const { state, mode } = useMigration()
   const analysis = state.analysis.findings
   // 계획 항목·미리보기는 데이터 계층에서 받는다. 화면이 열리면 바로 시작한다.
   useStageFeed('planning', true, target)
@@ -246,7 +251,8 @@ export default function AIPlanningStage({ target, onNext }: { target: Target; on
   const [view, setView] = useState<'ledger' | 'mapping' | 'diagram' | 'cost'>('ledger')
   // 분석 결과 없이 바로 이 화면을 연 경우(시연용 단계 이동)에는 분석이 끝난 것으로 보여 준다.
   const streams = [...analysis.map(update => update.stream), ...state.analysis.scans.map(scan => scan.stream)]
-  const hasInfra = streams.length === 0 || streams.includes('infrastructure')
+  // 실제 모드에서 AWS 스캔을 안 했으면(NOT_COLLECTED) "확인 완료"라고 하지 않는다.
+  const infraState = infraScanState(mode, state.analysis)
   const hasCode = streams.length === 0 || streams.includes('code')
 
   useEffect(() => {
@@ -261,8 +267,12 @@ export default function AIPlanningStage({ target, onNext }: { target: Target; on
   }, [])
   // 받은 줄 중 연출이 드러낸 만큼만 보인다. 완료는 서버가 "계획 끝"을 알리고 모든 줄(매핑·리소스 중 많은 쪽)이 드러난 뒤다.
   const units = Math.max(steps.length, preview?.resources.length ?? 0)
-  const visibleCount = Math.min(revealed, units)
-  const complete = state.plan.ready && units > 0 && visibleCount === units
+  const { visibleCount, complete } = planReveal(revealed, units, state.plan.ready)
+  // 계획이 끝났는데 매핑 항목이 하나도 없으면(백엔드 매핑이 돌지 않음) 매핑·구성도 탭은 기다리지 않고 빈 상태를 보인다.
+  const noMapping = state.plan.ready && steps.length === 0
+  const notRunReason = mappingNotRunReason(preview)
+  const mappingEmpty = <p className="plan-empty" role="status">{t('plan.mapping.none')}
+    {notRunReason && <span className="plan-empty-reason">{t('plan.mapping.noneReason', { reason: notRunReason })}</span>}</p>
   useVoiceActions({ next: complete && onNext })
 
   const path: Target = target === 'onprem' ? 'onprem' : 'gcp'
@@ -296,7 +306,7 @@ export default function AIPlanningStage({ target, onNext }: { target: Target; on
       <div className="plan-source plan-source-infra">
         <span className="plan-source-orb"><span>◫</span></span>
         <strong>{t('plan.srcInfra')}</strong>
-        <small>{hasInfra ? t('plan.srcInfraDone') : t('plan.srcWait')}</small>
+        <small>{infraState === 'done' ? t('plan.srcInfraDone') : infraState === 'skipped' ? t('plan.srcInfraSkipped') : t('plan.srcWait')}</small>
       </div>
       <div className="plan-source plan-source-code">
         <span className="plan-source-orb"><span>⌘</span></span>
@@ -334,10 +344,11 @@ export default function AIPlanningStage({ target, onNext }: { target: Target; on
       </div>
       <div className={'plan-changes plan-body' + (swapped ? ' is-swapped' : '') + ' is-' + view}>
         {view === 'ledger' && (preview
-          ? <Ledger key="ledger" preview={preview} path={path} revealed={visibleCount} warnings={warnings} fixes={state.build.fixes} />
+          ? <Ledger key="ledger" preview={preview} path={path} revealed={visibleCount} warnings={warnings} fixes={state.build.fixes} real={mode === 'sse'} />
           : <p className="plan-empty">{t('plan.preview.empty')}</p>)}
-        {view === 'mapping' && <MappingTable key="mapping" steps={steps} target={target} revealed={visibleCount} />}
-        {view === 'diagram' && <div key="diagram" className="plan-topo">
+        {view === 'mapping' && (noMapping ? <div key="mapping">{mappingEmpty}</div> : <MappingTable key="mapping" steps={steps} target={target} revealed={visibleCount} />)}
+        {view === 'diagram' && noMapping && <div key="diagram">{mappingEmpty}</div>}
+        {view === 'diagram' && !noMapping && <div key="diagram" className="plan-topo">
           <PlanTopology textOf={(step, field) => stepText(tOr, step, target, field)} steps={steps} preview={preview} digest={digest} revealed={visibleCount} sourceLabel={source} targetLabel={destination} />
           <ul className="plan-topo-legend">
             <li><i className="is-flow" />{t('plan.diagram.legendFlow')}</li>
