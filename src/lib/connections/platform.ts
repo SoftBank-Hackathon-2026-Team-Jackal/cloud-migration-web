@@ -40,7 +40,7 @@ function codeOnly(value: unknown): string | null {
   return typeof value === 'string' && /^[A-Z0-9_]{1,64}$/.test(value) ? value : null
 }
 
-async function call<T>(deps: PlatformDeps, method: 'GET' | 'POST', path: string, body?: object): Promise<T> {
+export async function call<T>(deps: PlatformDeps, method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: object): Promise<T> {
   if (!deps.enrollmentAdminKey) throw new PlatformError(503, 'unavailable', 'NOT_CONFIGURED')
   const fetchImpl = deps.fetchImpl ?? fetch
   let response: Response
