@@ -2,10 +2,12 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import ParticleReveal from './ParticleReveal'
+import ReviewGatePanel, { useReviewGate } from './ReviewGatePanel'
 import { useT, useTOr, type MsgKey, type TranslateOr } from '../lib/i18n'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
 import { ALWAYS_UNVERIFIED, EVIDENCE_KINDS, KIND_OF_METHOD, type AnalysisFindingData, type AnalysisScanData, type Evidence, type EvidenceKind, type Target } from '../lib/migration/events'
 import { useVoiceActions } from '../lib/voice/actions'
+import { reviewBlocked, reviewWaiting } from '../lib/migration/review'
 
 /** 발견 항목. message·detail이 비어 있으면 화면에서 key로 사전을 찾아 현재 언어로 보여 준다. 백엔드 값은 그대로 쓴다. */
 export type AnalysisUpdate = AnalysisFindingData
@@ -215,7 +217,10 @@ export default function AnalysisStage({ target, onAdvance, onComplete, orbHandof
   const infraStatus = finishedIf(analysisDone, progressFor(activeUpdates, scans, 'infrastructure'))
   const codeStatus = finishedIf(analysisDone, progressFor(activeUpdates, scans, 'code'))
   const tOr = useTOr()
-  const finished = analysisDone || (infraStatus.percent === 100 && codeStatus.percent === 100)
+  // 실제 서버는 매핑 뒤 사람의 결정(검토 게이트)을 기다린다. 스캔이 100%여도 그동안은 다음으로 갈 수 없다.
+  const { view: review, setView: setReview } = useReviewGate(true)
+  const reviewing = reviewWaiting(review) || reviewBlocked(review)
+  const finished = (analysisDone || (infraStatus.percent === 100 && codeStatus.percent === 100)) && !reviewing
   useEffect(() => { if (finished) onComplete?.() }, [finished, onComplete])
   useVoiceActions({ next: finished && ready && !proceed && (() => setProceed(true)) })
   // 피드: 스캔이 오면 스캔 요약, 아니면 예전 항목. 근거는 Evidence.kind로 같은 칩을 쓴다.
@@ -322,5 +327,6 @@ export default function AnalysisStage({ target, onAdvance, onComplete, orbHandof
       } as CSSProperties}><span>{index === 0 ? '◫' : '⌘'}</span></span>)}
     </div>}
     {!ready && <ParticleReveal stage={stageRef} onComplete={() => setReady(true)} />}
+    {review && reviewing && <ReviewGatePanel view={review} onView={setReview} />}
   </section>
 }

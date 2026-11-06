@@ -1,0 +1,37 @@
+/*
+ * 분석 검토 게이트: 분석 화면 위에 뜨는 카드. 승인 화면과 같은 무채색 장부 톤을 쓴다.
+ * 색은 회색 단계만 쓰고, 막힘·거절만 붉은 글자로 구분한다.
+ */
+.review-overlay{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(255,255,255,.82);backdrop-filter:blur(6px)}
+.review-card{display:flex;flex-direction:column;gap:14px;width:min(860px,100%);max-height:min(86vh,820px);padding:26px 28px 22px;border:1px solid #e3e3e3;border-radius:20px;background:#fff;box-shadow:0 24px 60px rgba(0,0,0,.12);font-family:var(--font-sans)}
+.review-card header small{display:block;margin-bottom:6px;color:#8a8a8a;font:600 11.5px/1 var(--font-sans);letter-spacing:.04em}
+.review-card header h2{margin:0 0 6px;color:#0a0a0a;font:700 22px/1.25 var(--font-sans)}
+.review-card header p{margin:0;color:#5c5c5c;font-size:13.5px;line-height:1.55}
+.review-list{display:flex;flex-direction:column;gap:10px;min-height:0;margin:0;padding:2px 2px 4px;overflow:auto;list-style:none}
+.review-list li{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border:1px solid #e6e6e6;border-radius:14px;background:#fff}
+.review-list li.is-required{border-color:#141414}
+.review-list li>div:first-child{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.review-list li strong{color:#0a0a0a;font:650 14.5px/1.3 var(--font-sans)}
+.review-list li p{margin:0;color:#3d3d3d;font-size:13px;line-height:1.5}
+.review-list li p.review-sub{color:#6b6b6b;font-size:12.5px}
+.review-grade{flex:none;padding:2px 9px;border:1px solid #bdbdbd;border-radius:999px;background:#fff;color:#444;font:600 11px/1.4 var(--font-sans)}
+.review-grade.is-direct{border-color:#d4d4d4;color:#6b6b6b}
+.review-grade.is-partial{border-color:#8a8a8a;color:#2b2b2b}
+.review-grade.is-none,.review-grade.is-lower{border-color:#b42318;color:#b42318}
+.review-toggle{display:flex;align-items:center;gap:9px;margin-top:2px;color:#0a0a0a;font:600 13px/1.4 var(--font-sans);cursor:pointer}
+.review-toggle input{width:17px;height:17px;accent-color:#141414}
+.review-toggle em{color:#6b6b6b;font:400 12px/1.4 var(--font-sans);font-style:normal}
+.review-decision{display:flex;gap:8px;margin-top:4px}
+.review-decision .flow-secondary{height:34px;min-width:84px;padding:0 16px;border:1px solid #cfcfcf;background:#fff;color:#2b2b2b}
+.review-decision .flow-secondary.is-picked{border-color:#141414;background:#141414;color:#fff}
+.review-decision .flow-secondary.is-picked.is-reject{border-color:#b42318;background:#b42318}
+.review-decision .flow-secondary:disabled{opacity:.5;cursor:default}
+.review-card footer{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-top:4px}
+.review-card footer small{color:#6b6b6b;font-size:12px;line-height:1.5}
+.review-card footer .flow-primary{flex:none}
+.review-empty{margin:10px 0;color:#5c5c5c;font-size:13.5px}
+.review-error{margin:0;color:#b42318;font:500 13px/1.5 var(--font-sans)}
+.review-error small{color:#b42318;opacity:.7}
+.review-card.is-blocked{border-color:#e7c9c5}
+.review-card.is-blocked header small,.review-card.is-blocked header h2{color:#b42318}
+@media (max-width:640px){.review-card{padding:20px 16px 16px}.review-card footer{flex-direction:column;align-items:stretch}}

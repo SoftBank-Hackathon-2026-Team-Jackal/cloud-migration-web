@@ -297,6 +297,64 @@ function openStream(req, res, record) {
   req.on('close', () => { clearInterval(heartbeat); state.clients.delete(res) })
 }
 
+// ---- 분석 검토 게이트(플랫폼 GET|POST /migrations/{id}/analysis/review를 흉내 낸다) ----
+// MOCK_REVIEW_GATE=1 일 때만 켠다(꺼져 있으면 404: 검토 API가 없는 서버와 같다). 시작 3초 뒤 필수 기능 확정을 기다린다.
+const REVIEW_GATE = process.env.MOCK_REVIEW_GATE === '1'
+const reviewRows = () => [
+  { id: 'a', capability: 'Realtime chat messages', usage: 'POST /api/messages · SSE', grade: 'DIRECT', loses: [], required_proposed: true, required_reason: 'core user flow', required: null, treatment: null },
+  { id: 'b', capability: 'Profile image upload', usage: 'S3 presigned URL', grade: 'PARTIAL', loses: ['CDN cache', 'presigned expiry'], required_proposed: false, required_reason: 'optional for the demo', required: null, treatment: null },
+  { id: 'c', capability: 'Push notifications', usage: 'SNS topic', grade: 'NONE', loses: ['mobile push'], required_proposed: false, required_reason: 'no consumer found', required: null, treatment: null },
+]
+const reviewSecurity = () => [
+  { id: 'security:EXTERNAL_HTTPS', criterion: 'EXTERNAL_HTTPS', source_state: 'PROTECTED', target_state: 'UNPROTECTED', verdict: 'LOWER', weak_source: false, reasons: ['TARGET_ENTRY_WITHOUT_TLS'], suggestion: 'ENFORCE_HTTPS_AT_ENTRY', proof: null, approvable: true, decision: null },
+]
+const reviews = new Map()
+function reviewOf(record) {
+  let review = reviews.get(record.id)
+  if (!review) { review = { startedAt: Date.now(), phase: 'ANALYZING', rows: reviewRows(), security: reviewSecurity(), approvals: {}, rejections: [] }; reviews.set(record.id, review) }
+  if (review.phase === 'ANALYZING' && Date.now() - review.startedAt > 3000 / SPEED) review.phase = 'WAITING_CONFIRMATION'
+  return review
+}
+function reviewView(review) {
+  const pending = review.phase === 'WAITING_CONFIRMATION' ? 'confirm_requirements' : review.phase === 'WAITING_APPROVAL' ? 'approve_losses' : null
+  const blocked = review.rows.filter(row => row.treatment === 'BLOCK').map(row => ({ id: row.id, capability: row.capability, usage: row.usage, grade: row.grade, reason: 'Required feature is ' + row.grade + ', cannot migrate.', alternative: 'Stop using it or pick another target.' }))
+  return { phase: review.phase, analysis_ref: review.phase === 'ANALYZING' ? null : { id: 'analysis', version: '1' }, pending, items: review.phase === 'ANALYZING' ? [] : review.rows, security: review.phase === 'ANALYZING' ? [] : review.security.map(item => ({ ...item, decision: review.approvals[item.id] ?? null })), blocked, rejections: review.rejections }
+}
+function reviewRecompute(review) {
+  for (const row of review.rows) row.treatment = row.required && row.grade === 'NONE' ? 'BLOCK' : !row.required && row.grade !== 'DIRECT' ? 'APPROVAL' : 'MIGRATE'
+  const asking = review.rows.some(row => row.treatment === 'APPROVAL') || review.security.some(item => item.approvable)
+  if (review.rows.some(row => row.treatment === 'BLOCK')) review.phase = 'BLOCKED'
+  else review.phase = asking && Object.keys(review.approvals).length === 0 ? 'WAITING_APPROVAL' : 'APPROVED'
+}
+function reviewDecide(review, kind, body) {
+  const reject = code => { review.rejections.push({ signal: kind, code, detail: '' }); return { status: 422, body: { detail: code } } }
+  const waiting = kind === 'confirm' ? 'WAITING_CONFIRMATION' : 'WAITING_APPROVAL'
+  if (review.phase !== waiting) return { status: 409, body: { detail: 'REVIEW_NOT_PENDING' } }
+  if (String(body.analysis_version) !== '1') return { status: 409, body: { detail: 'ANALYSIS_REF_MISMATCH' } }
+  if (kind === 'confirm') {
+    const given = body.required && typeof body.required === 'object' ? body.required : {}
+    const known = review.rows.map(row => row.id)
+    if (Object.keys(given).some(id => !known.includes(id))) return reject('UNKNOWN_ROW')
+    if (known.some(id => !(id in given))) return reject('MISSING_ROW')
+    for (const row of review.rows) row.required = !!given[row.id]
+    reviewRecompute(review)
+    return { status: 202, body: { phase: review.phase } }
+  }
+  const given = body.approvals && typeof body.approvals === 'object' ? body.approvals : {}
+  const asking = [...review.rows.filter(row => row.treatment === 'APPROVAL').map(row => row.id), ...review.security.filter(item => item.approvable).map(item => item.id)]
+  if (Object.keys(given).some(id => !asking.includes(id))) return reject('NOT_APPROVABLE')
+  if (asking.some(id => !(id in given))) return reject('MISSING_ROW')
+  review.approvals = { ...given }
+  for (const [id, decision] of Object.entries(given)) {
+    if (decision !== 'REJECTED') continue
+    const row = review.rows.find(item => item.id === id)
+    if (row) row.required = true
+    else review.phase = 'BLOCKED'
+  }
+  if (review.phase !== 'BLOCKED') { review.rows.forEach(row => { if (row.treatment === 'APPROVAL' && given[row.id] === 'REJECTED') row.treatment = 'BLOCK' }); reviewRecompute(review); if (review.phase === 'WAITING_APPROVAL') review.phase = 'APPROVED' }
+  return { status: 202, body: { phase: review.phase } }
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x')
   const path = url.pathname.replace(/\/+$/, '') || '/'
@@ -357,6 +415,13 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && sub === '') return send(res, 200, { id: record.id, target: record.target, status: record.status, phase: record.phase, last_seq: record.seq })
   if (req.method === 'GET' && sub === '/events') return openStream(req, res, record)
   if (req.method === 'GET' && sub === '/report') return send(res, 200, { stages: REPORT_SECONDS, ai_fixes: record.aiFixes })
+  if (sub === '/analysis/review' || sub.startsWith('/analysis/review/')) {
+    if (!REVIEW_GATE) return send(res, 404, { detail: 'ANALYSIS_NOT_FOUND' })
+    const review = reviewOf(record)
+    if (req.method === 'GET' && sub === '/analysis/review') return send(res, 200, reviewView(review))
+    const kind = sub === '/analysis/review/confirm' ? 'confirm' : sub === '/analysis/review/approve' ? 'approve' : null
+    if (req.method === 'POST' && kind) { const result = reviewDecide(review, kind, await readBody(req)); return send(res, result.status, result.body) }
+  }
 
   if (req.method === 'POST' && sub === '/approve') {
     const gate = url.searchParams.get('gate') === 'cutover' ? 'cutover' : 'plan'
