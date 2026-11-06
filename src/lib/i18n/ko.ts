@@ -1434,6 +1434,7 @@ export const ko = {
   "reviewGate.security.suggest": "제안",
   "reviewGate.grade.hint": "대상에서 얼마나 대응되는지",
   "reviewGate.grade.DIRECT": "그대로 지원",
+  "reviewGate.grade.API_DIFF": "API 차이 있음",
   "reviewGate.grade.PARTIAL": "일부만 지원",
   "reviewGate.grade.NONE": "대체 불가",
   "reviewGate.grade.LOWER": "낮아짐",

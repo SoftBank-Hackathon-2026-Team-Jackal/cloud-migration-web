@@ -1435,6 +1435,7 @@ export const ja: Record<MsgKey, string> = {
   "reviewGate.security.suggest": "提案",
   "reviewGate.grade.hint": "移行先での対応度",
   "reviewGate.grade.DIRECT": "そのまま対応",
+  "reviewGate.grade.API_DIFF": "API に差異あり",
   "reviewGate.grade.PARTIAL": "一部のみ対応",
   "reviewGate.grade.NONE": "代替不可",
   "reviewGate.grade.LOWER": "低下",

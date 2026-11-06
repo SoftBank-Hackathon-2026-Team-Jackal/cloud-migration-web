@@ -1435,6 +1435,7 @@ export const en: Record<MsgKey, string> = {
   "reviewGate.security.suggest": "Suggestion",
   "reviewGate.grade.hint": "How well the target supports it",
   "reviewGate.grade.DIRECT": "Supported",
+  "reviewGate.grade.API_DIFF": "API differs",
   "reviewGate.grade.PARTIAL": "Partial",
   "reviewGate.grade.NONE": "Not supported",
   "reviewGate.grade.LOWER": "Lower",

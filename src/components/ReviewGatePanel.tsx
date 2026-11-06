@@ -25,7 +25,7 @@ export function useReviewGate(active: boolean) {
   return { view, setView }
 }
 
-const GRADE_TONE: Record<string, string> = { DIRECT: 'is-direct', PARTIAL: 'is-partial', NONE: 'is-none' }
+const GRADE_TONE: Record<string, string> = { DIRECT: 'is-direct', API_DIFF: 'is-direct', PARTIAL: 'is-partial', NONE: 'is-none' }
 
 /**
  * 분석 검토 게이트 화면. 분석 매핑이 끝나면 서버가 사람의 결정을 기다린다(자동 승인은 없다):
