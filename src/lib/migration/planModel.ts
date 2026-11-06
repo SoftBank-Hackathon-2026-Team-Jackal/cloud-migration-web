@@ -149,3 +149,16 @@ export function approvalFacts(state: Pick<MigrationState, 'plan' | 'sandbox' | '
 export function fixerEnvKeys(fixes: BuildFixData[]): string[] {
   return [...new Set(fixes.flatMap(fix => fix.new_env_keys ?? []))]
 }
+
+/** 계획 화면이 연출 타이머로 한 줄씩 드러내는 최대 줄 수. 이보다 많은 줄은 마지막 타이머에 한꺼번에 드러난다. */
+export const PLAN_MAX_REVEAL = 12
+
+/**
+ * 계획 화면의 드러난 줄 수와 완료 여부.
+ * - units: 받은 줄 수(매핑·리소스 중 많은 쪽), revealed: 연출 타이머가 센 수(최대 PLAN_MAX_REVEAL)
+ * - 타이머가 끝까지 돌면 12줄을 넘는 실제 계획도 나머지 줄까지 모두 드러나고, 서버가 "계획 끝"을 알렸으면 완료다.
+ */
+export function planReveal(revealed: number, units: number, ready: boolean): { visibleCount: number; complete: boolean } {
+  const visibleCount = revealed >= PLAN_MAX_REVEAL ? units : Math.min(revealed, units)
+  return { visibleCount, complete: ready && units > 0 && visibleCount === units }
+}

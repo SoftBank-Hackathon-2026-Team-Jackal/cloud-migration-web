@@ -8,7 +8,7 @@ import { useT, useTOr, type MsgKey, type TranslateOr } from '../lib/i18n'
 import { ViewTabs } from './DiagramParts'
 import PlanTopology from './PlanTopology'
 import { issueText, placeText, stepText } from './planText'
-import { LEDGER_GROUPS, SOURCE_FALLBACK, costViewOf, ledgerGroupOf, planSummary, planWarnings, targetEnvOf } from '../lib/migration/planModel'
+import { LEDGER_GROUPS, PLAN_MAX_REVEAL, SOURCE_FALLBACK, costViewOf, ledgerGroupOf, planReveal, planSummary, planWarnings, targetEnvOf } from '../lib/migration/planModel'
 import CostCompare from './CostCompare'
 import FixerEnvNotice from './FixerEnvNotice'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
@@ -127,8 +127,8 @@ function MappingTable({ steps, target, revealed }: { steps: PlanStep[]; target: 
 const FIRST_REVEAL = PLAN_FIRST_REVEAL_MS
 const REVEAL_GAP = PLAN_REVEAL_GAP_MS
 const FLOW_END = PLAN_REVEAL_MS
-// 서버가 항목을 몇 개 보내든 연출 타이머는 이 개수까지만 건다.
-const MAX_REVEAL = 12
+// 서버가 항목을 몇 개 보내든 연출 타이머는 이 개수까지만 건다. 넘는 줄은 마지막 타이머에 한꺼번에 드러난다.
+const MAX_REVEAL = PLAN_MAX_REVEAL
 
 // 입자는 "어느 기준점에서 얼마나 떨어져 있는가"만 기억하고, 기준점(원·구체·문서)의 실제 위치는 매 프레임 읽는다.
 // 구체가 커지거나 원이 둥둥 떠다니거나 창 크기가 바뀌어도 입자가 항상 제자리로 들어간다.
@@ -261,8 +261,7 @@ export default function AIPlanningStage({ target, onNext }: { target: Target; on
   }, [])
   // 받은 줄 중 연출이 드러낸 만큼만 보인다. 완료는 서버가 "계획 끝"을 알리고 모든 줄(매핑·리소스 중 많은 쪽)이 드러난 뒤다.
   const units = Math.max(steps.length, preview?.resources.length ?? 0)
-  const visibleCount = Math.min(revealed, units)
-  const complete = state.plan.ready && units > 0 && visibleCount === units
+  const { visibleCount, complete } = planReveal(revealed, units, state.plan.ready)
   useVoiceActions({ next: complete && onNext })
 
   const path: Target = target === 'onprem' ? 'onprem' : 'gcp'

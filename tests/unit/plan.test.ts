@@ -155,3 +155,20 @@ test('승인 요약은 받은 계획 데이터에서 계산하고, 없는 값은
   const asked = approvalFacts({ ...state, approval: { pendingDecisions: ['CLEANUP_POLICY_REQUIRED', 'INSPECTION_REQUIRED', 'NEW_CODE'] } })
   assert.deepEqual(asked.pending, { rollback: ['CLEANUP_POLICY_REQUIRED'], excluded: ['INSPECTION_REQUIRED', 'NEW_CODE'] })
 })
+
+test('계획 화면: 12줄을 넘는 실제 계획도 연출이 끝나면 완료되고, 12줄 이하는 그대로다', async () => {
+  const { planReveal, PLAN_MAX_REVEAL } = await import('../../src/lib/migration/planModel.ts')
+  assert.equal(PLAN_MAX_REVEAL, 12)
+  // 15줄(실제 데모 계획): 연출 중에는 미완료, 12번째 타이머 뒤 15줄 모두 드러나고 완료
+  assert.deepEqual(planReveal(11, 15, true), { visibleCount: 11, complete: false })
+  assert.deepEqual(planReveal(PLAN_MAX_REVEAL, 15, true), { visibleCount: 15, complete: true })
+  // 서버가 계획 끝을 아직 안 알렸으면 미완료
+  assert.equal(planReveal(PLAN_MAX_REVEAL, 15, false).complete, false)
+  // 12줄 이하: 기존과 같다
+  assert.deepEqual(planReveal(3, 8, true), { visibleCount: 3, complete: false })
+  assert.deepEqual(planReveal(8, 8, true), { visibleCount: 8, complete: true })
+  assert.deepEqual(planReveal(12, 8, true), { visibleCount: 8, complete: true })
+  assert.deepEqual(planReveal(12, 12, true), { visibleCount: 12, complete: true })
+  // 줄이 없으면 완료가 아니다
+  assert.equal(planReveal(12, 0, true).complete, false)
+})
