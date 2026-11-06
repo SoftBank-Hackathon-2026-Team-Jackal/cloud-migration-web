@@ -55,7 +55,9 @@ export const REGION: Record<Target, { floor: string; command: string; subnets: [
 
 /** 검사 이름 → 통과하면 금색이 되는 리소스 종류. retest는 전부. */
 const CHECK_KINDS: Record<string, ResourceKind[] | 'all'> = {
-  pods_ready: ['cluster', 'compute'], db_connect: ['database'], app_health: ['compute', 'edge', 'security'], retest: 'all',
+  pods_ready: ['cluster', 'compute'], db_connect: ['database'], app_health: ['compute', 'edge', 'security'],
+  // 온프렘: 중계 터널을 지나 앱 상태를 확인한다(백엔드 tunnel_app_health)
+  tunnel_app_health: ['edge'], retest: 'all',
 }
 export function readyKinds(checks: ProvisionCheckData[]): Set<ResourceKind> | 'all' {
   const kinds = new Set<ResourceKind>()

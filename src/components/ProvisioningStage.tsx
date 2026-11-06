@@ -8,6 +8,7 @@ import type { Target } from '../lib/stages'
 import { useT, useTOr, type MsgKey } from '../lib/i18n'
 import { KIND_ORDER, REGION, addressOf, kindOf, readyKinds, specOf } from '../lib/migration/provisionModel'
 import ProvisioningScene, { KindSwatch, type SceneResource } from './ProvisioningScene'
+import { CHECK_GAP_MS, nextRevealDelay, stagedProgress, stagedResources } from '../lib/migration/provisionPacing'
 
 export default function ProvisioningStage({ target, onNext, onComplete }: { target: Target; onNext: () => void; onComplete?: () => void }) {
   const t = useT()
@@ -23,22 +24,46 @@ function ProvisioningBody({ ready, target, onNext, onComplete }: { ready: boolea
   const t = useT()
   const tOr = useTOr()
   // 만들어진 리소스는 provision.resource 이벤트로, 준비 상태 검사는 provision.check로 받는다(이름은 서버가 정한다).
-  const { state: migration } = useMigration()
-  const events = migration.provision.resources
-  const checks = migration.provision.checks
-  const checksDone = checks.length > 0 && checks.every(check => check.state === 'done')
+  const { state: migration, mode } = useMigration()
+  // 실제 모드는 서버가 리소스를 한꺼번에 보내므로(온프렘 Agent는 결과가 하나) 화면이 순서를 매겨 하나씩 그린다(provisionPacing).
+  const paced = mode === 'sse'
+  const allEvents = migration.provision.resources
+  const allChecks = migration.provision.checks
   useStageFeed('provisioning', ready, target)
-  // 이벤트에 이름·설명이 있으면 그대로, 없으면 알려진 key의 문구, 그것도 없으면 key 자체
-  const text = (key: string, field: 'name' | 'detail' | 'log' | 'info') => tOr('prov.' + target + '.' + key + '.' + field, field === 'name' || field === 'log' ? key : '')
-  const targetName = t(('target.' + target) as MsgKey)
-  const region = REGION[target]
-  const progress = events.length ? events[events.length - 1].progress : 0
-  const finished = progress === 100
-  useEffect(() => { if (finished) onComplete?.() }, [finished, onComplete])
 
   // 장면에서 면(생성됨)까지 조립이 끝난 블록. 명령줄·상태표가 이것을 따라 created로 바뀐다.
   const [settled, setSettled] = useState<ReadonlySet<string>>(() => new Set())
   const onSettled = useCallback((id: string) => setSettled(prev => prev.has(id) ? prev : new Set(prev).add(id)), [])
+
+  // 등장 순서: 화면이 뜬 뒤(ready) 받은 순서대로 하나씩
+  const [revealed, setRevealed] = useState(0)
+  useEffect(() => {
+    if (!paced || !ready) return
+    const delay = nextRevealDelay(revealed, allEvents.length)
+    if (delay === null) return
+    const timer = window.setTimeout(() => setRevealed(count => count + 1), delay)
+    return () => window.clearTimeout(timer)
+  }, [paced, ready, revealed, allEvents.length])
+  const events = paced ? stagedResources(allEvents, revealed, settled) : allEvents
+  const blocksSettled = allEvents.length > 0 && allEvents.every(event => event.state === 'failed' || settled.has(event.id))
+
+  // 검사: 모든 블록이 완성된 뒤 하나씩
+  const [checksShown, setChecksShown] = useState(0)
+  useEffect(() => {
+    if (!paced || !blocksSettled || checksShown >= allChecks.length) return
+    const timer = window.setTimeout(() => setChecksShown(count => count + 1), CHECK_GAP_MS)
+    return () => window.clearTimeout(timer)
+  }, [paced, blocksSettled, checksShown, allChecks.length])
+  const checks = paced ? allChecks.slice(0, checksShown) : allChecks
+  const checksDone = checks.length > 0 && checks.length === allChecks.length && checks.every(check => check.state === 'done')
+  // 이벤트에 이름·설명이 있으면 그대로, 없으면 알려진 key의 문구, 그것도 없으면 key 자체
+  const text = (key: string, field: 'name' | 'detail' | 'log' | 'info') => tOr('prov.' + target + '.' + key + '.' + field, field === 'name' || field === 'log' ? key : '')
+  const targetName = t(('target.' + target) as MsgKey)
+  const region = REGION[target]
+  // 실제 모드의 진행률은 화면에서 완성된 블록 수로 센다(서버 값은 한꺼번에 100이 된다).
+  const progress = paced ? stagedProgress(allEvents, settled) : events.length ? events[events.length - 1].progress : 0
+  const finished = progress === 100
+  useEffect(() => { if (finished) onComplete?.() }, [finished, onComplete])
 
   const goldKinds = readyKinds(checks)
   const allReady = finished && checksDone
