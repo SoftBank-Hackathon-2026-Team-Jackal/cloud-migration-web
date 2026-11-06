@@ -33,9 +33,13 @@ export type ReviewSecurity = {
   weak_source: boolean
   reasons: string[]
   suggestion: string | null
+  /** 이 기준을 무엇으로 증명하는지: SANDBOX(다음 샌드박스) · POST_DEPLOY(배포 뒤 다시 잼) · null(표시 안 함) */
+  proof: ReviewProof | null
   approvable: boolean
   decision: string | null
 }
+
+export type ReviewProof = 'SANDBOX' | 'POST_DEPLOY'
 
 export type ReviewBlocked = { id: string; capability: string; usage: string; grade: string; reason: string; alternative: string }
 
@@ -96,6 +100,7 @@ export function parseReview(value: unknown): ReviewView | null {
         weak_source: item.weak_source === true,
         reasons: strings(item.reasons),
         suggestion: typeof item.suggestion === 'string' ? item.suggestion : null,
+        proof: item.proof === 'SANDBOX' || item.proof === 'POST_DEPLOY' ? item.proof : null,
         approvable: item.approvable === true,
         decision: typeof item.decision === 'string' ? item.decision : null,
       }]
@@ -182,4 +187,79 @@ export function analysisFinished({ mode, done, streamsFull, view, known, pastAna
 /** 검토 패널을 띄울지: 실제 모드에서 검토가 사람을 기다리거나 막혔으면 어느 화면에서든(첫 화면 제외) 띄운다. */
 export function showReviewPanel({ mode, stage, view }: { mode: 'mock' | 'sse'; stage: string; view: ReviewView | null }): boolean {
   return mode === 'sse' && stage !== 'intro' && (reviewWaiting(view) || reviewBlocked(view))
+}
+
+// ---- 등급 × 필수 → 결과(플랫폼 cmp_agents.mapping.compute_treatment와 같은 표) ----
+
+export type Treatment = 'PROCEED' | 'APPROVAL' | 'BLOCK'
+/** 화면이 보여 주는 결과: 그대로 진행 · 2단계에서 승인 · 이전 중단 */
+export type ReviewOutcome = 'proceed' | 'approval' | 'block'
+
+/** DIRECT·API_DIFF는 필수 여부와 관계없이 진행. 그 밖(PARTIAL·NONE·모르는 등급)은 필수면 차단, 아니면 승인 필요. */
+export function treatmentOf(grade: string, required: boolean): Treatment {
+  if (grade === 'DIRECT' || grade === 'API_DIFF') return 'PROCEED'
+  return required ? 'BLOCK' : 'APPROVAL'
+}
+
+const OUTCOME: Record<Treatment, ReviewOutcome> = { PROCEED: 'proceed', APPROVAL: 'approval', BLOCK: 'block' }
+/** 1단계(필수 확정)에서 이 선택의 결과 */
+export const confirmOutcome = (grade: string, required: boolean): ReviewOutcome => OUTCOME[treatmentOf(grade, required)]
+/** 2단계(승인)에서 이 답의 결과: 승인하면 잃고(낮아진 채) 진행, 거절하면 기능은 필수가 되어 차단되고 보안은 그대로 차단된다. 답이 없으면 null. */
+export const decisionOutcome = (choice: ReviewDecision | undefined): ReviewOutcome | null =>
+  choice === 'APPROVED' ? 'proceed' : choice === 'REJECTED' ? 'block' : null
+
+export type ConfirmPreview = {
+  /** 확정하면 차단되는 행 ID */
+  blocks: string[]
+  /** 2단계에서 승인을 받을 행 ID */
+  approvals: string[]
+  proceeds: string[]
+  /** 2단계로 가는지(승인 행이 있거나 보안이 낮아지는 항목이 있다). 차단이 있으면 2단계 없이 멈춘다. */
+  asksApproval: boolean
+}
+
+/** 지금의 필수 선택으로 확정하면 어떻게 되는지 미리 계산한다(서버의 _recompute와 같은 판단). */
+export function confirmPreview(view: ReviewView, required: Record<string, boolean>): ConfirmPreview {
+  const by: Record<ReviewOutcome, string[]> = { proceed: [], approval: [], block: [] }
+  for (const item of view.items) by[confirmOutcome(item.grade, !!required[item.id])].push(item.id)
+  const lower = view.security.some(item => item.approvable)
+  return { blocks: by.block, approvals: by.approval, proceeds: by.proceed, asksApproval: by.block.length === 0 && (by.approval.length > 0 || lower) }
+}
+
+/** 2단계의 지금 답으로 보내면 차단되는 항목 ID(거절한 것) */
+export function approvePreview(view: ReviewView, choices: Record<string, ReviewDecision | undefined>): string[] {
+  return approvalIds(view).filter(id => choices[id] === 'REJECTED')
+}
+
+/** 보안 판정을 보여 줄 순서: 승인할 것(LOWER) → 사람이 봐야 할 것(UNKNOWN) → 같음·높아짐. 같은 무리 안에서는 서버 순서. */
+const VERDICT_ORDER: Record<string, number> = { LOWER: 0, UNKNOWN: 1, SAME: 2, HIGHER: 3 }
+export function securityRows(view: ReviewView): ReviewSecurity[] {
+  return view.security.map((item, index) => ({ item, index }))
+    .sort((a, b) => (VERDICT_ORDER[a.item.verdict] ?? 1) - (VERDICT_ORDER[b.item.verdict] ?? 1) || a.index - b.index)
+    .map(entry => entry.item)
+}
+
+/** 증명 방식 → 문구 키(없으면 표시하지 않는다) */
+export const proofKey = (proof: ReviewProof | null) => proof === 'SANDBOX' ? 'reviewGate.proof.SANDBOX' : proof === 'POST_DEPLOY' ? 'reviewGate.proof.POST_DEPLOY' : null
+
+/**
+ * 막힌 이유의 문구 키와 값. 서버 문장(한국어 고정 또는 'SECURITY_LOWER: <기준>')을 그대로 쓰지 않고 등급·기준으로 고른다.
+ * 보안 막힘은 capability가 'security'이고 usage가 기준이다.
+ */
+export function blockedText(item: ReviewBlocked): { kind: 'security' | 'feature'; reasonKey: string; altKey: string | null; criterion: string } {
+  if (item.capability === 'security') {
+    return { kind: 'security', reasonKey: 'reviewGate.blockedWhy.security', altKey: item.alternative ? 'reviewGate.suggest.' + item.alternative : null, criterion: item.usage }
+  }
+  const grade = item.grade === 'NONE' || item.grade === 'PARTIAL' ? item.grade : 'other'
+  return { kind: 'feature', reasonKey: 'reviewGate.blockedWhy.' + grade, altKey: grade === 'other' ? null : 'reviewGate.alt.' + grade, criterion: '' }
+}
+
+/**
+ * 검토 상태를 읽는 주기. 분석이 끝났는데 아직 게이트가 서지 않았으면(ANALYZING이거나 아직 못 읽음) 1초로 줄여
+ * 게이트가 서자마자 화면에 뜨게 한다. 그 밖에는 2초.
+ */
+export const REVIEW_POLL_FAST_MS = 1000
+export const REVIEW_POLL_MS = 2000
+export function reviewPollMs({ analysisDone, view }: { analysisDone: boolean; view: ReviewView | null }): number {
+  return analysisDone && (!view || view.phase === 'ANALYZING') ? REVIEW_POLL_FAST_MS : REVIEW_POLL_MS
 }
