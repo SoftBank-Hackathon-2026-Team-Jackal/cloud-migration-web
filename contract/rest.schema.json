@@ -80,6 +80,10 @@
         },
         "env_file_ref": {
           "type": "string"
+        },
+        "scope_id": {
+          "type": "string",
+          "pattern": "^scope-[a-f0-9]{16}$"
         }
       },
       "required": [
