@@ -33,6 +33,9 @@ import { useStageVoice } from '../lib/voice/useStageVoice'
 import { voiceText, type VoiceKey } from '../lib/voice/messages'
 import VoiceHints from './VoiceHints'
 import VoiceCaption from './VoiceCaption'
+import ReviewGatePanel, { useReviewGate } from './ReviewGatePanel'
+import { showReviewPanel } from '../lib/migration/review'
+import { browserSession, clearMigration, readMigration, saveMigration, stageForPhase } from '../lib/migration/session'
 
 // 실제 환경을 바꾸기 전(입력~승인)까지만 이전 단계로 돌아갈 수 있다. 승인 이후는 되돌림이 아니라 롤백 정책을 따른다.
 const BACK: Partial<Record<Stage, Stage>> = { setup: 'intro', analysis: 'setup', rehearsal: 'analysis', planning: 'rehearsal', approval: 'planning' }
@@ -332,15 +335,64 @@ export default function FlowApp() {
   const reportSandboxComplete = reportAnalysisComplete
   const reportProvisioningComplete = reportAnalysisComplete
 
+  // 실제 모드: 돌고 있는 이전에 다시 붙는 중(새로 고침·새 탭). 첫 이벤트들이 들어와 조용해지면 마지막 phase의 화면을 연다.
+  const reattaching = useRef(false)
+  const [reattachTick, setReattachTick] = useState(0)
+
   // 주소로 단계를 바로 열 수 있다: ?stage=traffic&target=gcp&demo=1
+  // 실제 모드에서 ?migration=<id>(또는 이 탭에 저장한 이전)가 있으면 그 이전에 다시 붙는다(?stage=는 쓰지 않는다).
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const wanted = params.get('stage')
     const wantedTarget = params.get('target')
     if (wantedTarget === 'gcp' || wantedTarget === 'onprem') setTarget(wantedTarget)
     if (params.get('demo') === '1') setDemoPanel(true)
+    const env = mode === 'sse' ? browserSession() : null
+    const saved = env ? readMigration(env) : null
+    if (saved) {
+      if (saved.target) setTarget(saved.target)
+      reattaching.current = true
+      setReattachTick(tick => tick + 1)
+      provider.attach(saved.id)
+      return
+    }
     if (isStage(wanted)) jump(wanted, false)
-  }, [jump])
+  }, [jump, mode, provider])
+
+  // 시작한(또는 다시 붙은) 이전의 ID를 주소와 이 탭에 남긴다. 목업은 남기지 않는다.
+  const savedId = migrationState.migrationId
+  useEffect(() => {
+    if (mode !== 'sse' || !savedId) return
+    const env = browserSession()
+    if (env) saveMigration(env, { id: savedId, target: choice })
+  }, [mode, savedId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 서버가 그 이전을 모르면(404) 저장한 ID를 지우고 첫 화면에 머문다.
+  const lostMigration = mode === 'sse' && migrationState.error?.code === 'migration_not_found'
+  useEffect(() => {
+    if (!lostMigration) return
+    const env = browserSession()
+    if (env) clearMigration(env)
+    if (reattaching.current) reattaching.current = false
+  }, [lostMigration])
+
+  // 다시 붙은 뒤: 이벤트가 0.6초 동안 더 오지 않으면(snapshot을 다 받았으면) 마지막 phase의 화면을 연다. 아무것도 안 오면 4초 뒤 분석 화면.
+  const { lastSeq, lastPhase } = migrationState
+  useEffect(() => {
+    if (!reattaching.current || reattachTick === 0) return
+    const open = () => {
+      if (!reattaching.current) return
+      reattaching.current = false
+      jump(stageForPhase(lastPhase), false)
+    }
+    const timer = window.setTimeout(open, lastSeq > 0 || lastPhase ? 600 : 4000)
+    return () => window.clearTimeout(timer)
+  }, [reattachTick, lastSeq, lastPhase, jump])
+
+  // 분석 검토 게이트: 실제 모드에서 이전이 돌고 있고 분석을 지나지 않았으면 어느 화면에서든 읽고, 기다리거나 막히면 패널을 띄운다.
+  const pastAnalysis = lastPhase !== null && lastPhase !== 'analysis'
+  const reviewActive = mode === 'sse' && !!migrationState.migrationId && !pastAnalysis && !['done', 'failed', 'cancelled'].includes(migrationState.status)
+  const review = useReviewGate(reviewActive, migrationState.analysis.done)
 
   const presenterKeys = useRef({ stage, listen: () => {}, intent: () => {}, pick: (_: SetupTarget) => {} })
   presenterKeys.current = {
@@ -420,7 +472,7 @@ export default function FlowApp() {
     </section>}
     {stage === 'setup' && <MigrationSetup target={choice} onTarget={setTarget} onNext={startFromSetup} onSay={text => { if (!kickoff.current) say(text) }} startRef={setupStart} />}
     {stage === 'setup' && <ArriveMorph key={'setup' + round} />}
-    {stage === 'analysis' && <AnalysisStage key={round} target={target} onComplete={reportAnalysisComplete} onAdvance={() => go('rehearsal')} />}
+    {stage === 'analysis' && <AnalysisStage key={round} target={target} review={{ view: review.view, known: review.known, pastAnalysis }} onComplete={reportAnalysisComplete} onAdvance={() => go('rehearsal')} />}
     {stage === 'rehearsal' && <RehearsalStage key={round} target={target} onComplete={reportSandboxComplete} onNext={next('planning')} />}
     {stage === 'planning' && <AIPlanningStage key={round} target={target} onNext={next('approval')} />}
     {stage === 'planning' && <ArriveMorph key={'planning' + round} />}
@@ -433,6 +485,7 @@ export default function FlowApp() {
       onComplete={() => sayVoice(voiceText(voiceLang, 'r.migration.done'), voiceLang !== lang ? voiceText(lang, 'r.migration.done') : undefined)}
       onRestart={() => jump('intro')} />}
     <StatusPanel stage={stage} onHome={() => jump('intro')} onSetup={() => jump('setup')} />
+    {review.view && showReviewPanel({ mode, stage, view: review.view }) && <ReviewGatePanel view={review.view} onView={review.setView} />}
     <TransitionLayer />
     {backTo && !dissolving && <BackButton onBack={goBack} />}
     <div className={'flow-toast' + (notice ? ' is-on' : '')} role="status" aria-hidden={!notice}>{t('nav.noBack')}</div>

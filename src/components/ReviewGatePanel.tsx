@@ -10,19 +10,32 @@ const POLL_MS = 2000
 /**
  * 실제 서버의 분석 검토 게이트를 읽는다(2초마다). 서버에 검토 API가 없거나 이전이 아직 시작되지 않았으면 view는 null.
  * 목업은 검토 단계가 없어 아무것도 읽지 않는다.
+ * known: analysisDone이 된 뒤에 검토 상태를 한 번 이상 읽었는지(404도 읽은 것). 분석이 끝나면 바로 한 번 더 읽는다:
+ * 서버는 analysis.done 뒤에 매핑하고 게이트에서 멈추므로, 그 전에 읽은 값으로 '끝났다'고 보면 게이트를 건너뛴다.
+ * active가 꺼져도 마지막 view는 남는다(막힘 안내가 계속 보이게).
  */
-export function useReviewGate(active: boolean) {
-  const { provider, mode } = useMigration()
+export function useReviewGate(active: boolean, analysisDone: boolean) {
+  const { provider, mode, state } = useMigration()
   const [view, setView] = useState<ReviewView | null>(null)
+  const [known, setKnown] = useState(false)
+  const migrationId = state.migrationId
+  // 다른 이전을 시작하면 지난 검토 값은 버린다.
+  useEffect(() => { setView(null); setKnown(false) }, [migrationId])
   useEffect(() => {
     if (!active || mode !== 'sse') return
     let alive = true
-    const read = async () => { const next = await provider.loadReview(); if (alive) setView(next) }
+    if (analysisDone) setKnown(false)
+    const read = async () => {
+      const next = await provider.loadReview()
+      if (!alive || next === undefined) return
+      setView(next)
+      if (analysisDone) setKnown(true)
+    }
     void read()
     const timer = window.setInterval(read, POLL_MS)
     return () => { alive = false; window.clearInterval(timer) }
-  }, [provider, mode, active])
-  return { view, setView }
+  }, [provider, mode, active, analysisDone, migrationId])
+  return { view, known, setView }
 }
 
 const GRADE_TONE: Record<string, string> = { DIRECT: 'is-direct', PARTIAL: 'is-partial', NONE: 'is-none' }

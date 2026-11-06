@@ -166,6 +166,7 @@ export class MockProvider implements MigrationProvider {
   injectFailure() { this.traffic?.inject() }
   loadReport() { this.host.dispatch({ type: 'report', report: reportFor(aiFixCount()) }) }
   // 목업 흐름에는 분석 검토 게이트가 없다(실제 서버에서만 사람의 확인을 기다린다).
+  attach() { /* 목업은 다시 붙을 이전이 없다. */ }
   async loadReview() { return null }
   async confirmReview(): Promise<ReviewResult> { return { ok: false, code: 'REVIEW_NOT_PENDING' } }
   async approveReview(): Promise<ReviewResult> { return { ok: false, code: 'REVIEW_NOT_PENDING' } }

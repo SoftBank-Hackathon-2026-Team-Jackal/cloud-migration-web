@@ -286,7 +286,10 @@ export function normalizePlanStep(raw: Omit<Partial<PlanStepData>, 'grade'> & { 
 
 /** 계획 완료. 필드는 모두 선택이라 예전의 빈 객체도 유효하다. */
 /** manifest_digest·preview_digest는 백엔드 승인 API(ApprovalRequest)가 요구하는 값이다(sha256 16진수 64자). 승인 때 그대로 되돌려 보낸다. */
-export type PlanReadyData = { plan_id?: string; revision?: number; template_version?: string; built_digest?: string; verified_digest?: string; manifest_digest?: string; preview_digest?: string }
+/** 승인 대상 범위(백엔드 PlanManifest.scope). 승인·거절 요청의 scope와 같아야 한다(다르면 409 APPROVAL_TARGET_MISMATCH). */
+export type ApprovalScope = 'INFRASTRUCTURE' | 'WORKLOADS' | 'FULL'
+/** scope: 그 Revision의 PlanManifest.scope(ON_PREM은 WORKLOADS). 옛 이벤트에는 없다. */
+export type PlanReadyData = { plan_id?: string; revision?: number; template_version?: string; built_digest?: string; verified_digest?: string; manifest_digest?: string; preview_digest?: string; scope?: ApprovalScope }
 
 export type ApprovalRequiredData = {
   excluded: string[]
@@ -309,7 +312,7 @@ export type ApprovalDecisionData = {
   plan_id: string
   revision: number
   decision: 'APPROVE' | 'REJECT'
-  scope: 'INFRASTRUCTURE' | 'WORKLOADS' | 'FULL'
+  scope: ApprovalScope
   delivery_status: DeliveryStatus
   delivery_attempts: number
   execution_status: ExecutionStatus
