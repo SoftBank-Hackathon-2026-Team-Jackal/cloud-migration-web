@@ -7,9 +7,9 @@
  * - 검사: 모든 블록이 완성된 뒤 CHECK_GAP_MS 간격으로 하나씩.
  * 목업은 대본이 이미 간격을 두고 보내므로 쓰지 않는다(화면이 바뀌지 않게).
  */
-export const REVEAL_FIRST_MS = 300
-export const REVEAL_GAP_MS = 700
-export const CHECK_GAP_MS = 500
+export const REVEAL_FIRST_MS = 500
+export const REVEAL_GAP_MS = 1100
+export const CHECK_GAP_MS = 700
 
 type Item = { id: string; state: 'running' | 'done' | 'failed' }
 
