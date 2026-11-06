@@ -41,7 +41,9 @@ function codeOnly(value: unknown): string | null {
 }
 
 export async function call<T>(deps: PlatformDeps, method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: object): Promise<T> {
-  if (!deps.enrollmentAdminKey) throw new PlatformError(503, 'unavailable', 'NOT_CONFIGURED')
+  // 설정 누락은 목업으로 떨어지지 않고 그대로 알린다(화면에 어느 값이 빠졌는지 보인다).
+  if (!deps.base) throw new PlatformError(503, 'unavailable', 'PLATFORM_API_BASE_NOT_CONFIGURED')
+  if (!deps.enrollmentAdminKey) throw new PlatformError(503, 'unavailable', 'PLATFORM_ADMIN_KEY_NOT_CONFIGURED')
   const fetchImpl = deps.fetchImpl ?? fetch
   let response: Response
   try {
@@ -90,4 +92,10 @@ export async function getAgent(deps: PlatformDeps, agentId: string): Promise<Pla
 /** POST /agent-admin/agents/{agent_id}/revoke */
 export async function revokeAgent(deps: PlatformDeps, agentId: string): Promise<PlatformAgent> {
   return toAgent(await call(deps, 'POST', '/agent-admin/agents/' + encodeURIComponent(agentId) + '/revoke'))
+}
+
+/** GET /agent-admin/agents → 플랫폼에 등록된 agent_id(웹 서버를 다시 띄워도 목록이 남는다) */
+export async function listAgentIds(deps: PlatformDeps): Promise<string[]> {
+  const data = await call<{ agents?: { agent_id?: unknown }[] }>(deps, 'GET', '/agent-admin/agents')
+  return (data.agents ?? []).map(agent => agent.agent_id).filter((value): value is string => typeof value === 'string')
 }

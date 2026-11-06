@@ -8,6 +8,9 @@ import {
 } from '../../src/lib/connections/handlers.ts'
 import { createMockAgents, createMockConnections, memoryAgentIds, resetMock } from '../../src/lib/connections/mock.ts'
 import { createRealConnections } from '../../src/lib/connections/real.ts'
+import { platformMode } from '../../src/lib/connections/server.ts'
+import { decideAccess, parseAllowedLogins } from '../../src/lib/connections/access.ts'
+import { listAgentIds } from '../../src/lib/connections/platform.ts'
 import { agentState, installCommand, isAgentId, isRoleArn, ttlSeconds } from '../../src/lib/connections/types.ts'
 import type { AgentsApi } from '../../src/lib/connections/adapter.ts'
 
@@ -119,7 +122,7 @@ test('오류 매핑: 403 운영자 키 · 409 이미 쓰는 id · 503 닿지 않
 
   const down = { base: 'http://platform.test', enrollmentAdminKey: KEY, fetchImpl: (async () => { throw new TypeError('ECONNREFUSED') }) as typeof fetch }
   await assert.rejects(getAgent(down, 'x'), (error: PlatformError) => error.status === 503 && error.code === 'unavailable')
-  await assert.rejects(getAgent({ base: 'x', enrollmentAdminKey: '' }, 'x'), (error: PlatformError) => error.status === 503 && error.detail === 'NOT_CONFIGURED')
+  await assert.rejects(getAgent({ base: 'x', enrollmentAdminKey: '' }, 'x'), (error: PlatformError) => error.status === 503 && error.detail === 'PLATFORM_ADMIN_KEY_NOT_CONFIGURED')
 
   assert.equal((await handleEnroll(post({ agent_id: 'Bad_ID' }), d)).status, 400)
   assert.equal((await handleEnroll(post({ agent_id: 'ok', ttl_minutes: 90 }), d)).status, 400)
@@ -279,4 +282,68 @@ test('실제 연결: 404·403은 BFF 오류 코드로 바뀌고, 오래된 터�
   const tunnel = await api.tunnelStatus('laptop', { agent_id: 'laptop', owner_id: 'platform', cluster_uid: 'u', last_seen_at: 1, revoked: false })
   assert.deepEqual(tunnel, { tunnel_ip: '10.8.0.5', last_handshake_at: 100, app_health_ok: null, db_connect_ok: null })
   assert.equal(await api.tunnelStatus('other', { agent_id: 'other', owner_id: 'platform', cluster_uid: null, last_seen_at: null, revoked: false }), null)
+})
+
+// ---- 모드 선택 · 설정 누락 · 플랫폼 Agent 목록 ----
+
+test('모드: 명시값 > 목업 빌드 > 프로덕션 기본 real · 개발 기본 mock', () => {
+  assert.equal(platformMode({ connections: '', nodeEnv: 'production', apiMode: 'sse' }), 'real')
+  assert.equal(platformMode({ connections: '', nodeEnv: 'production', apiMode: undefined }), 'real')
+  assert.equal(platformMode({ connections: '', nodeEnv: 'production', apiMode: 'mock' }), 'mock')
+  assert.equal(platformMode({ connections: 'real', nodeEnv: 'production', apiMode: 'mock' }), 'real')
+  assert.equal(platformMode({ connections: 'mock', nodeEnv: 'production', apiMode: 'sse' }), 'mock')
+  assert.equal(platformMode({ connections: '', nodeEnv: 'development', apiMode: 'sse' }), 'mock')
+  assert.equal(platformMode({ connections: ' REAL ', nodeEnv: 'development' }), 'real')
+})
+
+test('실제 모드 설정 누락: 목업으로 떨어지지 않고 목록 meta에 503과 원인 코드가 실린다', async () => {
+  const noKey = createRealConnections({ base: 'http://platform.test', enrollmentAdminKey: '' })
+  const noBase = createRealConnections({ base: '', enrollmentAdminKey: KEY })
+  await assert.rejects(noKey.listConnections(), (error: PlatformError) => error.status === 503 && error.detail === 'PLATFORM_ADMIN_KEY_NOT_CONFIGURED')
+  await assert.rejects(noBase.listConnections(), (error: PlatformError) => error.status === 503 && error.detail === 'PLATFORM_API_BASE_NOT_CONFIGURED')
+
+  const p = { base: 'http://platform.test', enrollmentAdminKey: '' }
+  const agents: AgentsApi = { mock: false, issueEnrollment: input => issueEnrollment(p, input), getAgent: id => getAgent(p, id), revokeAgent: id => revokeAgent(p, id), listAgentIds: () => listAgentIds(p) }
+  const response = await handleList(get(), deps(fakePlatform(), { connections: noKey, agents }))
+  assert.equal(response.status, 200)
+  const body = await response.json()
+  assert.deepEqual(body.meta.connections, { mock: false, error: 'unavailable', detail: 'PLATFORM_ADMIN_KEY_NOT_CONFIGURED' })
+  assert.deepEqual(body.meta.agents, { mock: false, error: 'unavailable', detail: 'PLATFORM_ADMIN_KEY_NOT_CONFIGURED' })
+  assert.deepEqual(body.connections, [])
+})
+
+test('실제 Agent 목록: 플랫폼에 등록된 Agent와 웹이 기억한 id를 합쳐 보여 준다', async () => {
+  const platform = fakePlatform()
+  platform.agents.set('laptop', { last_seen_at: 1, revoked: false, registered: true })
+  const p = { base: 'http://platform.test', enrollmentAdminKey: KEY, fetchImpl: (async (input: string | URL | Request, init?: RequestInit) => {
+    if (new URL(String(input)).pathname === '/agent-admin/agents') return Response.json({ agents: [{ agent_id: 'laptop' }] })
+    return platform.fetchImpl(input, init)
+  }) as typeof fetch }
+  const agents: AgentsApi = { mock: false, issueEnrollment: input => issueEnrollment(p, input), getAgent: id => getAgent(p, id), revokeAgent: id => revokeAgent(p, id), listAgentIds: () => listAgentIds(p) }
+  const d = deps(platform, { agents })
+  d.agentIds.add('pending-one')
+  const body = await (await handleList(get(), d)).json()
+  assert.deepEqual(body.agents.map((a: { agent_id: string }) => a.agent_id).sort(), ['laptop', 'pending-one'])
+  assert.equal(body.agents.find((a: { agent_id: string }) => a.agent_id === 'pending-one').enrolled_only, true)
+})
+
+test('관리 API 접근: 운영자 키가 있으면 로그인한 허용 계정만 통과한다', () => {
+  const real = { mock: false, hasAdminKey: true }
+  const allowed = parseAllowedLogins(' Alice, bob ,')
+  assert.deepEqual(allowed, ['alice', 'bob'])
+  assert.equal(decideAccess({ ...real, login: null, allowed }), 'login_required')
+  assert.equal(decideAccess({ ...real, login: 'mallory', allowed }), 'not_allowed')
+  assert.equal(decideAccess({ ...real, login: 'ALICE', allowed }), 'allow')
+})
+
+test('관리 API 접근: 허용 목록이 비어 있으면 로그인해도 아무도 통과하지 못한다', () => {
+  assert.equal(decideAccess({ mock: false, hasAdminKey: true, login: 'alice', allowed: [] }), 'not_allowed')
+  // 키가 없어도 목업 모드가 아니면(real) 닫혀 있다
+  assert.equal(decideAccess({ mock: false, hasAdminKey: false, login: null, allowed: ['alice'] }), 'login_required')
+})
+
+test('관리 API 접근: 목업 모드이고 운영자 키가 없으면 로그인 없이 열린다', () => {
+  assert.equal(decideAccess({ mock: true, hasAdminKey: false, login: null, allowed: [] }), 'allow')
+  // 목업이어도 키가 있으면 실제 권한이므로 닫는다
+  assert.equal(decideAccess({ mock: true, hasAdminKey: true, login: null, allowed: ['alice'] }), 'login_required')
 })

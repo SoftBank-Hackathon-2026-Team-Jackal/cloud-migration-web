@@ -42,7 +42,7 @@ const fakeUrl = 'http://127.0.0.1:' + fake.address().port
 
 function startApp(port, env) {
   const child = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1', '-p', String(port)], {
-    env: { ...process.env, ANTHROPIC_API_KEY: '', GEMINI_API_KEY: '', AGENT_PROVIDER: '', ...env }, stdio: 'ignore',
+    env: { ...process.env, ANTHROPIC_API_KEY: '', GEMINI_API_KEY: '', AGENT_PROVIDER: '', PLATFORM_CONNECTIONS: 'mock', ...env }, stdio: 'ignore',
   })
   return child
 }

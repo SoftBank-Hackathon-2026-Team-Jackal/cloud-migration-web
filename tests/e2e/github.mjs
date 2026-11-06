@@ -76,7 +76,7 @@ await new Promise(resolve => github.listen(0, '127.0.0.1', resolve))
 const GITHUB = 'http://127.0.0.1:' + github.address().port
 
 const app = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1', '-p', String(PORT)], {
-  env: { ...process.env, AUTH_GITHUB_ID: 'e2e-client-id', AUTH_GITHUB_SECRET: 'e2e-client-secret', AUTH_SECRET: SECRET, GITHUB_API_BASE: GITHUB, AUTH_URL: '' },
+  env: { ...process.env, AUTH_GITHUB_ID: 'e2e-client-id', AUTH_GITHUB_SECRET: 'e2e-client-secret', AUTH_SECRET: SECRET, GITHUB_API_BASE: GITHUB, AUTH_URL: '', PLATFORM_CONNECTIONS: 'mock' },
   stdio: 'ignore',
 })
 async function waitFor(url) {

@@ -88,12 +88,15 @@ export type AgentView = {
 
 export type ListSection<T> = { items: T[]; error: ApiErrorCode | null; mock: boolean }
 
+/** 목록 묶음의 출처·오류. detail은 원인 코드(예: PLATFORM_ADMIN_KEY_NOT_CONFIGURED) */
+export type ListMeta = { mock: boolean; error: ApiErrorCode | null; detail?: string | null }
+
 /** 웹 서버 /api/connections 응답 */
 export type ConnectionsList = {
   connections: Connection[]
   agents: AgentView[]
   /** 각 묶음이 목업에서 왔는지·오류가 났는지(화면은 개발 모드에서만 목업 표시를 띄운다) */
-  meta: { connections: { mock: boolean; error: ApiErrorCode | null }; agents: { mock: boolean; error: ApiErrorCode | null } }
+  meta: { connections: ListMeta; agents: ListMeta }
   checked_at: number
 }
 

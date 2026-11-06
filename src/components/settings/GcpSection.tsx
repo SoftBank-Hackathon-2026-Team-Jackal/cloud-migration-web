@@ -37,8 +37,8 @@ function GcpCard({ connection, now, onChanged }: { connection: Connection; now: 
   </article>
 }
 
-export default function GcpSection({ connections, error, mock, now, onChanged }: {
-  connections: Connection[]; error: ApiErrorCode | null; mock: boolean; now: number; onChanged: () => void
+export default function GcpSection({ connections, error, errorDetail, mock, now, onChanged }: {
+  connections: Connection[]; error: ApiErrorCode | null; errorDetail?: string | null; mock: boolean; now: number; onChanged: () => void
 }) {
   const { t } = useI18n()
   const list = connections.filter(item => item.kind === 'GCP_TARGET')
@@ -49,7 +49,7 @@ export default function GcpSection({ connections, error, mock, now, onChanged }:
         <p>{t('cx.gcp.lead')}</p>
       </div>
     </header>
-    {error && <ErrorNote error={error} onRetry={onChanged} />}
+    {error && <ErrorNote error={error} detail={errorDetail} onRetry={onChanged} />}
     {!error && list.length === 0 && <div className="cx-empty"><strong>{t('cx.gcp.empty')}</strong><span>{t('cx.gcp.emptyHint')}</span></div>}
     <div className="cx-list">{list.map(connection => <GcpCard key={connection.connection_id} connection={connection} now={now} onChanged={onChanged} />)}</div>
     <form className="cx-soon" aria-labelledby="cx-wif-title" onSubmit={event => event.preventDefault()}>

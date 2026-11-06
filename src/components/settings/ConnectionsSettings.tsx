@@ -62,9 +62,9 @@ export default function ConnectionsSettings() {
         {list === 'loading' && <Skeleton rows={2} />}
         {list !== 'loading' && 'error' in list && <ErrorNote error={list.error} onRetry={refresh} />}
         {data && <>
-          <Tabs.Content value="aws" className="cx-panel"><AwsSection connections={data.connections} error={data.meta.connections.error} mock={data.meta.connections.mock} now={now} onChanged={refresh} /></Tabs.Content>
-          <Tabs.Content value="gcp" className="cx-panel"><GcpSection connections={data.connections} error={data.meta.connections.error} mock={data.meta.connections.mock} now={now} onChanged={refresh} /></Tabs.Content>
-          <Tabs.Content value="agent" className="cx-panel"><AgentSection agents={data.agents} error={data.meta.agents.error} mock={data.meta.agents.mock} now={now} onChanged={refresh} /></Tabs.Content>
+          <Tabs.Content value="aws" className="cx-panel"><AwsSection connections={data.connections} error={data.meta.connections.error} errorDetail={data.meta.connections.detail} mock={data.meta.connections.mock} now={now} onChanged={refresh} /></Tabs.Content>
+          <Tabs.Content value="gcp" className="cx-panel"><GcpSection connections={data.connections} error={data.meta.connections.error} errorDetail={data.meta.connections.detail} mock={data.meta.connections.mock} now={now} onChanged={refresh} /></Tabs.Content>
+          <Tabs.Content value="agent" className="cx-panel"><AgentSection agents={data.agents} error={data.meta.agents.error} errorDetail={data.meta.agents.detail} mock={data.meta.agents.mock} now={now} onChanged={refresh} /></Tabs.Content>
         </>}
       </Tabs.Root>
       <p className="cx-policy">{t('cx.policy')}</p>

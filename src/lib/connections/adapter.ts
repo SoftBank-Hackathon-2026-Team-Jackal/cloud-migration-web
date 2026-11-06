@@ -6,7 +6,7 @@ import type {
 /**
  * 웹 서버가 플랫폼에 묻는 일의 함수 시그니처. 실제 API와 [가정] 목업이 같은 모양을 따르므로 나중에 구현만 바꿔 끼운다.
  * - AgentsApi: 실제 API(platform.ts)가 있다. 운영자 키가 없는 목업 데모 모드에서만 목업을 쓴다.
- * - ConnectionsApi: 백엔드 #23 /connections. 실제 구현은 real.ts(PLATFORM_CONNECTIONS=real), 기본은 mock.ts가 답한다.
+ * - ConnectionsApi: 백엔드 #23 /connections. 실제 구현은 real.ts, 목업 모드(PLATFORM_CONNECTIONS=mock·개발 서버)에서만 mock.ts가 답한다.
  *   이전 범위 선택(listScopeOptions·analyzeScope·confirmScope)은 백엔드에 아직 없어서 두 구현 모두 목업(mockScope)이다.
  */
 export interface AgentsApi {
@@ -14,6 +14,8 @@ export interface AgentsApi {
   issueEnrollment(input: { ownerId: string; agentId: string; ttlSeconds: number }): Promise<{ enrollment_token: string; expires_in_seconds: number }>
   getAgent(agentId: string): Promise<PlatformAgent>
   revokeAgent(agentId: string): Promise<PlatformAgent>
+  /** 실제 API: GET /agent-admin/agents의 agent_id. 목업은 없다(웹이 기억한 id만 쓴다). */
+  listAgentIds?(): Promise<string[]>
 }
 
 export interface ConnectionsApi {
