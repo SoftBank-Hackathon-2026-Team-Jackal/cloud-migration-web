@@ -191,8 +191,8 @@ function ConnectDialog({ open, resume, onClose, onChanged }: { open: boolean; re
   </Modal>
 }
 
-export default function AwsSection({ connections, error, mock, now, onChanged }: {
-  connections: Connection[]; error: ApiErrorCode | null; mock: boolean; now: number; onChanged: () => void
+export default function AwsSection({ connections, error, errorDetail, mock, now, onChanged }: {
+  connections: Connection[]; error: ApiErrorCode | null; errorDetail?: string | null; mock: boolean; now: number; onChanged: () => void
 }) {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
@@ -206,7 +206,7 @@ export default function AwsSection({ connections, error, mock, now, onChanged }:
       </div>
       <button type="button" className="cx-primary" data-action="aws-connect" onClick={() => { setResume(null); setOpen(true) }}>{t('cx.aws.add')}</button>
     </header>
-    {error && <ErrorNote error={error} onRetry={onChanged} />}
+    {error && <ErrorNote error={error} detail={errorDetail} onRetry={onChanged} />}
     {!error && list.length === 0 && <div className="cx-empty"><strong>{t('cx.aws.empty')}</strong><span>{t('cx.aws.emptyHint')}</span></div>}
     <div className="cx-list">
       {list.map(connection => <AwsCard key={connection.connection_id} connection={connection} now={now} onChanged={onChanged}

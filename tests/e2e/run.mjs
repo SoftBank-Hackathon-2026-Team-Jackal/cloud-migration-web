@@ -36,7 +36,8 @@ let base = process.env.BASE_URL
 if (!base) {
   const port = await freePort()
   base = `http://127.0.0.1:${port}`
-  app = spawn('npx', ['next', 'start', '-H', '127.0.0.1', '-p', String(port)], { stdio: 'ignore' })
+  // 연결·Agent는 목업으로(프로덕션 기본값은 실제 플랫폼 API)
+  app = spawn('npx', ['next', 'start', '-H', '127.0.0.1', '-p', String(port)], { stdio: 'ignore', env: { ...process.env, PLATFORM_CONNECTIONS: process.env.PLATFORM_CONNECTIONS ?? 'mock' } })
   await waitFor(base)
 }
 

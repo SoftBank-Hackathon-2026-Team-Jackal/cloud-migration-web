@@ -28,6 +28,9 @@ function fromError(error: unknown): Response {
   return fail(502, 'platform_error')
 }
 
+/** 목록 묶음의 오류: 코드와(있으면) 설정 누락 같은 원인 코드 */
+const errorMeta = (reason: unknown) => reason instanceof PlatformError ? { error: reason.code, detail: reason.detail } : { error: 'platform_error' as const, detail: null }
+
 async function readJson(request: Request): Promise<Record<string, unknown> | null> {
   try {
     const body = await request.json() as unknown
@@ -57,6 +60,14 @@ async function agentView(deps: ConnectionsDeps, agentId: string): Promise<AgentV
   }
 }
 
+/** 웹이 등록한 id + (실제 API면) 플랫폼에 등록된 id. 플랫폼 목록을 못 읽으면 오류를 그대로 알린다. */
+async function agentIdsFor(deps: ConnectionsDeps): Promise<string[]> {
+  const known = deps.agentIds.list()
+  if (!deps.agents.listAgentIds) return known
+  const platform = await deps.agents.listAgentIds()
+  return [...new Set([...platform, ...known])]
+}
+
 /** GET /api/connections → 통합 목록. 한 묶음이 실패해도 다른 묶음은 보여 준다. */
 export async function handleList(_request: Request, deps: ConnectionsDeps): Promise<Response> {
   const body: ConnectionsList = {
@@ -65,12 +76,12 @@ export async function handleList(_request: Request, deps: ConnectionsDeps): Prom
   }
   const [connections, agents] = await Promise.allSettled([
     deps.connections.listConnections(),
-    Promise.all(deps.agentIds.list().map(id => agentView(deps, id))),
+    agentIdsFor(deps).then(ids => Promise.all(ids.map(id => agentView(deps, id)))),
   ])
   if (connections.status === 'fulfilled') body.connections = connections.value
-  else body.meta.connections.error = connections.reason instanceof PlatformError ? connections.reason.code : 'platform_error'
+  else Object.assign(body.meta.connections, errorMeta(connections.reason))
   if (agents.status === 'fulfilled') body.agents = agents.value
-  else body.meta.agents.error = agents.reason instanceof PlatformError ? agents.reason.code : 'platform_error'
+  else Object.assign(body.meta.agents, errorMeta(agents.reason))
   return json(200, body)
 }
 

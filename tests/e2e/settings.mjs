@@ -52,6 +52,10 @@ const platform = createServer(async (req, res) => {
     agents.set(body.agent_id, { owner_id: body.owner_id, registered: false, last_seen_at: null, revoked: false })
     return json(200, { enrollment_token: token, expires_in_seconds: body.ttl_seconds })
   }
+  if (req.method === 'GET' && url.pathname === '/agent-admin/agents') {
+    // 백엔드 GET /agent-admin/agents: 플랫폼에 등록을 마친 Agent만(토큰만 받은 것은 없다)
+    return json(200, { agents: [...agents].filter(([, a]) => a.registered).map(([id, a]) => ({ agent_id: id, cluster_uid: 'e2e-cluster-uid', last_seen_at: a.last_seen_at, online: true, revoked: a.revoked, version: null, tunnel: null })) })
+  }
   const match = url.pathname.match(/^\/agent-admin\/agents\/([^/]+)(\/revoke)?$/)
   const agent = match && agents.get(decodeURIComponent(match[1]))
   if (!match || !agent?.registered) return json(404, { detail: 'AGENT_NOT_FOUND' })
@@ -63,7 +67,7 @@ const PLATFORM = 'http://127.0.0.1:' + platform.address().port
 const control = path => fetch(PLATFORM + path)
 
 const app = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1', '-p', String(PORT)], {
-  env: { ...process.env, PLATFORM_API_BASE: PLATFORM, PLATFORM_ENROLLMENT_ADMIN_KEY: KEY, PLATFORM_PUBLIC_URL: PUBLIC_URL, PLATFORM_OWNER_ID: 'platform', PLATFORM_KNOWN_AGENT_IDS: '' },
+  env: { ...process.env, PLATFORM_API_BASE: PLATFORM, PLATFORM_ENROLLMENT_ADMIN_KEY: KEY, PLATFORM_PUBLIC_URL: PUBLIC_URL, PLATFORM_OWNER_ID: 'platform', PLATFORM_KNOWN_AGENT_IDS: '', PLATFORM_CONNECTIONS: 'mock' },
   stdio: 'ignore',
 })
 async function waitFor(url) {

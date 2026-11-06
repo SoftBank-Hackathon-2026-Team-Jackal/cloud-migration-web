@@ -168,8 +168,8 @@ function EnrollDialog({ open, onClose, onChanged }: { open: boolean; onClose: ()
   </Modal>
 }
 
-export default function AgentSection({ agents, error, mock, now, onChanged }: {
-  agents: AgentView[]; error: ApiErrorCode | null; mock: boolean; now: number; onChanged: () => void
+export default function AgentSection({ agents, error, errorDetail, mock, now, onChanged }: {
+  agents: AgentView[]; error: ApiErrorCode | null; errorDetail?: string | null; mock: boolean; now: number; onChanged: () => void
 }) {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
@@ -181,7 +181,7 @@ export default function AgentSection({ agents, error, mock, now, onChanged }: {
       </div>
       <button type="button" className="cx-primary" data-action="agent-add" onClick={() => setOpen(true)}>{t('cx.agent.add')}</button>
     </header>
-    {error && <ErrorNote error={error} onRetry={onChanged} />}
+    {error && <ErrorNote error={error} detail={errorDetail} onRetry={onChanged} />}
     {!error && agents.length === 0 && <div className="cx-empty"><strong>{t('cx.agent.empty')}</strong><span>{t('cx.agent.emptyHint')}</span></div>}
     <div className="cx-list">{agents.map(agent => <AgentCard key={agent.agent_id} agent={agent} now={now} onChanged={onChanged} />)}</div>
     <EnrollDialog open={open} onClose={() => setOpen(false)} onChanged={onChanged} />

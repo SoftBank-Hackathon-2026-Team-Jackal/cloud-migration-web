@@ -1,7 +1,7 @@
 import type { AgentsApi } from './adapter.ts'
 import type { ConnectionsDeps } from './handlers.ts'
 import { createMockAgents, createMockConnections, memoryAgentIds } from './mock.ts'
-import { getAgent, issueEnrollment, revokeAgent, type PlatformDeps } from './platform.ts'
+import { getAgent, issueEnrollment, listAgentIds, revokeAgent, type PlatformDeps } from './platform.ts'
 import { createRealConnections } from './real.ts'
 
 /**
@@ -11,14 +11,29 @@ import { createRealConnections } from './real.ts'
  *   PLATFORM_PUBLIC_URL             설치 명령의 platform.url(에이전트가 닿는 플랫폼 공개 HTTPS 주소)
  *   PLATFORM_OWNER_ID               등록 요청의 owner_id(기본 platform)
  *   PLATFORM_KNOWN_AGENT_IDS        (선택) 웹 서버 재시작 뒤에도 목록에 보일 agent_id, 쉼표 구분
- *   PLATFORM_CONNECTIONS            real이면 클라우드 연결(AWS·GCP)을 실제 플랫폼 API(Ticket 23 /connections)로 부른다.
- *                                   비우면 지금처럼 목업이다(백엔드에 Launch Stack 템플릿 주소·플랫폼 주체 ARN이 설정된 뒤 켠다).
- * 운영자 키가 없고 데모가 목업 모드(NEXT_PUBLIC_API_MODE≠sse)이면 Agent도 목업으로 답한다.
+ *   PLATFORM_CONNECTIONS            real | mock. 클라우드 연결(Ticket 23 /connections)과 Agent를 실제 API로 부를지 목업으로 답할지.
+ *                                   비우면 프로덕션(next start)은 real, 개발 서버·NEXT_PUBLIC_API_MODE=mock 빌드는 mock이다.
+ * real에서 PLATFORM_API_BASE·PLATFORM_ENROLLMENT_ADMIN_KEY가 비어 있으면 목업으로 떨어지지 않고 503과 설정 누락 코드를 돌려준다.
+ * mock이어도 운영자 키가 있으면 Agent는 실제 API를 쓴다(연결만 목업).
  */
 const env = (name: string) => (process.env[name] ?? '').trim()
 
+export type PlatformMode = 'real' | 'mock'
+
+/** 연결·Agent 모드: 명시한 PLATFORM_CONNECTIONS > 프로덕션 기본 real > 개발·목업 빌드 mock */
+export function platformMode(values: { connections?: string; nodeEnv?: string; apiMode?: string } = {
+  connections: env('PLATFORM_CONNECTIONS'), nodeEnv: process.env.NODE_ENV, apiMode: process.env.NEXT_PUBLIC_API_MODE,
+}): PlatformMode {
+  const explicit = (values.connections ?? '').trim().toLowerCase()
+  if (explicit === 'real' || explicit === 'mock') return explicit
+  if (values.apiMode === 'mock') return 'mock'
+  return values.nodeEnv === 'production' ? 'real' : 'mock'
+}
+
 export function platformDeps(): PlatformDeps {
-  return { base: env('PLATFORM_API_BASE') || 'http://127.0.0.1:8000', enrollmentAdminKey: env('PLATFORM_ENROLLMENT_ADMIN_KEY') }
+  // 개발 서버에서만 로컬 플랫폼 기본 주소를 쓴다. 프로덕션에서 비어 있으면 호출 때 설정 누락으로 실패한다.
+  const fallback = process.env.NODE_ENV === 'production' ? '' : 'http://127.0.0.1:8000'
+  return { base: env('PLATFORM_API_BASE') || fallback, enrollmentAdminKey: env('PLATFORM_ENROLLMENT_ADMIN_KEY') }
 }
 
 function realAgents(deps: PlatformDeps): AgentsApi {
@@ -27,23 +42,21 @@ function realAgents(deps: PlatformDeps): AgentsApi {
     issueEnrollment: input => issueEnrollment(deps, input),
     getAgent: id => getAgent(deps, id),
     revokeAgent: id => revokeAgent(deps, id),
+    listAgentIds: () => listAgentIds(deps),
   }
 }
 
-export function mockAgentsEnabled(): boolean {
-  return !env('PLATFORM_ENROLLMENT_ADMIN_KEY') && process.env.NEXT_PUBLIC_API_MODE !== 'sse'
-}
-
-/** 클라우드 연결을 실제 API로 부르는지: PLATFORM_CONNECTIONS=real이고 운영자 키가 있을 때만 */
-export function realConnectionsEnabled(): boolean {
-  return env('PLATFORM_CONNECTIONS') === 'real' && Boolean(env('PLATFORM_ENROLLMENT_ADMIN_KEY'))
+/** Agent 목업: 연결도 목업이고 운영자 키도 없을 때만 */
+export function mockAgentsEnabled(mode = platformMode()): boolean {
+  return mode === 'mock' && !env('PLATFORM_ENROLLMENT_ADMIN_KEY')
 }
 
 export function connectionsDeps(): ConnectionsDeps {
-  const mockAgents = mockAgentsEnabled()
+  const mode = platformMode()
+  const mockAgents = mockAgentsEnabled(mode)
   const seed = env('PLATFORM_KNOWN_AGENT_IDS').split(',').map(id => id.trim()).filter(Boolean)
   return {
-    connections: realConnectionsEnabled() ? createRealConnections(platformDeps()) : createMockConnections(),
+    connections: mode === 'real' ? createRealConnections(platformDeps()) : createMockConnections(),
     agents: mockAgents ? createMockAgents() : realAgents(platformDeps()),
     agentIds: memoryAgentIds(mockAgents ? ['office-seoul-01', ...seed] : seed),
     ownerId: env('PLATFORM_OWNER_ID') || 'platform',
