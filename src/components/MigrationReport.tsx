@@ -99,7 +99,9 @@ function download(name: string, text: string, type: string) {
 export default function MigrationReport({ target, onRestart }: { target: Target; onRestart: () => void }) {
   const { t, lang } = useI18n()
   // 단계별 소요 시간과 AI 수정 개수는 리포트 데이터(GET /migrations/{id}/report)에서 온다.
-  const { state, provider } = useMigration()
+  const { state, provider, can } = useMigration()
+  // 실제 모드: 리포트 API(report)가 아직 없으면 타임라인 대신 짧은 안내만 보인다(capabilities.ts).
+  const hasReport = can('report')
   useEffect(() => { provider.loadReport() }, [provider])
   const pauseMs = state.cutover.outcome?.result === 'switched' ? state.cutover.outcome.pause_ms : null
   const report = buildReport(t, target, lang, state.report ?? { stages: [], ai_fixes: 0 }, pauseMs === null ? undefined : (pauseMs < 10 ? pauseMs.toFixed(1) : String(Math.round(pauseMs))) + ' ms')
@@ -126,14 +128,16 @@ export default function MigrationReport({ target, onRestart }: { target: Target;
       <div className={'report-pane' + (tab === 'monitor' ? ' is-inactive' : '')} aria-hidden={tab === 'monitor'}><div className="report-grid">
         <div>
           <h3>{t('report.timeline')}</h3>
-          <ol className="report-timeline">
-            {report.stages.map(stage => <li key={stage.id}>
-              <span className="report-dot" aria-hidden="true" />
-              <div><strong>{stage.label}</strong><p>{stage.note}</p></div>
-              <time>{stage.duration}</time>
-            </li>)}
-          </ol>
-          <p className="report-total"><span>{t('report.total')}</span><b>{report.total}</b></p>
+          {hasReport ? <>
+            <ol className="report-timeline">
+              {report.stages.map(stage => <li key={stage.id}>
+                <span className="report-dot" aria-hidden="true" />
+                <div><strong>{stage.label}</strong><p>{stage.note}</p></div>
+                <time>{stage.duration}</time>
+              </li>)}
+            </ol>
+            <p className="report-total"><span>{t('report.total')}</span><b>{report.total}</b></p>
+          </> : <p className="approval-lead">{t('report.unavailable')}</p>}
         </div>
 
         <div>

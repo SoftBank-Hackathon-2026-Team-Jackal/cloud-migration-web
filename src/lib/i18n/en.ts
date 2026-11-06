@@ -851,6 +851,7 @@ export const en: Record<MsgKey, string> = {
   "report.results": "Results",
   "report.notes": "Status and what remains",
   "report.total": "Total time",
+  "report.unavailable": "The per-stage timing report isn't available from the backend yet.",
   "report.stage.analysis": "13 AWS items and the code dependencies checked",
   "report.stage.rehearsal": "6/6 checks passed · {n} AI fix(es)",
   "report.stage.planning": "6 changes (4 infrastructure, 2 code/config)",

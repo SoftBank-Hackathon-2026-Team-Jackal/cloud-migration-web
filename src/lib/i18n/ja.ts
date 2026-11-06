@@ -851,6 +851,7 @@ export const ja: Record<MsgKey, string> = {
   "report.results": "計測結果",
   "report.notes": "現在の状態・残り",
   "report.total": "合計所要時間",
+  "report.unavailable": "段階別の所要時間レポートは、まだバックエンドから取得できません。",
   "report.stage.analysis": "AWS 構成 13 項目・コード依存関係を確認",
   "report.stage.rehearsal": "検証 6/6 通過 · AI 修正 {n} 件",
   "report.stage.planning": "変更 6 件（インフラ 4・コード/設定 2）",

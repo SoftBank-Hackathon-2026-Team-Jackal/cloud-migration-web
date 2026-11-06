@@ -22,7 +22,7 @@ export function ConnectionToast() {
 export function StatusPanel({ stage, onHome, onSetup }: { stage: Stage; onHome: () => void; onSetup?: () => void }) {
   const t = useT()
   const tOr = useTOr()
-  const { state, provider } = useMigration()
+  const { state, provider, can } = useMigration()
   const phase = stage in PHASE_OF_STAGE ? PHASE_OF_STAGE[stage as keyof typeof PHASE_OF_STAGE] : null
   if (!phase) return null
 
@@ -36,7 +36,8 @@ export function StatusPanel({ stage, onHome, onSetup }: { stage: Stage; onHome: 
         <p className="approval-lead">{t('review.hint')}</p>
         <div className="approval-actions">
           <button type="button" className="flow-secondary" onClick={() => provider.cancel()}>{t('review.cancel')}</button>
-          <button type="button" className="flow-primary" onClick={() => provider.retrySandbox()}>{t('review.retry')} <span aria-hidden="true">→</span></button>
+          {/* 실제 모드: 재시도 API(sandbox.retry)가 아직 없으면 버튼을 숨긴다(capabilities.ts). */}
+          {can('sandbox.retry') && <button type="button" className="flow-primary" onClick={() => provider.retrySandbox()}>{t('review.retry')} <span aria-hidden="true">→</span></button>}
         </div>
       </div>
     </section>
