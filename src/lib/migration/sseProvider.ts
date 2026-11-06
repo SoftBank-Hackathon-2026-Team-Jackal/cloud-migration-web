@@ -2,6 +2,7 @@ import { isBackendPreview, normalizePlanStep, startRequestFor, type ApprovalDeci
 import type { EnterContext, MigrationProvider, ProviderHost } from './provider'
 import type { ReportData } from './events'
 import type { SseStartMode } from './config'
+import { parseCapabilities, type Capability } from './capabilities.ts'
 
 type Options = {
   baseUrl: string
@@ -18,6 +19,8 @@ type Options = {
    * 없으면 예전처럼 baseUrl의 플랫폼 경로로 직접 보낸다(목업 SSE 서버 단독 시험용).
    */
   approvalBase?: string
+  /** 백엔드에 API가 있는 동작(capabilities.ts). 없으면 SSE 기본값. 목록에 없는 동작은 요청을 보내지 않는다. */
+  capabilities?: ReadonlySet<Capability>
 }
 
 /** 이전을 시작하지 않고 멈춘 이유(StatusPanel이 실패가 아니라 대기 안내로 보여 준다). */
@@ -60,6 +63,10 @@ export class SseProvider implements MigrationProvider {
   constructor(host: ProviderHost, options: Options) {
     this.host = host
     this.options = options
+  }
+
+  private can(capability: Capability) {
+    return (this.options.capabilities ?? parseCapabilities(undefined)).has(capability)
   }
 
   private async headers(extra: Record<string, string> = {}) {
@@ -203,18 +210,19 @@ export class SseProvider implements MigrationProvider {
    */
   revisePlan() { this.decide('REJECT', () => { void this.post('/plan/revise') }) }
   /** [가정] 백엔드 계약에 없다: 샌드박스 3회 초과 뒤 사람 검토가 어떻게 이뤄지는지 정해지지 않았다. */
-  retrySandbox() { void this.post('/sandbox/retry') }
+  retrySandbox() { if (this.can('sandbox.retry')) void this.post('/sandbox/retry') }
   /** [가정] 두 번째 승인(DB 전환) 경로는 정해지지 않았다. */
   approveCutover() { void this.post('/approve?gate=cutover') }
   /** [확정: 학습용 뼈대] POST /migrations/{id}/cancel */
   cancel() { void this.post('/cancel') }
   /** [가정] 트래픽 롤백·재시도 경로는 정해지지 않았다. */
-  rollbackTraffic() { void this.post('/traffic/rollback') }
-  retryTraffic() { void this.post('/traffic/retry') }
+  rollbackTraffic() { if (this.can('traffic.rollback')) void this.post('/traffic/rollback') }
+  retryTraffic() { if (this.can('traffic.retry')) void this.post('/traffic/retry') }
   injectFailure() { /* 데모 전용: SSE 모드에서는 쓰지 않는다. */ }
 
+  /** [가정] GET /migrations/{id}/report: 백엔드에 아직 없다(capabilities의 report가 없으면 부르지 않는다). */
   loadReport() {
-    if (!this.migrationId) return
+    if (!this.migrationId || !this.can('report')) return
     void (async () => {
       try {
         const response = await fetch(this.options.baseUrl + '/migrations/' + this.migrationId + '/report', { headers: await this.headers() })

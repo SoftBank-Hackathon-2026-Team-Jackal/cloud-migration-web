@@ -35,7 +35,7 @@ const sec = (value: number) => (Math.round(value * 10) / 10).toFixed(1)
 function TrafficBody({ ready, target, onNext }: { ready: boolean; target: Target; onNext: () => void }) {
   const t = useT()
   const { tOr } = useI18n()
-  const { state, mode, provider } = useMigration()
+  const { state, mode, provider, can } = useMigration()
   // 사전 확인·가중치·관찰 지표·게이트 판정은 traffic.prepare · traffic.snapshot 이벤트로 받는다.
   useStageFeed('traffic', ready, target)
   const { snapshot, prepare, trace, startedAt } = state.traffic
@@ -51,7 +51,7 @@ function TrafficBody({ ready, target, onNext }: { ready: boolean; target: Target
   const residual = { requests: snapshot?.residual.requests_per_sec ?? 0, streams: snapshot?.residual.streams ?? 0 }
   const lagMs = snapshot?.replication?.lag_ms ?? state.traffic.ready?.lag_ms ?? state.data.current?.lag_ms ?? null
   const drained = stage === 'drained'
-  useVoiceActions({ next: drained && onNext, rollback: stage !== 'rolledback' && stage !== 'prepare' && stage !== 'blocked' && (() => provider.rollbackTraffic()), inject: mode === 'mock' && (stage === 'observing' || stage === 'applying') && (() => provider.injectFailure()), retry: stage === 'rolledback' && (() => provider.retryTraffic()) })
+  useVoiceActions({ next: drained && onNext, rollback: can('traffic.rollback') && stage !== 'rolledback' && stage !== 'prepare' && stage !== 'blocked' && (() => provider.rollbackTraffic()), inject: mode === 'mock' && (stage === 'observing' || stage === 'applying') && (() => provider.injectFailure()), retry: can('traffic.retry') && stage === 'rolledback' && (() => provider.retryTraffic()) })
   const failedBad = failed > policy.maxFailed
   const p99Bad = p99Ratio > policy.maxP99Ratio
   const origin = prepare?.origin?.name ?? t('traffic.card.originFallback')
@@ -146,9 +146,10 @@ function TrafficBody({ ready, target, onNext }: { ready: boolean; target: Target
         <span className="traffic-foot-note">{stage === 'rolledback' ? t('traffic.foot.rolledback') : drained ? t('traffic.foot.done') : stage === 'complete' ? t('traffic.foot.draining', verdictParams) : t('traffic.foot.default')}</span>
       </div>
       <div className="traffic-actions">
-        <button type="button" className="flow-secondary" onClick={() => provider.rollbackTraffic()} disabled={stage === 'rolledback' || stage === 'prepare' || stage === 'blocked'}>{t('traffic.btn.rollback')}</button>
+        {/* 실제 모드: 롤백·재시도 API가 아직 없으면 버튼을 숨긴다(capabilities.ts). */}
+        {can('traffic.rollback') && <button type="button" className="flow-secondary" onClick={() => provider.rollbackTraffic()} disabled={stage === 'rolledback' || stage === 'prepare' || stage === 'blocked'}>{t('traffic.btn.rollback')}</button>}
         {mode === 'mock' && <button type="button" className="flow-secondary" onClick={() => provider.injectFailure()} disabled={stage !== 'observing' && stage !== 'applying'}>{t('traffic.btn.inject')}</button>}
-        {stage === 'rolledback' && <button type="button" className="flow-secondary" onClick={() => provider.retryTraffic()}>{t('traffic.btn.retry')}</button>}
+        {stage === 'rolledback' && can('traffic.retry') && <button type="button" className="flow-secondary" onClick={() => provider.retryTraffic()}>{t('traffic.btn.retry')}</button>}
         <button type="button" className="flow-primary" disabled={!drained} onClick={onNext}>{t('traffic.btn.go')} <span aria-hidden="true">→</span></button>
       </div>
     </div>

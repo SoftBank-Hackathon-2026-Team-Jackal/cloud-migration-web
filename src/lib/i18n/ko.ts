@@ -850,6 +850,7 @@ export const ko = {
   "report.results": "측정 결과",
   "report.notes": "현재 상태 · 남은 것",
   "report.total": "총 소요 시간",
+  "report.unavailable": "단계별 소요 시간 리포트는 아직 백엔드에서 받을 수 없어요.",
   "report.stage.analysis": "AWS 구성 13개 항목 · 코드 의존성 확인",
   "report.stage.rehearsal": "검증 6/6 통과 · AI 수정 {n}건",
   "report.stage.planning": "변경 6건(인프라 4 · 코드·설정 2)",
