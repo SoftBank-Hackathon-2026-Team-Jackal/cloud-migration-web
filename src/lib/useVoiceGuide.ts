@@ -364,10 +364,10 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', recog
 
   speakRef.current = speak
 
-  /** 에이전트의 즉석 답변도 같은 목소리(서버 TTS)로 읽는다. */
-  const speakText = useCallback((text: string, language: 'ko' | 'en' | 'ja' = 'ko', source?: 'model' | 'local') => {
+  /** 에이전트의 즉석 답변도 같은 목소리(서버 TTS)로 읽는다. caption은 화면 언어 자막(언어가 다를 때만). */
+  const speakText = useCallback((text: string, language: 'ko' | 'en' | 'ja' = 'ko', source?: 'model' | 'local', caption?: string) => {
     setMessage(text)
-    setCaption('')
+    setCaption(caption ?? '')
     setUtterance(count => count + 1)
     emitSay(text, { kind: 'answer', source })
     utter(text, language)
