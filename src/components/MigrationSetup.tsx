@@ -165,14 +165,15 @@ export default function MigrationSetup({ target, onTarget, onNext, onSay, startR
     setStep('scope')
     sayRef.current?.(t('scope.jackal.intro'))
   }
-  // 범위를 확정해야 이전을 시작한다. [가정] 확정한 범위는 아직 시작 요청 계약에 없어 싣지 않는다(scope_id는 화면에서만 쓴다).
-  const onScopeConfirmed = (_confirmation: ScopeConfirmation) => {
+  // 범위를 확정해야 이전을 시작한다. 확정한 범위의 scope_id를 시작 요청에 실어, 플랫폼이 그 범위와 원본 연결로 분석하게 한다.
+  const onScopeConfirmed = (confirmation: ScopeConfirmation) => {
     const registered = env && env !== 'loading' ? env : null
     onNext(startRequestFor(target, {
       region: registered?.gcp?.region, agentId: registered?.agent?.agent_id,
       // 시연용 저장소는 싣지 않는다. .env는 플랫폼에 올린 참조가 있을 때만 싣는다(목업 모드에서는 키 이름만 알아서 싣지 않는다).
       source: source ?? undefined,
       envFileRef: envFile?.ref ?? undefined,
+      scopeId: confirmation.scope_id,
     }))
   }
   const submitRef = useRef(submit)

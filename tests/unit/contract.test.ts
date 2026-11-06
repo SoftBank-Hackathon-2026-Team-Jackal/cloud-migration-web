@@ -245,6 +245,13 @@ test('REST 요청·응답 형식', () => {
   assertValid(validateRest('StartRequest'), { project_id: 'demo', source_provider: 'AWS', target_provider: 'GCP', ...startRequestFor('gcp', { source }) }, 'StartRequest source')
   assert.equal(validateRest('StartRequest')({ ...startRequestFor('gcp'), source: { ...source, commit_sha: 'main' } }), false, 'source는 브랜치가 아니라 커밋 SHA')
   assert.equal(validateRest('StartRequest')({ ...startRequestFor('gcp'), source: { ...source, token: 'gho_x' } }), false, 'source에 토큰을 싣지 않는다')
+  // 확정한 이전 범위(scope_id): 플랫폼 MigrationRequest.scope_id와 같은 형식만 받는다.
+  const scopeId = 'scope-' + 'a1'.repeat(8)
+  const scoped = startRequestFor('gcp', { scopeId })
+  assert.equal(scoped.scope_id, scopeId)
+  assertValid(validateRest('StartRequest'), { project_id: 'demo', source_provider: 'AWS', target_provider: 'GCP', ...scoped }, 'StartRequest scope_id')
+  assert.equal('scope_id' in startRequestFor('gcp'), false, '범위를 확정하지 않으면 scope_id를 싣지 않는다')
+  assert.equal(validateRest('StartRequest')({ ...startRequestFor('gcp'), scope_id: 'scan-123' }), false, 'scope_id는 scope- 형식')
   assertValid(validateRest('StartResponse'), { workflow_id: 'wf-1', run_id: 'run-1', mode: 'scaffold' }, 'StartResponse(백엔드)')
   const digest = 'a'.repeat(64)
   assertValid(validateRest('ApprovalRequest'), { decision: 'APPROVE', scope: 'FULL', manifest_digest: digest, preview_digest: digest }, 'ApprovalRequest')
