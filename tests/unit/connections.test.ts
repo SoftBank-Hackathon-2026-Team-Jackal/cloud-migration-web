@@ -9,6 +9,7 @@ import {
 import { createMockAgents, createMockConnections, memoryAgentIds, resetMock } from '../../src/lib/connections/mock.ts'
 import { createRealConnections } from '../../src/lib/connections/real.ts'
 import { platformMode } from '../../src/lib/connections/server.ts'
+import { decideAccess, parseAllowedLogins } from '../../src/lib/connections/access.ts'
 import { listAgentIds } from '../../src/lib/connections/platform.ts'
 import { agentState, installCommand, isAgentId, isRoleArn, ttlSeconds } from '../../src/lib/connections/types.ts'
 import type { AgentsApi } from '../../src/lib/connections/adapter.ts'
@@ -324,4 +325,25 @@ test('실제 Agent 목록: 플랫폼에 등록된 Agent와 웹이 기억한 id�
   const body = await (await handleList(get(), d)).json()
   assert.deepEqual(body.agents.map((a: { agent_id: string }) => a.agent_id).sort(), ['laptop', 'pending-one'])
   assert.equal(body.agents.find((a: { agent_id: string }) => a.agent_id === 'pending-one').enrolled_only, true)
+})
+
+test('관리 API 접근: 운영자 키가 있으면 로그인한 허용 계정만 통과한다', () => {
+  const real = { mock: false, hasAdminKey: true }
+  const allowed = parseAllowedLogins(' Alice, bob ,')
+  assert.deepEqual(allowed, ['alice', 'bob'])
+  assert.equal(decideAccess({ ...real, login: null, allowed }), 'login_required')
+  assert.equal(decideAccess({ ...real, login: 'mallory', allowed }), 'not_allowed')
+  assert.equal(decideAccess({ ...real, login: 'ALICE', allowed }), 'allow')
+})
+
+test('관리 API 접근: 허용 목록이 비어 있으면 로그인해도 아무도 통과하지 못한다', () => {
+  assert.equal(decideAccess({ mock: false, hasAdminKey: true, login: 'alice', allowed: [] }), 'not_allowed')
+  // 키가 없어도 목업 모드가 아니면(real) 닫혀 있다
+  assert.equal(decideAccess({ mock: false, hasAdminKey: false, login: null, allowed: ['alice'] }), 'login_required')
+})
+
+test('관리 API 접근: 목업 모드이고 운영자 키가 없으면 로그인 없이 열린다', () => {
+  assert.equal(decideAccess({ mock: true, hasAdminKey: false, login: null, allowed: [] }), 'allow')
+  // 목업이어도 키가 있으면 실제 권한이므로 닫는다
+  assert.equal(decideAccess({ mock: true, hasAdminKey: true, login: null, allowed: ['alice'] }), 'login_required')
 })
