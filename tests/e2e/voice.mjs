@@ -163,8 +163,11 @@ try {
   await say('승인할게')
   await page.waitForFunction(() => document.querySelectorAll('.cutover-tile').length >= 3)
   check(true, '"승인할게" → DB 전환·검증')
+  // 전환 결과를 다시 보여 주는 동안은 "다음"이 아직 없다: 마지막 버튼이 켜진 뒤에 말한다.
+  await page.waitForSelector('.cx-run .flow-primary:not([disabled])')
+  // 이 단계에서는 자칼이 되묻지 않으므로 호출어와 함께 말한다(되물은 뒤 15초가 지나면 짧은 말만으로는 명령이 아니다).
   await waitHint('다음')
-  await say('다음')
+  await say('헤이 자칼, 다음')
   await page.waitForSelector('.report-panel').then(() => check(true, '"다음" → 리포트'), () => check(false, '"다음" → 리포트'))
   await page.waitForTimeout(2500)
 
