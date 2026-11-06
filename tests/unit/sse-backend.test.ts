@@ -97,6 +97,9 @@ test('선 형식: 이름 없는 블록은 이벤트, event: status(옛 Workflow 
   assert.equal(parseSseBlock(': heartbeat'), null)
   assert.equal(parseSseBlock('retry: 1000'), null)
   assert.equal(parseSseBlock('id: 9\ndata: not json'), null)
+  // 목업 서버는 type을 이름으로 붙인다(event: analysis.finding). 이름이 type과 다르면 이전 이벤트가 아니다.
+  assert.equal(parseSseBlock(wire(stored(5, ANALYSIS[0]), { id: 5, event: 'analysis.finding' }).trimEnd())?.event.seq, 5)
+  assert.equal(parseSseBlock(wire(stored(6, ANALYSIS[0]), { id: 6, event: 'status' }).trimEnd()), null)
   // event: message는 기본 이름과 같다.
   assert.equal(parseSseBlock('event: message\n' + wire(stored(4, ANALYSIS[1]), { id: 4 }).trimEnd())?.event.seq, 4)
 })

@@ -272,7 +272,7 @@ export class SseProvider implements MigrationProvider {
 
   /**
    * SSE 블록 하나(id·event·data 줄)를 이벤트로 바꿔 상태에 보낸다. 주석(:)과 빈 data는 무시한다.
-   * 이름 붙은 블록(event: status, 백엔드가 옛 화면용으로 함께 보내는 Workflow 상태)은 이전 이벤트가 아니므로 건너뛴다.
+   * 옛 화면용 Workflow 상태 블록(event: status)은 이전 이벤트가 아니므로 건너뛴다(parseSseBlock).
    */
   private handleBlock(block: string) {
     const parsed = parseSseBlock(block)
@@ -296,7 +296,8 @@ export class SseProvider implements MigrationProvider {
 /**
  * SSE 블록 하나를 읽는다. 이전 이벤트가 아니면 null:
  * - 주석(: heartbeat)뿐이거나 data가 없는 블록
- * - 이름 붙은 블록(event: status 등). 이전 이벤트는 이름 없이(기본 message) 온다.
+ * - 이름이 data의 type과 다른 블록(event: status, 백엔드가 옛 화면용으로 보내는 Workflow 상태).
+ *   백엔드는 이전 이벤트를 이름 없이(기본 message), 목업 서버는 type을 이름으로 보낸다: 둘 다 받는다.
  * - JSON이 아니거나 type·seq가 없는 data
  */
 export function parseSseBlock(block: string): { id: string; event: MigrationEvent } | null {
@@ -313,12 +314,12 @@ export function parseSseBlock(block: string): { id: string; event: MigrationEven
     else if (field === 'data') data.push(value)
   }
   if (data.length === 0) return null
-  if (name && name !== 'message') return null
   let event: unknown
   try { event = JSON.parse(data.join('\n')) } catch { return null }
   if (!event || typeof event !== 'object') return null
   const { type, seq } = event as { type?: unknown; seq?: unknown }
   if (typeof type !== 'string' || typeof seq !== 'number') return null
+  if (name && name !== 'message' && name !== type) return null
   return { id, event: event as MigrationEvent }
 }
 
