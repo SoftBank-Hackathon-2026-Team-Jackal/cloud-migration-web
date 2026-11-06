@@ -80,6 +80,7 @@ test('검토 게이트: 쓰는 문구가 한국어·영어·일본어에 모두 
     assert.ok((en as Record<string, string>)[key], 'en ' + key)
     assert.ok((ja as Record<string, string>)[key], 'ja ' + key)
   }
+  for (const grade of ['DIRECT', 'API_DIFF', 'PARTIAL', 'NONE']) assert.ok(keys.includes('reviewGate.grade.' + grade), '등급 문구 ' + grade) // 플랫폼 MappingRow.grade 전부
   for (const code of ['MISSING_ROW', 'UNKNOWN_ROW', 'NOT_APPROVABLE', 'ANALYSIS_REF_MISMATCH', 'REVIEW_NOT_PENDING', 'REVIEW_UNAVAILABLE', 'X']) {
     assert.ok(keys.includes(reviewErrorKey(code)), code)
   }
