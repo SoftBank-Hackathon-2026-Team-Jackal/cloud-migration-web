@@ -7,6 +7,7 @@ import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
 import { ALWAYS_UNVERIFIED, EVIDENCE_KINDS, KIND_OF_METHOD, type AnalysisFindingData, type AnalysisScanData, type Evidence, type EvidenceKind, type Target } from '../lib/migration/events'
 import { useVoiceActions } from '../lib/voice/actions'
 import { analysisFinished, type ReviewView } from '../lib/migration/review'
+import { analysisWait } from '../lib/migration/analysisWait'
 
 /** 발견 항목. message·detail이 비어 있으면 화면에서 key로 사전을 찾아 현재 언어로 보여 준다. 백엔드 값은 그대로 쓴다. */
 export type AnalysisUpdate = AnalysisFindingData
@@ -224,6 +225,8 @@ export default function AnalysisStage({ target, review = NO_REVIEW, onAdvance, o
   // 실제 서버는 analysis.done 뒤에 매핑하고 사람의 결정(검토 게이트)을 기다린다. 검토 상태를 읽기 전이나 기다리는 동안은 다음으로 갈 수 없다.
   // 검토 패널은 FlowApp이 어느 화면에서든 띄운다.
   const finished = analysisFinished({ mode, done: analysisDone, streamsFull: infraStatus.percent === 100 && codeStatus.percent === 100, ...review })
+  // analysis.done 뒤 매핑 중이거나 검토를 기다리는 구간(실제 모드만). 멈춘 것처럼 보이지 않게 진행 중인 한 줄과 문구로 보인다.
+  const wait = analysisWait({ mode, done: analysisDone, finished, view: review.view })
   useEffect(() => { if (finished) onComplete?.() }, [finished, onComplete])
   useVoiceActions({ next: finished && ready && !proceed && (() => setProceed(true)) })
   // 피드: 스캔이 오면 스캔 요약, 아니면 예전 항목. 근거는 Evidence.kind로 같은 칩을 쓴다.
@@ -306,6 +309,11 @@ export default function AnalysisStage({ target, review = NO_REVIEW, onAdvance, o
           })}
         </div>
         <div className="analysis-discovery-items" tabIndex={0} aria-live="polite">
+          {wait && <div className="analysis-discovery-item is-waiting" key={'wait-' + wait} data-wait={wait}>
+            <small><span className="analysis-wait-dot" aria-hidden="true" />{t('analysis.wait.label')}</small>
+            <strong>{t(wait === 'review' ? 'analysis.wait.review' : 'analysis.wait.mapping')}</strong>
+            <em>{t(wait === 'review' ? 'analysis.wait.reviewDetail' : 'analysis.wait.mappingDetail')}</em>
+          </div>}
           {feed.length === 0
             ? <p data-particle-target="text">{t('analysis.liveEmpty')}</p>
             : [...feed].reverse().map(row => <div className={'analysis-discovery-item is-' + row.stream} key={row.id} title={row.detail}>
@@ -321,7 +329,7 @@ export default function AnalysisStage({ target, review = NO_REVIEW, onAdvance, o
       </aside>
     </div>
     <div className="analysis-next-area">
-      <span data-particle-target="text">{finished ? t('analysis.footer.done') : t('analysis.footer.run')}</span>
+      <span data-particle-target="text">{finished ? t('analysis.footer.done') : wait === 'review' ? t('analysis.footer.review') : wait === 'mapping' ? t('analysis.footer.mapping') : t('analysis.footer.run')}</span>
       <button type="button" disabled={!finished || !ready || proceed} onClick={() => setProceed(true)}>{t('analysis.next')} <span aria-hidden="true">→</span></button>
     </div>
     {leaving && handoff && <div className="analysis-handoff" aria-hidden="true">

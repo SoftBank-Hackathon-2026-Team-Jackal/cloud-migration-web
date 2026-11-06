@@ -300,6 +300,8 @@ function openStream(req, res, record) {
 // ---- 분석 검토 게이트(플랫폼 GET|POST /migrations/{id}/analysis/review를 흉내 낸다) ----
 // MOCK_REVIEW_GATE=1 일 때만 켠다(꺼져 있으면 404: 검토 API가 없는 서버와 같다). 시작 3초 뒤 필수 기능 확정을 기다린다.
 const REVIEW_GATE = process.env.MOCK_REVIEW_GATE === '1'
+// 게이트가 열리기까지의 지연(ms, 매핑 구간). MOCK_REVIEW_DELAY_MS로 늘릴 수 있다.
+const REVIEW_DELAY_MS = Math.max(0, Number(process.env.MOCK_REVIEW_DELAY_MS) || 3000)
 // 실제 플랫폼 ReviewGate.view() 모양: capability는 카탈로그 id, usage·loses·required_reason은 영어 자유 문장.
 // 등급을 고루 섞어 등급 × 필수 결과(진행·승인·차단)를 모두 볼 수 있게 한다.
 const reviewRows = () => [
@@ -319,7 +321,7 @@ const reviews = new Map()
 function reviewOf(record) {
   let review = reviews.get(record.id)
   if (!review) { review = { startedAt: Date.now(), phase: 'ANALYZING', rows: reviewRows(), security: reviewSecurity(), approvals: {}, rejections: [] }; reviews.set(record.id, review) }
-  if (review.phase === 'ANALYZING' && Date.now() - review.startedAt > 3000 / SPEED) review.phase = 'WAITING_CONFIRMATION'
+  if (review.phase === 'ANALYZING' && Date.now() - review.startedAt > REVIEW_DELAY_MS / SPEED) review.phase = 'WAITING_CONFIRMATION'
   return review
 }
 // 플랫폼 ReviewGate.blocked(): 행 막힘 사유는 한국어 고정 문장, 보안 막힘은 'SECURITY_LOWER: <기준>'(화면은 등급·기준으로 문구를 고른다).
