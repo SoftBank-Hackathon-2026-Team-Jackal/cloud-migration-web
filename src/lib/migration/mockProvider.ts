@@ -1,5 +1,6 @@
 import { targetOfRequest, type BackendPhase, type DraftEvent, type MigrationEvent, type StartRequest, type Target } from './events'
 import type { EnterContext, MigrationProvider, ProviderHost } from './provider'
+import type { ReviewResult } from './review'
 import { TRAFFIC_READY_EVENTS, trafficPrepareTimeline, approvalTimeline, reportFor, timelineFor, type ScriptedPhase, type TimedDraft } from './script'
 import { DATA_LSN_TICK_MS, DATA_TABLES, dataTickAt, dataTimeline } from './dataScript'
 import { cutoverPlan, cutoverRun } from './cutoverScript'
@@ -164,6 +165,10 @@ export class MockProvider implements MigrationProvider {
   retryTraffic() { this.traffic?.retry() }
   injectFailure() { this.traffic?.inject() }
   loadReport() { this.host.dispatch({ type: 'report', report: reportFor(aiFixCount()) }) }
+  // 목업 흐름에는 분석 검토 게이트가 없다(실제 서버에서만 사람의 확인을 기다린다).
+  async loadReview() { return null }
+  async confirmReview(): Promise<ReviewResult> { return { ok: false, code: 'REVIEW_NOT_PENDING' } }
+  async approveReview(): Promise<ReviewResult> { return { ok: false, code: 'REVIEW_NOT_PENDING' } }
 
   dispose() {
     for (const cleanup of [...this.disposers]) cleanup()

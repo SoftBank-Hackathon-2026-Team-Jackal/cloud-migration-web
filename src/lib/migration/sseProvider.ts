@@ -3,6 +3,7 @@ import type { EnterContext, MigrationProvider, ProviderHost } from './provider'
 import type { ReportData } from './events'
 import type { SseStartMode } from './config'
 import { parseCapabilities, type Capability } from './capabilities.ts'
+import { parseReview, type ReviewDecision, type ReviewResult, type ReviewView } from './review.ts'
 
 type Options = {
   baseUrl: string
@@ -233,6 +234,46 @@ export class SseProvider implements MigrationProvider {
       }
     })()
   }
+
+  /** 가장 최근에 읽은 검토 상태: 결정을 보낼 때 그 분석 버전을 함께 보낸다(서버가 다른 버전이면 거절한다). */
+  private review: ReviewView | null = null
+
+  private reviewUrl() { return this.options.baseUrl + '/migrations/' + this.migrationId + '/analysis/review' }
+
+  async loadReview(): Promise<ReviewView | null> {
+    if (!this.migrationId) return null
+    try {
+      const response = await fetch(this.reviewUrl(), { headers: await this.headers() })
+      // 404: 아직 분석이 시작되지 않았거나 이 서버에 검토 API가 없다. 검토할 것이 없는 것으로 본다.
+      if (!response.ok) return (this.review = null)
+      return (this.review = parseReview(await response.json().catch(() => null)))
+    } catch {
+      return (this.review = null)
+    }
+  }
+
+  private async sendReview(kind: 'confirm' | 'approve', body: object): Promise<ReviewResult> {
+    const version = this.review?.analysis_ref?.version
+    if (!this.migrationId || !version) return { ok: false, code: 'REVIEW_NOT_PENDING' }
+    try {
+      const response = await fetch(this.reviewUrl() + '/' + kind, {
+        method: 'POST',
+        headers: await this.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ analysis_version: version, ...body }),
+      })
+      if (!response.ok) {
+        const data = await response.json().catch(() => null) as { detail?: unknown } | null
+        const code = typeof data?.detail === 'string' && /^[A-Z0-9_]{1,64}$/.test(data.detail) ? data.detail : 'HTTP_' + response.status
+        return { ok: false, code }
+      }
+      return { ok: true, view: await this.loadReview() }
+    } catch {
+      return { ok: false, code: 'REVIEW_UNAVAILABLE' }
+    }
+  }
+
+  confirmReview(required: Record<string, boolean>) { return this.sendReview('confirm', { required }) }
+  approveReview(approvals: Record<string, ReviewDecision>) { return this.sendReview('approve', { approvals }) }
 
   dispose() {
     this.closeStream()

@@ -1,5 +1,6 @@
 import type { BackendPhase, StartRequest, Target } from './events'
 import type { Action } from './reducer'
+import type { ReviewDecision, ReviewResult, ReviewView } from './review'
 
 /** 공급자가 상태를 바꾸는 유일한 통로. 이벤트도 연결 상태도 모두 reducer 액션으로 보낸다. */
 export type ProviderHost = { dispatch: (action: Action) => void }
@@ -34,5 +35,14 @@ export interface MigrationProvider {
   /** 데모 전용 장애 주입. 목업에서만 동작한다. */
   injectFailure(): void
   loadReport(): void
+  /**
+   * 분석 검토 게이트(필수 기능 확정 → 손실·보안 승인)의 지금 상태. 이 이전에 검토가 없거나 서버에 그 API가 없으면 null.
+   * 목업은 검토 단계가 없어 늘 null이다.
+   */
+  loadReview(): Promise<ReviewView | null>
+  /** 필수 기능 확정: 모든 행의 필수 여부(행 ID → true/false). 서버 거절은 코드로 돌려준다(화면에 문구를 보인다). */
+  confirmReview(required: Record<string, boolean>): Promise<ReviewResult>
+  /** 손실·보안 승인: 승인이 필요한 모든 항목의 승인·거절. */
+  approveReview(approvals: Record<string, ReviewDecision>): Promise<ReviewResult>
   dispose(): void
 }
