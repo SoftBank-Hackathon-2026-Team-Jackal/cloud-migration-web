@@ -543,7 +543,8 @@ export type CutoverVerifyData = { table: string; source_rows: number; target_row
 export type CutoverResultData = { id: string; value: string; label?: string; ok?: boolean }
 /* ==== DB 전환 상세 끝 ==== */
 
-export type ErrorData = { code: string; message: string; phase: BackendPhase | null; retryable: boolean }
+/** detail: (화면 안에서만) 웹 서버가 돌려준 오류 코드(APPROVER_TOKEN_NOT_CONFIGURED 등). 화면이 cx.code.* 문구로 보여 준다. */
+export type ErrorData = { code: string; message: string; phase: BackendPhase | null; retryable: boolean; detail?: string }
 
 export type MigrationStatus = 'idle' | 'running' | 'waiting' | 'done' | 'failed' | 'cancelled'
 
