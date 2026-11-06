@@ -1,4 +1,4 @@
-import { isBackendPreview, normalizePlanStep, startRequestFor, type ApprovalDecisionData, type BackendPhase, type ErrorData, type MigrationEvent, type PlanReadyData, type StartRequest } from './events.ts'
+import { isBackendPreview, normalizePlanStep, startRequestFor, type ApprovalDecisionData, type BackendPhase, type ErrorData, type MigrationEvent, type MigrationStatus, type PlanReadyData, type StartRequest } from './events.ts'
 import type { EnterContext, MigrationProvider, ProviderHost } from './provider'
 import type { ReportData } from './events'
 import type { SseStartMode } from './config'
@@ -22,6 +22,8 @@ export const SOURCE_REQUIRED = 'source_required'
 const PROJECT_ID = 'demo'
 const RETRY_FIRST_MS = 500
 const RETRY_MAX_MS = 5000
+/** 서버가 이 상태가 되면 남은 이벤트를 보내고 스트림을 닫는다(event_stream.py). 그 뒤의 정상 종료는 끊김이 아니다. */
+const TERMINAL: ReadonlySet<MigrationStatus> = new Set(['done', 'failed', 'cancelled'])
 
 const sleep = (ms: number, signal: AbortSignal) => new Promise<void>(resolve => {
   const timer = setTimeout(resolve, ms)
@@ -42,6 +44,8 @@ export class SseProvider implements MigrationProvider {
   private starting: Promise<void> | null = null
   private controller: AbortController | null = null
   private lastId = ''
+  /** 받은 snapshot·이벤트로 짐작한 이전 상태. 끝난 이전이면 스트림이 닫혀도 다시 연결하지 않는다. */
+  private status: MigrationStatus = 'idle'
   /** 가장 최근 plan.ready 값: 승인 API가 계획 ID·버전·digest를 요구한다. */
   private plan: PlanReadyData | null = null
   /** 가장 최근 승인 결정(API 응답·approval.decision). 전달이 실패했으면 다시 전달할 때 approval_id를 쓴다. */
@@ -112,6 +116,7 @@ export class SseProvider implements MigrationProvider {
     this.closeStream()
     this.migrationId = null
     this.lastId = ''
+    this.status = 'idle'
     this.plan = null
     this.starting = null
     this.host.dispatch({ type: 'reset' })
@@ -231,6 +236,8 @@ export class SseProvider implements MigrationProvider {
         this.host.dispatch({ type: 'connection', value: 'connected' })
         delay = RETRY_FIRST_MS
         await this.read(response.body, signal)
+        // 끝난 이전이면 서버가 남은 이벤트를 보내고 스트림을 닫는다: 정상 종료다(다시 연결하지 않는다).
+        if (TERMINAL.has(this.status)) return
       } catch {
         if (signal.aborted) return
       }
@@ -263,25 +270,19 @@ export class SseProvider implements MigrationProvider {
     }
   }
 
-  /** SSE 블록 하나(id·event·data 줄)를 이벤트로 바꿔 상태에 보낸다. 주석(:)과 빈 data는 무시한다. */
+  /**
+   * SSE 블록 하나(id·event·data 줄)를 이벤트로 바꿔 상태에 보낸다. 주석(:)과 빈 data는 무시한다.
+   * 이름 붙은 블록(event: status, 백엔드가 옛 화면용으로 함께 보내는 Workflow 상태)은 이전 이벤트가 아니므로 건너뛴다.
+   */
   private handleBlock(block: string) {
-    let id = ''
-    const data: string[] = []
-    for (const line of block.split('\n')) {
-      if (line.startsWith(':')) continue
-      const colon = line.indexOf(':')
-      const field = colon < 0 ? line : line.slice(0, colon)
-      const value = colon < 0 ? '' : line.slice(colon + 1).replace(/^ /, '')
-      if (field === 'id') id = value
-      else if (field === 'data') data.push(value)
-    }
-    if (data.length === 0) return
-    let event: MigrationEvent
-    try { event = JSON.parse(data.join('\n')) as MigrationEvent } catch { return }
-    if (id) this.lastId = id
+    const parsed = parseSseBlock(block)
+    if (!parsed) return
+    let event = parsed.event
+    if (parsed.id) this.lastId = parsed.id
     event = normalizeEvent(event)
     if (event.type === 'plan.ready') this.plan = event.data
     if (event.type === 'approval.decision') this.decision = event.data
+    this.status = statusAfter(this.status, event)
     if (event.type === 'snapshot') {
       for (const item of event.data.events) {
         if (item.type === 'plan.ready') this.plan = item.data
@@ -290,6 +291,43 @@ export class SseProvider implements MigrationProvider {
     }
     this.host.dispatch({ type: 'event', event })
   }
+}
+
+/**
+ * SSE 블록 하나를 읽는다. 이전 이벤트가 아니면 null:
+ * - 주석(: heartbeat)뿐이거나 data가 없는 블록
+ * - 이름 붙은 블록(event: status 등). 이전 이벤트는 이름 없이(기본 message) 온다.
+ * - JSON이 아니거나 type·seq가 없는 data
+ */
+export function parseSseBlock(block: string): { id: string; event: MigrationEvent } | null {
+  let id = ''
+  let name = ''
+  const data: string[] = []
+  for (const line of block.split('\n')) {
+    if (line.startsWith(':')) continue
+    const colon = line.indexOf(':')
+    const field = colon < 0 ? line : line.slice(0, colon)
+    const value = colon < 0 ? '' : line.slice(colon + 1).replace(/^ /, '')
+    if (field === 'id') id = value
+    else if (field === 'event') name = value
+    else if (field === 'data') data.push(value)
+  }
+  if (data.length === 0) return null
+  if (name && name !== 'message') return null
+  let event: unknown
+  try { event = JSON.parse(data.join('\n')) } catch { return null }
+  if (!event || typeof event !== 'object') return null
+  const { type, seq } = event as { type?: unknown; seq?: unknown }
+  if (typeof type !== 'string' || typeof seq !== 'number') return null
+  return { id, event: event as MigrationEvent }
+}
+
+/** 이벤트 하나를 받은 뒤의 이전 상태 짐작(백엔드 migration_status와 같은 규칙: snapshot 상태, error, 마지막 인계). */
+export function statusAfter(current: MigrationStatus, event: MigrationEvent): MigrationStatus {
+  if (event.type === 'snapshot') return event.data.status
+  if (event.type === 'error') return event.data.code === 'cancelled' ? 'cancelled' : 'failed'
+  if (event.type === 'cutover.handover' && event.data.item === 'access' && event.status === 'done') return 'done'
+  return current
 }
 
 /**
