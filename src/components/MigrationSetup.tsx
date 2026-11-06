@@ -149,7 +149,8 @@ export default function MigrationSetup({ target, onTarget, onNext, onSay, startR
 
   const onEnvFile = (next: EnvResult | null) => {
     setEnvFile(next)
-    if (!next) return
+    // 업로드 상태가 바뀔 때마다 다시 말하지 않는다(키를 처음 읽었을 때 한 번만).
+    if (!next || next.upload === 'stored' || next.upload === 'failed') return
     const check = expected.length ? crossCheck(next.keys, expected) : null
     if (!check) sayRef.current?.(t('open.jackal.envKeys', { count: next.keys.length }))
     else if (check.missing.length) sayRef.current?.(t('open.jackal.envMissing', { expected: check.expected, present: check.present.length, missing: check.missing.length }))
@@ -169,8 +170,9 @@ export default function MigrationSetup({ target, onTarget, onNext, onSay, startR
     const registered = env && env !== 'loading' ? env : null
     onNext(startRequestFor(target, {
       region: registered?.gcp?.region, agentId: registered?.agent?.agent_id,
-      // 시연용 저장소는 싣지 않는다. .env는 키 이름만 알고 있어 백엔드가 쓸 수 있는 업로드 참조가 아니다: 보내지 않는다.
+      // 시연용 저장소는 싣지 않는다. .env는 플랫폼에 올린 참조가 있을 때만 싣는다(목업 모드에서는 키 이름만 알아서 싣지 않는다).
       source: source ?? undefined,
+      envFileRef: envFile?.ref ?? undefined,
     }))
   }
   const submitRef = useRef(submit)
@@ -198,7 +200,7 @@ export default function MigrationSetup({ target, onTarget, onNext, onSay, startR
   }, [useDemo])
 
   const hasRepo = Boolean(source) || demo
-  const ready = !blocked && hasRepo && Boolean(envFile)
+  const ready = !blocked && hasRepo && Boolean(envFile) && envFile?.upload !== 'uploading' && envFile?.upload !== 'failed'
   return <section className="migration-setup setup2" aria-label={t('setup.aria')}>
     <div className="migration-form-panel setup2-panel">
       <div className="migration-heading setup2-heading">
