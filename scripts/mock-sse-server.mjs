@@ -300,6 +300,8 @@ function openStream(req, res, record) {
 // ---- 분석 검토 게이트(플랫폼 GET|POST /migrations/{id}/analysis/review를 흉내 낸다) ----
 // MOCK_REVIEW_GATE=1 일 때만 켠다(꺼져 있으면 404: 검토 API가 없는 서버와 같다). 시작 3초 뒤 필수 기능 확정을 기다린다.
 const REVIEW_GATE = process.env.MOCK_REVIEW_GATE === '1'
+// 게이트가 열리기까지의 지연(ms, 매핑 구간). MOCK_REVIEW_DELAY_MS로 늘릴 수 있다.
+const REVIEW_DELAY_MS = Math.max(0, Number(process.env.MOCK_REVIEW_DELAY_MS) || 3000)
 const reviewRows = () => [
   { id: 'a', capability: 'Realtime chat messages', usage: 'POST /api/messages · SSE', grade: 'DIRECT', loses: [], required_proposed: true, required_reason: 'core user flow', required: null, treatment: null },
   { id: 'b', capability: 'Profile image upload', usage: 'S3 presigned URL', grade: 'PARTIAL', loses: ['CDN cache', 'presigned expiry'], required_proposed: false, required_reason: 'optional for the demo', required: null, treatment: null },
@@ -312,7 +314,7 @@ const reviews = new Map()
 function reviewOf(record) {
   let review = reviews.get(record.id)
   if (!review) { review = { startedAt: Date.now(), phase: 'ANALYZING', rows: reviewRows(), security: reviewSecurity(), approvals: {}, rejections: [] }; reviews.set(record.id, review) }
-  if (review.phase === 'ANALYZING' && Date.now() - review.startedAt > 3000 / SPEED) review.phase = 'WAITING_CONFIRMATION'
+  if (review.phase === 'ANALYZING' && Date.now() - review.startedAt > REVIEW_DELAY_MS / SPEED) review.phase = 'WAITING_CONFIRMATION'
   return review
 }
 function reviewView(review) {
