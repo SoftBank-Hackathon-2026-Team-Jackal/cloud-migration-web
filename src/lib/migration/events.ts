@@ -631,16 +631,17 @@ export type StartSource = {
 
 /**
  * 이전 시작 요청. 설정 화면의 나머지 입력(액세스 키)은 계속 보내지 않는다.
- * env_file_ref는 .env 파일의 내용이 아니라 참조 문자열만 담는다(아직 실제 업로드 참조가 없어 화면은 보내지 않는다).
+ * env_file_ref는 .env 내용이 아니라 플랫폼 POST /env-files가 준 참조다: 정확한 버전 {id, version, sha256} 또는 envf- id 문자열.
+ * 목업 모드에서는 업로드하지 않아 싣지 않는다.
  */
 export type StartRequest = {
   target: { provider: ProviderName; profile: string; region?: string; agent_id?: string; credential_ref?: string }
   source?: StartSource
-  env_file_ref?: string
+  env_file_ref?: string | { id: string; version: string; sha256: string }
 }
 
 /** 설정 화면의 선택으로 시작 요청을 만든다(profile은 provider에서 정한다). */
-export function startRequestFor(target: Target, options: { region?: string; agentId?: string; envFileRef?: string; source?: StartSource } = {}): StartRequest {
+export function startRequestFor(target: Target, options: { region?: string; agentId?: string; envFileRef?: string | { id: string; version: string; sha256: string }; source?: StartSource } = {}): StartRequest {
   const { provider, profile } = PROFILE_OF[target]
   const request: StartRequest = { target: { provider, profile } }
   if (target === 'onprem') { if (options.agentId) request.target.agent_id = options.agentId }
@@ -650,7 +651,7 @@ export function startRequestFor(target: Target, options: { region?: string; agen
     const { repository_id, full_name, commit_sha } = options.source
     request.source = { kind: 'GITHUB_PUBLIC', repository_id, full_name, commit_sha }
   }
-  if (options.envFileRef) request.env_file_ref = options.envFileRef
+  if (options.envFileRef) request.env_file_ref = typeof options.envFileRef === 'string' ? options.envFileRef : { id: options.envFileRef.id, version: options.envFileRef.version, sha256: options.envFileRef.sha256 }
   return request
 }
 

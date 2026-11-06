@@ -1,11 +1,15 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useT, useTOr } from '../lib/i18n'
 import { classifyEnv, crossCheck, envCounts, parseEnvKeys, type EnvCheck, type EnvExceptions, type EnvKey, type EnvRow } from '../lib/setup/envFile'
 import { EXAMPLE_ENV } from '../lib/setup/demoRepo'
+import type { EnvFileRef } from '../lib/connections/platform'
 
-export type EnvResult = { fileName: string; keys: EnvKey[] }
+/**
+ * ref: 플랫폼에 암호화 저장된 .env의 참조(실제 모드에서만). upload: 업로드 상태(목업 모드에서는 없다).
+ */
+export type EnvResult = { fileName: string; keys: EnvKey[]; ref?: EnvFileRef | null; upload?: 'uploading' | 'stored' | 'failed'; uploadError?: string | null }
 
 type Props = {
   /** 코드가 읽는 키(저장소 탐지 결과). 모르면 빈 배열 */
@@ -19,8 +23,10 @@ type Props = {
 }
 
 /**
- * .env 드롭 영역. 파일은 브라우저 안에서만 읽고 키 이름만 남긴다(원문 문자열은 이 함수 안에서 버린다).
- * 값은 화면·상태·로그·요청 어디에도 넣지 않는다. 화면에는 키 이름과 •••• 만 보인다.
+ * .env 드롭 영역. 키 이름은 브라우저에서 읽는다. 값은 화면·상태·로그 어디에도 넣지 않고 화면에는 •••• 만 보인다.
+ * - 목업 모드: 원문을 어디에도 보내지 않는다(이 함수 안에서 버린다).
+ * - 실제 모드(웹 서버 GET /api/env-files가 upload=true): 원문을 우리 웹 서버로 한 번 보내고, 웹 서버가 플랫폼 암호화 저장소에 넣는다.
+ *   브라우저에는 참조(env_file_ref)만 남는다. 원문은 상태에 두지 않으며 업로드가 실패하면 파일을 다시 고르게 한다.
  */
 export default function EnvDrop({ expected, exceptions, value, onChange, exampleRef }: Props) {
   const t = useT()
@@ -28,12 +34,32 @@ export default function EnvDrop({ expected, exceptions, value, onChange, example
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
   const [error, setError] = useState(false)
+  const [uploadMode, setUploadMode] = useState(false)
+  const attempt = useRef(0)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    fetch('/api/env-files', { cache: 'no-store', signal: controller.signal })
+      .then(response => (response.ok ? response.json() : null))
+      .then((data: { upload?: unknown } | null) => setUploadMode(data?.upload === true), () => {})
+    return () => controller.abort()
+  }, [])
 
   const accept = (fileName: string, text: string) => {
     const keys = parseEnvKeys(text)
     setError(false)
-    onChange({ fileName, keys })
+    const id = ++attempt.current
+    if (!uploadMode) { onChange({ fileName, keys }); return }
+    onChange({ fileName, keys, ref: null, upload: 'uploading' })
+    fetch('/api/env-files', { method: 'POST', headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: text, cache: 'no-store' })
+      .then(async response => {
+        const data = await response.json().catch(() => null) as { env_file_ref?: EnvFileRef; detail?: string; error?: string } | null
+        if (id !== attempt.current) return
+        if (response.ok && data?.env_file_ref) onChange({ fileName, keys, ref: data.env_file_ref, upload: 'stored' })
+        else onChange({ fileName, keys, ref: null, upload: 'failed', uploadError: data?.detail ?? data?.error ?? String(response.status) })
+      }, () => { if (id === attempt.current) onChange({ fileName, keys, ref: null, upload: 'failed', uploadError: 'UNREACHABLE' }) })
   }
+  const replace = () => { attempt.current += 1; onChange(null) }
   const readFile = (file: File | undefined) => {
     if (!file) return
     file.text().then(text => accept(file.name, text), () => setError(true))
@@ -76,8 +102,11 @@ export default function EnvDrop({ expected, exceptions, value, onChange, example
     {value && <>
       <div className="envd-head">
         <span className="envd-file">{t('setup2.envFile', { name: value.fileName, count: value.keys.length })}</span>
-        <button type="button" className="repo-link" onClick={() => onChange(null)}>{t('setup2.envReplace')}</button>
+        <button type="button" className="repo-link" onClick={replace}>{t('setup2.envReplace')}</button>
       </div>
+      {value.upload === 'uploading' && <p className="repo-note" role="status" data-env-upload="uploading">{t('setup2.envUploading')}</p>}
+      {value.upload === 'stored' && <p className="repo-note" role="status" data-env-upload="stored">{t('setup2.envStored')}</p>}
+      {value.upload === 'failed' && <p className="repo-note is-alert" role="alert" data-env-upload="failed">{t('setup2.envUploadFailed', { code: value.uploadError ?? '' })}</p>}
       {check && <div className="envd-sum" role="status">
         <strong>{t('setup2.envSummary', { expected: check.expected, present: check.present.length })}</strong>
         <span>{check.missing.length ? t('setup2.envMissingKeys', { keys: check.missing.join(', ') }) : t('setup2.envAll')}</span>
@@ -93,6 +122,6 @@ export default function EnvDrop({ expected, exceptions, value, onChange, example
         </li>)}
       </ul>
     </>}
-    <p className="envd-policy">{t('setup2.envPolicy')}</p>
+    <p className="envd-policy">{t(uploadMode ? 'setup2.envPolicyStored' : 'setup2.envPolicy')}</p>
   </div>
 }

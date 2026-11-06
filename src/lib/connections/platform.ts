@@ -99,3 +99,50 @@ export async function listAgentIds(deps: PlatformDeps): Promise<string[]> {
   const data = await call<{ agents?: { agent_id?: unknown }[] }>(deps, 'GET', '/agent-admin/agents')
   return (data.agents ?? []).map(agent => agent.agent_id).filter((value): value is string => typeof value === 'string')
 }
+
+/** 플랫폼 ContentRef: .env 원문 대신 들고 다니는 참조(어느 파일의 어느 버전인지 + 내용 해시) */
+export type EnvFileRef = { id: string; version: string; sha256: string }
+export type EnvFileUploaded = { env_file_ref: EnvFileRef; keys: string[]; warnings: { code: string; key: string }[] }
+
+/** 업로드 상한(백엔드 MAX_ENV_FILE_BYTES와 같다) */
+export const MAX_ENV_FILE_BYTES = 64 * 1024
+
+/**
+ * POST /env-files (ENV-01): .env 원문을 플랫폼의 암호화 저장소에 넣고 참조와 키 이름만 받는다.
+ * 원문은 이 요청 본문에만 있고, 응답·오류·로그에는 넣지 않는다. 오류 본문 {detail:{code}}에서 코드만 꺼낸다.
+ */
+export async function uploadEnvFile(deps: PlatformDeps, text: string): Promise<EnvFileUploaded> {
+  if (!deps.base) throw new PlatformError(503, 'unavailable', 'PLATFORM_API_BASE_NOT_CONFIGURED')
+  if (!deps.enrollmentAdminKey) throw new PlatformError(503, 'unavailable', 'PLATFORM_ADMIN_KEY_NOT_CONFIGURED')
+  let response: Response
+  try {
+    response = await (deps.fetchImpl ?? fetch)(deps.base.replace(/\/+$/, '') + '/env-files', {
+      method: 'POST',
+      headers: { 'X-Enrollment-Admin-Key': deps.enrollmentAdminKey, 'Content-Type': 'text/plain; charset=utf-8', Accept: 'application/json' },
+      body: text,
+      cache: 'no-store',
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    })
+  } catch {
+    throw new PlatformError(503, 'unavailable', 'UNREACHABLE')
+  }
+  if (!response.ok) {
+    const detail = await response.json().then((data: { detail?: { code?: unknown } | unknown }) => {
+      const raw = data?.detail
+      return codeOnly(raw && typeof raw === 'object' ? (raw as { code?: unknown }).code : raw)
+    }, () => null)
+    if (response.status === 413) throw new PlatformError(400, 'bad_request', detail ?? 'ENV_FILE_TOO_LARGE')
+    // .env 오류 코드(ENV_FILE_NOT_UTF8 등)는 화면이 원인을 보여 주도록 남긴다.
+    if (response.status === 422 || response.status === 400) throw new PlatformError(400, 'bad_request', detail)
+    if (response.status === 503) throw new PlatformError(503, 'unavailable', detail)
+    throw errorFor(response.status, detail)
+  }
+  const data = await response.json() as Partial<EnvFileUploaded>
+  const ref = data.env_file_ref
+  if (!ref || typeof ref.id !== 'string' || typeof ref.sha256 !== 'string') throw new PlatformError(502, 'platform_error')
+  return {
+    env_file_ref: { id: ref.id, version: String(ref.version), sha256: ref.sha256 },
+    keys: Array.isArray(data.keys) ? data.keys.filter((key): key is string => typeof key === 'string') : [],
+    warnings: Array.isArray(data.warnings) ? data.warnings.filter(w => w && typeof w.code === 'string' && typeof w.key === 'string') : [],
+  }
+}
