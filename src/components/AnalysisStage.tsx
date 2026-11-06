@@ -125,6 +125,12 @@ function progressFor(updates: AnalysisUpdate[], scans: AnalysisScanData[], strea
   return { percent: progress, completed: null, total: null }
 }
 
+/** 분석이 끝났으면 진행률을 다 찬 것으로 보인다(개수 묶음이면 completed = total). */
+function finishedIf(done: boolean, status: StreamProgress): StreamProgress {
+  if (!done || status.percent === 100) return status
+  return { percent: 100, completed: status.total, total: status.total }
+}
+
 function AnalysisCluster({ title, subtitle, root, stream, status, nodes }: {
   title: string
   subtitle: string
@@ -204,10 +210,12 @@ export default function AnalysisStage({ target, onAdvance, onComplete, orbHandof
   useStageFeed('analysis', true, target)
   const activeUpdates = state.analysis.findings
   const scans = state.analysis.scans
-  const infraStatus = progressFor(activeUpdates, scans, 'infrastructure')
-  const codeStatus = progressFor(activeUpdates, scans, 'code')
+  // analysis.done이 오면 끝난 것이다: 서버가 흐름마다 100%를 보내지 않아도(한 흐름에 발견이 없는 경우 등) 다음으로 갈 수 있다.
+  const analysisDone = state.analysis.done
+  const infraStatus = finishedIf(analysisDone, progressFor(activeUpdates, scans, 'infrastructure'))
+  const codeStatus = finishedIf(analysisDone, progressFor(activeUpdates, scans, 'code'))
   const tOr = useTOr()
-  const finished = infraStatus.percent === 100 && codeStatus.percent === 100
+  const finished = analysisDone || (infraStatus.percent === 100 && codeStatus.percent === 100)
   useEffect(() => { if (finished) onComplete?.() }, [finished, onComplete])
   useVoiceActions({ next: finished && ready && !proceed && (() => setProceed(true)) })
   // 피드: 스캔이 오면 스캔 요약, 아니면 예전 항목. 근거는 Evidence.kind로 같은 칩을 쓴다.

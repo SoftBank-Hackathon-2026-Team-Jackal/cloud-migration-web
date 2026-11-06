@@ -185,14 +185,27 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
       return { ...next, sandbox: { ...next.sandbox, env: event.data } }
     case 'sandbox.step': {
       const { run, attempt, step, state } = event.data
-      return { ...next, build: { ...next.build, attempt }, sandbox: { ...next.sandbox, steps: { ...next.sandbox.steps, [run]: { ...next.sandbox.steps[run], [step]: state } } } }
+      // 사람 검토 뒤 다시 돌기 시작하면 지난 끝(NEEDS_REVIEW)과 검토 대기를 지운다.
+      const resumed = next.sandbox.done?.status === 'NEEDS_REVIEW'
+      return { ...next, build: { ...next.build, attempt, ...(resumed ? { review: null } : {}) }, sandbox: { ...next.sandbox, ...(resumed ? { done: null } : {}), steps: { ...next.sandbox.steps, [run]: { ...next.sandbox.steps[run], [step]: state } } } }
     }
     case 'sandbox.tests':
       return { ...next, sandbox: { ...next.sandbox, tests: event.data } }
     case 'sandbox.attempt':
       return { ...next, build: { ...next.build, attempt: event.data.attempt }, sandbox: { ...next.sandbox, attempts: [...next.sandbox.attempts.filter(item => item.run !== event.data.run), event.data].sort((a, b) => a.run - b.run) } }
-    case 'sandbox.done':
-      return { ...next, sandbox: { ...next.sandbox, done: event.data } }
+    case 'sandbox.done': {
+      const sandbox = { ...next.sandbox, done: event.data }
+      // 사람 검토로 멈춤: build.review가 따로 오지 않아도 검토 안내(수정 후 재시도·취소)를 띄운다.
+      if (event.data.status === 'NEEDS_REVIEW') {
+        const attempts = Math.max(1, next.build.attempt ?? 0, ...next.sandbox.attempts.map(item => item.attempt))
+        return { ...next, status: 'waiting', sandbox, build: { ...next.build, review: next.build.review ?? { reason: 'max_attempts', attempts } } }
+      }
+      // 검증 실패로 끝남: 뒤따르는 error 이벤트가 없어도 샌드박스 화면이 실패 안내를 보인다(error가 오면 그 코드로 바뀐다).
+      if (event.data.status === 'FAILED' && !next.failures.build) {
+        return { ...fail(next, 'build', { code: 'SANDBOX_FAILED', message: event.message ?? '', retryable: false }), sandbox }
+      }
+      return { ...next, sandbox }
+    }
     case 'build.fix':
       return { ...next, build: { ...next.build, fixes: upsert(next.build.fixes, event.data) } }
     case 'plan.step':
@@ -299,6 +312,9 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
       if (event.data.code === 'cancelled') return { ...next, status: 'cancelled', error: event.data }
       return { ...fail(next, phase, { code: event.data.code, message: event.data.message, retryable: event.data.retryable }), error: event.data }
     }
+    // 모르는 이벤트(서버가 먼저 새 이벤트를 보낸 경우): 상태를 망가뜨리지 않고 넘긴다.
+    default:
+      return next
   }
 }
 
