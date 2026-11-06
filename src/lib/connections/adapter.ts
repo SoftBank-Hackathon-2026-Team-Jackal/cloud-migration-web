@@ -6,7 +6,8 @@ import type {
 /**
  * 웹 서버가 플랫폼에 묻는 일의 함수 시그니처. 실제 API와 [가정] 목업이 같은 모양을 따르므로 나중에 구현만 바꿔 끼운다.
  * - AgentsApi: 실제 API(platform.ts)가 있다. 운영자 키가 없는 목업 데모 모드에서만 목업을 쓴다.
- * - ConnectionsApi: [가정] 백엔드 #23(미병합)과 같은 경로·형태. 지금은 mock.ts가 답하고, #23 병합 뒤 실제 구현으로 바꾼다.
+ * - ConnectionsApi: 백엔드 #23 /connections. 실제 구현은 real.ts(PLATFORM_CONNECTIONS=real), 기본은 mock.ts가 답한다.
+ *   이전 범위 선택(listScopeOptions·analyzeScope·confirmScope)은 백엔드에 아직 없어서 두 구현 모두 목업(mockScope)이다.
  */
 export interface AgentsApi {
   readonly mock: boolean

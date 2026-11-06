@@ -167,9 +167,22 @@ export function createMockConnections(options: { delayMs?: number; now?: () => n
       if (agent.revoked || agent.last_seen_at === null) return null
       return { tunnel_ip: '10.200.0.2', last_handshake_at: agent.last_seen_at, app_health_ok: true, db_connect_ok: true }
     },
+    ...mockScope(find, { delayMs: delay, now }),
+  }
+}
+
+/**
+ * [가정] 이전 범위 선택(리전 → 클러스터 → Namespace → Deployment → 후보) 목업. 백엔드에 아직 없다.
+ * 연결이 있는지·확인됐는지는 find로 묻는다: 목업 연결 저장소이거나, 실제 연결 API(real.ts)일 수 있다.
+ */
+export function mockScope(find: (id: string) => Connection | Promise<Connection>, options: { delayMs?: number; now?: () => number } = {}): Pick<ConnectionsApi, 'listScopeOptions' | 'analyzeScope' | 'confirmScope'> {
+  const delay = options.delayMs ?? 350
+  const now = options.now ?? Date.now
+  const state = () => mockState(now())
+  return {
     async listScopeOptions(level: ScopeLevel, selection: Partial<ScopeSelection>) {
       await wait(delay)
-      if (selection.connection_id) find(selection.connection_id)
+      if (selection.connection_id) await find(selection.connection_id)
       if (level === 'regions') return Object.keys(TREE)
       const region = TREE[selection.region ?? '']
       if (!region) throw new PlatformError(404, 'not_found', 'REGION_NOT_FOUND')
@@ -184,7 +197,7 @@ export function createMockConnections(options: { delayMs?: number; now?: () => n
     async analyzeScope(selection) {
       await wait(delay * 4)
       const s = state()
-      const source = find(selection.connection_id)
+      const source = await find(selection.connection_id)
       if (source.status !== 'CONNECTED') throw new PlatformError(409, 'conflict', 'CONNECTION_NOT_READY')
       // [가정] 범위 후보는 백엔드가 아직 못 만든다(앵커 목록 API·RDS/S3/SQS 스캔 없음, Evidence.kind는 매핑 뒤에만) — 목업 유지.
       const workloads = TREE[selection.region]?.[selection.cluster]?.[selection.namespace]

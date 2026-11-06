@@ -7,6 +7,7 @@ import {
   type ConnectionsDeps,
 } from '../../src/lib/connections/handlers.ts'
 import { createMockAgents, createMockConnections, memoryAgentIds, resetMock } from '../../src/lib/connections/mock.ts'
+import { createRealConnections } from '../../src/lib/connections/real.ts'
 import { agentState, installCommand, isAgentId, isRoleArn, ttlSeconds } from '../../src/lib/connections/types.ts'
 import type { AgentsApi } from '../../src/lib/connections/adapter.ts'
 
@@ -183,4 +184,99 @@ test('목업 Agent는 실제 API처럼 409·404를 흉내 낸다', async () => {
   await assert.rejects(agents.getAgent('new-one'), (error: PlatformError) => error.status === 404)
   now = 20_000
   assert.equal(agentState(await agents.getAgent('new-one'), 20), 'online')
+})
+
+// ---- 실제 연결 어댑터(real.ts) · 백엔드 Ticket 23 /connections ----
+
+const LAUNCH = 'https://ap-northeast-2.console.aws.amazon.com/cloudformation/home?region=ap-northeast-2#/stacks/quickcreate?templateURL=https%3A%2F%2Fb.s3.ap-northeast-2.amazonaws.com%2Fconnections%2Fv1%2Fsource-role.yaml&param_PlatformPrincipalArn=arn%3Aaws%3Aiam%3A%3A111111111111%3Arole%2Fcmp-platform&param_ExternalId=ext-1'
+
+/** 가짜 플랫폼 /connections: 백엔드 routes/connections.py와 같은 경로·응답 형태 */
+function fakeConnectionsPlatform() {
+  const calls: { method: string; path: string; body: unknown }[] = []
+  const rows = new Map<string, Record<string, unknown>>()
+  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(String(input))
+    const method = init?.method ?? 'GET'
+    const body = init?.body ? JSON.parse(String(init.body)) : null
+    calls.push({ method, path: url.pathname + url.search, body })
+    if (new Headers(init?.headers).get('x-enrollment-admin-key') !== KEY) return Response.json({ detail: 'nope' }, { status: 403 })
+    const path = url.pathname
+    if (path === '/connections' && method === 'POST') {
+      const row = { connection_id: 'conn-1', kind: body.kind, display_name: body.display_name, region: body.region, status: 'PENDING', external_id: 'ext-1', role_arn: null, account_id: null, last_code: null, last_verified_at: null }
+      rows.set('conn-1', row)
+      return Response.json({ connection_id: 'conn-1', kind: body.kind, display_name: body.display_name, status: 'PENDING', external_id: 'ext-1', launch_stack_url: LAUNCH }, { status: 201 })
+    }
+    if (path === '/connections' && method === 'GET') {
+      return Response.json({ connections: [...rows.values()].map(r => ({ connection_id: r.connection_id, kind: r.kind, display_name: r.display_name, account_id: r.account_id, region: r.region, status: r.status, last_verified_at: r.last_verified_at })), agents: [] })
+    }
+    if (path === '/agent-admin/agents') {
+      return Response.json({ agents: [{ agent_id: 'laptop', cluster_uid: 'u', last_seen_at: 1, online: true, revoked: false, version: null,
+        tunnel: { tunnel_ip: '10.8.0.5', last_handshake_at: 100, app_health_ok: true, db_connect_ok: true, stale: true, fresh_until: null } }] })
+    }
+    const m = path.match(/^\/connections\/([^/]+)(\/role|\/verify|\/eks-clusters)?$/)
+    const row = m && rows.get(decodeURIComponent(m[1]))
+    if (!m || !row) return Response.json({ detail: 'CONNECTION_NOT_FOUND' }, { status: 404 })
+    if (m[2] === '/role') { row.role_arn = body.role_arn; return Response.json({ ...row, launch_stack_url: LAUNCH }) }
+    if (m[2] === '/verify') {
+      row.status = 'CONNECTED'; row.account_id = '123456789012'; row.last_code = 'OK'; row.last_verified_at = 200
+      return Response.json({ status: 'CONNECTED', code: 'OK', checked_at: 200, account_id: '123456789012', principal: 'p', eks_clusters: ['prod-a'] })
+    }
+    if (m[2] === '/eks-clusters') return Response.json({ connection_id: row.connection_id, region: row.region, eks_clusters: ['prod-a'] })
+    if (method === 'DELETE') { rows.delete(row.connection_id as string); return Response.json({ connection_id: row.connection_id, deleted: true, stack_name: 'cmp-source-conn-1', notice: 'n' }) }
+    return Response.json({ ...row, launch_stack_url: LAUNCH })
+  }) as typeof fetch
+  return { calls, rows, fetchImpl }
+}
+
+test('실제 연결: 백엔드 Launch Stack 링크를 그대로 돌려주고, 운영자 키를 응답에 싣지 않는다', async () => {
+  const platform = fakeConnectionsPlatform()
+  const api = createRealConnections({ base: 'http://platform.test/', enrollmentAdminKey: KEY, fetchImpl: platform.fetchImpl })
+  assert.equal(api.mock, false)
+  const response = await handleCreateConnection(post({ kind: 'AWS_SOURCE', display_name: 'prod', region: 'ap-northeast-2' }), deps(fakePlatform(), { connections: api }))
+  assert.equal(response.status, 201)
+  const text = await response.text()
+  assert.ok(!text.includes(KEY))
+  const created = JSON.parse(text)
+  assert.equal(created.launch_stack_url, LAUNCH)
+  assert.equal(created.external_id, 'ext-1')
+  assert.deepEqual(platform.calls[0], { method: 'POST', path: '/connections', body: { kind: 'AWS_SOURCE', display_name: 'prod', region: 'ap-northeast-2' } })
+})
+
+test('실제 연결: 목록은 상세로 역할·External ID를 채우고, 확인한 EKS 목록을 기억해 다시 AWS를 부르지 않는다', async () => {
+  const platform = fakeConnectionsPlatform()
+  const api = createRealConnections({ base: 'http://platform.test', enrollmentAdminKey: KEY, fetchImpl: platform.fetchImpl })
+  await api.createConnection({ kind: 'AWS_SOURCE', display_name: 'prod', region: 'ap-northeast-2' })
+  const pending = (await api.listConnections())[0]
+  assert.equal(pending.status, 'PENDING')
+  assert.equal(pending.external_id, 'ext-1')
+  assert.equal(pending.role_arn, undefined)
+
+  const role = await api.setRole('conn-1', 'arn:aws:iam::123456789012:role/cmp-source')
+  assert.equal(role.role_arn, 'arn:aws:iam::123456789012:role/cmp-source')
+  const verified = await api.verifyConnection('conn-1')
+  assert.deepEqual(verified.eks_clusters, ['prod-a'])
+
+  platform.calls.length = 0
+  const connected = (await api.listConnections())[0]
+  assert.equal(connected.status, 'CONNECTED')
+  assert.equal(connected.account_id, '123456789012')
+  assert.deepEqual(connected.eks_clusters, ['prod-a'])
+  assert.ok(!platform.calls.some(c => c.path.endsWith('/eks-clusters')), '확인 때 받은 EKS 목록을 다시 쓰므로 AWS 조회를 안 한다')
+
+  const deleted = await api.deleteConnection('conn-1')
+  assert.equal(deleted.deleted, true)
+  assert.deepEqual(await api.listConnections(), [])
+})
+
+test('실제 연결: 404·403은 BFF 오류 코드로 바뀌고, 오래된 터널 보고의 앱·DB 결과는 모름이다', async () => {
+  const platform = fakeConnectionsPlatform()
+  const api = createRealConnections({ base: 'http://platform.test', enrollmentAdminKey: KEY, fetchImpl: platform.fetchImpl })
+  await assert.rejects(api.verifyConnection('nope'), (error: PlatformError) => error.status === 404 && error.detail === 'CONNECTION_NOT_FOUND')
+  const wrongKey = createRealConnections({ base: 'http://platform.test', enrollmentAdminKey: 'wrong', fetchImpl: platform.fetchImpl })
+  await assert.rejects(wrongKey.listConnections(), (error: PlatformError) => error.code === 'operator_key')
+  const noKey = createRealConnections({ base: 'http://platform.test', enrollmentAdminKey: '', fetchImpl: platform.fetchImpl })
+  await assert.rejects(noKey.listConnections(), (error: PlatformError) => error.code === 'unavailable')
+  const tunnel = await api.tunnelStatus('laptop', { agent_id: 'laptop', owner_id: 'platform', cluster_uid: 'u', last_seen_at: 1, revoked: false })
+  assert.deepEqual(tunnel, { tunnel_ip: '10.8.0.5', last_handshake_at: 100, app_health_ok: null, db_connect_ok: null })
+  assert.equal(await api.tunnelStatus('other', { agent_id: 'other', owner_id: 'platform', cluster_uid: null, last_seen_at: null, revoked: false }), null)
 })
