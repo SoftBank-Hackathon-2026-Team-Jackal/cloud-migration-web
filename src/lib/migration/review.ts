@@ -255,10 +255,10 @@ export function blockedText(item: ReviewBlocked): { kind: 'security' | 'feature'
 }
 
 /**
- * 검토 상태를 읽는 주기. 분석이 끝났는데 아직 게이트가 서지 않았으면(ANALYZING이거나 아직 못 읽음) 1초로 줄여
+ * 검토 상태를 읽는 주기. 분석이 끝났는데 아직 게이트가 서지 않았으면(ANALYZING이거나 아직 못 읽음) 0.3초로 줄여
  * 게이트가 서자마자 화면에 뜨게 한다. 그 밖에는 2초.
  */
-export const REVIEW_POLL_FAST_MS = 1000
+export const REVIEW_POLL_FAST_MS = 300
 export const REVIEW_POLL_MS = 2000
 export function reviewPollMs({ analysisDone, view }: { analysisDone: boolean; view: ReviewView | null }): number {
   return analysisDone && (!view || view.phase === 'ANALYZING') ? REVIEW_POLL_FAST_MS : REVIEW_POLL_MS
