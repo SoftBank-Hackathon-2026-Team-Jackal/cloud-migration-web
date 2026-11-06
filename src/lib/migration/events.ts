@@ -674,4 +674,6 @@ export function targetOfRequest(request: { target: unknown }): Target {
 export type ReportData = {
   stages: Array<{ id: string; seconds: number }>
   ai_fixes: number
+  /** DB 전환 결과(마지막 cutover.outcome과 같은 모양). 전환하지 않았거나 옛 플랫폼이면 null·생략. */
+  cutover_outcome?: CutoverOutcomeData | null
 }

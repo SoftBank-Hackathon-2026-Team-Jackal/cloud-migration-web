@@ -7,6 +7,7 @@ import ProposalTag from './ProposalTag'
 import { useMigration } from '../lib/migration/MigrationProvider'
 import type { ReportData } from '../lib/migration/events'
 import StabilityMonitor from './StabilityMonitor'
+import { reportPauseMs } from '../lib/migration/flow'
 import { ViewTabs } from './DiagramParts'
 
 const RESULTS = ['pause', 'fail', 'delay', 'loss', 'gate', 'ai'] as const
@@ -103,7 +104,8 @@ export default function MigrationReport({ target, onRestart }: { target: Target;
   // 실제 모드: 리포트 API(report)가 아직 없으면 타임라인 대신 짧은 안내만 보인다(capabilities.ts).
   const hasReport = can('report')
   useEffect(() => { provider.loadReport() }, [provider])
-  const pauseMs = state.cutover.outcome?.result === 'switched' ? state.cutover.outcome.pause_ms : null
+  // 리포트 API의 cutover_outcome이 먼저, 없으면 받은 cutover.outcome(flow.ts reportPauseMs).
+  const pauseMs = reportPauseMs(state)
   const report = buildReport(t, target, lang, state.report ?? { stages: [], ai_fixes: 0 }, pauseMs === null ? undefined : (pauseMs < 10 ? pauseMs.toFixed(1) : String(Math.round(pauseMs))) + ' ms')
   const [tab, setTab] = useState<'report' | 'monitor'>('report')
   const stamp = 'migration-report-' + target

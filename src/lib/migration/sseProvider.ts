@@ -1,5 +1,6 @@
 import { isBackendPreview, normalizePlanStep, startRequestFor, type ApprovalDecisionData, type BackendPhase, type ErrorData, type MigrationEvent, type MigrationStatus, type PlanReadyData, type StartRequest, type ApprovalScope } from './events.ts'
 import type { EnterContext, MigrationProvider, ProviderHost } from './provider'
+import type { RequestKey } from './reducer'
 import type { ReportData } from './events'
 import type { SseStartMode } from './config'
 import { parseCapabilities, type Capability } from './capabilities.ts'
@@ -91,13 +92,21 @@ export class SseProvider implements MigrationProvider {
   /**
    * POST를 보내고 응답 본문(JSON이 아니면 null)을 돌려준다. 실패하면 화면에 요청 실패를 알리고 undefined.
    * to: 이전 경로(/migrations/{id} 뒤) · 플랫폼 절대 경로(baseUrl 뒤) · 웹 서버 중계 주소(그대로).
-   * 오류 본문의 detail이 코드(APPROVER_TOKEN_NOT_CONFIGURED 등)면 함께 넘겨 화면이 원인 문구를 보여 준다.
+   * phase: 이 요청을 부른 단계(실패를 그 단계에 기록한다. 없으면 이전 전체의 오류).
+   * request: 있으면 이전 전체를 실패로 바꾸지 않고 그 화면의 요청 오류(requestErrors)로만 알린다(2차 승인 등).
+   * 오류 본문의 detail이 코드(APPROVER_TOKEN_NOT_CONFIGURED 등, 또는 {code})면 함께 넘겨 화면이 원인 문구를 보여 준다.
    */
-  private async post(path: string, body?: object, to: 'migration' | 'platform' | 'relay' = 'migration'): Promise<unknown> {
+  private async post(path: string, body?: object, options: { to?: 'migration' | 'platform' | 'relay'; phase?: BackendPhase; request?: RequestKey } = {}): Promise<unknown> {
     if (!this.migrationId) return undefined
+    const to = options.to ?? 'migration'
+    const report = (error: ErrorData) => {
+      if (options.request) this.host.dispatch({ type: 'requestError', key: options.request, error })
+      else this.fail(error)
+    }
     try {
       const url = to === 'relay' ? path : this.options.baseUrl + (to === 'platform' ? '' : '/migrations/' + this.migrationId) + path
       const headers: Record<string, string> = body ? { 'Content-Type': 'application/json' } : {}
+      if (options.request) this.host.dispatch({ type: 'requestError', key: options.request, error: null })
       const response = await fetch(url, {
         method: 'POST',
         // 중계(같은 출처)에는 플랫폼용 헤더를 붙이지 않는다. 로그인 쿠키는 브라우저가 붙인다.
@@ -106,13 +115,14 @@ export class SseProvider implements MigrationProvider {
       })
       if (!response.ok) {
         const data = await response.json().catch(() => null) as { detail?: unknown } | null
-        const detail = typeof data?.detail === 'string' && /^[A-Z0-9_]{1,64}$/.test(data.detail) ? data.detail : undefined
-        this.fail({ code: 'request_failed', message: 'HTTP ' + response.status, phase: null, retryable: true, ...(detail ? { detail } : {}) })
+        // 화면 안 오류는 코드가 없어도 HTTP 상태로 문구를 고른다(HTTP_404 등).
+        const detail = errorCode(data?.detail) ?? (options.request ? 'HTTP_' + response.status : undefined)
+        report({ code: 'request_failed', message: 'HTTP ' + response.status, phase: options.phase ?? null, retryable: true, ...(detail ? { detail } : {}) })
         return undefined
       }
       return await response.json().catch(() => null)
     } catch (error) {
-      this.fail({ code: 'request_failed', message: error instanceof Error ? error.message : String(error), phase: null, retryable: true })
+      report({ code: 'request_failed', message: error instanceof Error ? error.message : String(error), phase: options.phase ?? null, retryable: true, ...(options.request ? { detail: 'NETWORK' } : {}) })
       return undefined
     }
   }
@@ -224,7 +234,7 @@ export class SseProvider implements MigrationProvider {
     const plan = this.plan
     if (!plan?.plan_id || plan.revision === undefined || !plan.manifest_digest || !plan.preview_digest) { fallback(); return }
     const relay = this.options.approvalBase?.replace(/\/+$/, '')
-    const to = relay ? 'relay' : 'platform'
+    const to = relay ? 'relay' as const : 'platform' as const
     const path = relay
       ? relay + '/' + encodeURIComponent(plan.plan_id) + '/' + plan.revision
       : '/provisioning/plans/' + encodeURIComponent(plan.plan_id) + '/revisions/' + plan.revision + '/approvals'
@@ -232,26 +242,30 @@ export class SseProvider implements MigrationProvider {
     const last = this.decision
     const redeliver = decision === 'APPROVE' && last && last.decision === 'APPROVE' && last.plan_id === plan.plan_id && last.revision === plan.revision && last.delivery_status === 'FAILED'
     const request = redeliver
-      ? this.post(path + '/' + encodeURIComponent(last.approval_id) + '/delivery', undefined, to)
-      : this.post(path, { decision, scope: approvalScope(plan), manifest_digest: plan.manifest_digest, preview_digest: plan.preview_digest }, to)
+      ? this.post(path + '/' + encodeURIComponent(last.approval_id) + '/delivery', undefined, { to, phase: 'awaiting_approval' })
+      : this.post(path, { decision, scope: approvalScope(plan), manifest_digest: plan.manifest_digest, preview_digest: plan.preview_digest }, { to, phase: 'awaiting_approval' })
     void request.then(body => this.takeDecision(body))
   }
 
-  approve(revision?: number) { this.decide('APPROVE', () => { void this.post('/approve', revision === undefined ? undefined : { revision }).then(body => this.takeDecision(body)) }) }
+  approve(revision?: number) { this.decide('APPROVE', () => { void this.post('/approve', revision === undefined ? undefined : { revision }, { phase: 'awaiting_approval' }).then(body => this.takeDecision(body)) }) }
   /**
    * 계획 수정 요청. [가정] 백엔드는 재계획 의미를 아직 정하지 않았다(openapi: REJECT만 구현, revision 요청은 undecided).
    * 그래서 거절(REJECT)로 보내고 revision + 1의 plan.ready가 다시 온다고 기대한다. 계획 정보가 없으면 [가정] POST /plan/revise.
    */
-  revisePlan() { this.decide('REJECT', () => { void this.post('/plan/revise') }) }
+  revisePlan() { this.decide('REJECT', () => { void this.post('/plan/revise', undefined, { phase: 'awaiting_approval' }) }) }
   /** [가정] 백엔드 계약에 없다: 샌드박스 3회 초과 뒤 사람 검토가 어떻게 이뤄지는지 정해지지 않았다. */
-  retrySandbox() { if (this.can('sandbox.retry')) void this.post('/sandbox/retry') }
-  /** [가정] 두 번째 승인(DB 전환) 경로는 정해지지 않았다. */
-  approveCutover() { void this.post('/approve?gate=cutover') }
+  retrySandbox() { if (this.can('sandbox.retry')) void this.post('/sandbox/retry', undefined, { phase: 'build' }) }
+  /**
+   * 두 번째 승인(DB 전환). [확정: 플랫폼 routes/migrations.py] POST /migrations/{id}/approve?gate=cutover →
+   * DataMigrationWorkflow에 switchover 신호. 409 CUTOVER_NOT_READY(복제가 아직 streaming이 아님)·404·503은
+   * 이전이 계속 도는 중이므로 전환 화면 안 오류로만 보인다(이전 전체를 실패로 바꾸지 않는다). 다시 승인할 수 있다.
+   */
+  approveCutover() { void this.post('/approve?gate=cutover', undefined, { phase: 'verification', request: 'cutover' }) }
   /** [확정: 학습용 뼈대] POST /migrations/{id}/cancel */
   cancel() { void this.post('/cancel') }
   /** [가정] 트래픽 롤백·재시도 경로는 정해지지 않았다. */
-  rollbackTraffic() { if (this.can('traffic.rollback')) void this.post('/traffic/rollback') }
-  retryTraffic() { if (this.can('traffic.retry')) void this.post('/traffic/retry') }
+  rollbackTraffic() { if (this.can('traffic.rollback')) void this.post('/traffic/rollback', undefined, { phase: 'traffic' }) }
+  retryTraffic() { if (this.can('traffic.retry')) void this.post('/traffic/retry', undefined, { phase: 'traffic' }) }
   injectFailure() { /* 데모 전용: SSE 모드에서는 쓰지 않는다. */ }
 
   /** [가정] GET /migrations/{id}/report: 백엔드에 아직 없다(capabilities의 report가 없으면 부르지 않는다). */
@@ -263,7 +277,8 @@ export class SseProvider implements MigrationProvider {
         if (!response.ok) throw new Error('HTTP ' + response.status)
         this.host.dispatch({ type: 'report', report: await response.json() as ReportData })
       } catch (error) {
-        this.fail({ code: 'report_failed', message: error instanceof Error ? error.message : String(error), phase: 'verification', retryable: true })
+        // 리포트를 못 읽어도 이전은 끝난 그대로다: 완료 화면 안 오류로만 남긴다(리포트는 타임라인 없이 보인다).
+        this.host.dispatch({ type: 'requestError', key: 'report', error: { code: 'report_failed', message: error instanceof Error ? error.message : String(error), phase: 'verification', retryable: true } })
       }
     })()
   }
@@ -415,6 +430,12 @@ export class SseProvider implements MigrationProvider {
     }
     this.host.dispatch({ type: 'event', event })
   }
+}
+
+/** 오류 본문 detail의 코드: 문자열 코드("APPROVER_TOKEN_NOT_CONFIGURED") 또는 {code: "CUTOVER_NOT_READY"}. 코드 모양이 아니면 undefined. */
+function errorCode(detail: unknown): string | undefined {
+  const value = detail && typeof detail === 'object' ? (detail as { code?: unknown }).code : detail
+  return typeof value === 'string' && /^[A-Z0-9_]{1,64}$/.test(value) ? value : undefined
 }
 
 /** 마지막 활동 뒤 ms가 지나면 onStall을 한 번 부른다. poke()로 시계를 다시 잰다. */
