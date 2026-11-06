@@ -15,6 +15,7 @@
     "test:e2e:all": "node tests/e2e/run.mjs all",
     "test:e2e:sse": "node tests/e2e/sse-states.mjs",
     "test:e2e:review": "node tests/e2e/review.mjs",
+    "test:e2e:review-gate": "node tests/e2e/review-gate.mjs",
     "test:e2e:agent": "node tests/e2e/agent.mjs",
     "test:e2e:github": "node tests/e2e/github.mjs",
     "test:e2e:voice": "node tests/e2e/voice.mjs",

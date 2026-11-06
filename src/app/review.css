@@ -1,37 +1,121 @@
 /*
- * 분석 검토 게이트: 분석 화면 위에 뜨는 카드. 승인 화면과 같은 무채색 장부 톤을 쓴다.
- * 색은 회색 단계만 쓰고, 막힘·거절만 붉은 글자로 구분한다.
+ * 분석 검토 게이트: 승인 화면과 같은 무채색 장부 톤(큰 굵은 제목 · "이름 | 값" 줄과 가는 선 · 회색 안쪽 상자 · 검은 알약).
+ * 분석 화면 위에서는 분석을 옅게 남긴 시트(is-inline), 다른 화면 위에서는 같은 모양을 더 짙게(is-float) 띄운다.
+ * 단계 표시줄(z 20)·언어 버튼(z 40)·Jackal 위젯(z 55)보다 아래에 둬서 가리지 않는다.
+ * 색은 회색 단계만 쓰고, 붉은색은 막힘·이전 중단의 글자색에만 쓴다.
  */
-.review-overlay{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(255,255,255,.82);backdrop-filter:blur(6px)}
-.review-card{display:flex;flex-direction:column;gap:14px;width:min(860px,100%);max-height:min(86vh,820px);padding:26px 28px 22px;border:1px solid #e3e3e3;border-radius:20px;background:#fff;box-shadow:0 24px 60px rgba(0,0,0,.12);font-family:var(--font-sans)}
-.review-card header small{display:block;margin-bottom:6px;color:#8a8a8a;font:600 11.5px/1 var(--font-sans);letter-spacing:.04em}
-.review-card header h2{margin:0 0 6px;color:#0a0a0a;font:700 22px/1.25 var(--font-sans)}
-.review-card header p{margin:0;color:#5c5c5c;font-size:13.5px;line-height:1.55}
-.review-list{display:flex;flex-direction:column;gap:10px;min-height:0;margin:0;padding:2px 2px 4px;overflow:auto;list-style:none}
-.review-list li{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border:1px solid #e6e6e6;border-radius:14px;background:#fff}
-.review-list li.is-required{border-color:#141414}
-.review-list li>div:first-child{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.review-list li strong{color:#0a0a0a;font:650 14.5px/1.3 var(--font-sans)}
-.review-list li p{margin:0;color:#3d3d3d;font-size:13px;line-height:1.5}
-.review-list li p.review-sub{color:#6b6b6b;font-size:12.5px}
-.review-grade{flex:none;padding:2px 9px;border:1px solid #bdbdbd;border-radius:999px;background:#fff;color:#444;font:600 11px/1.4 var(--font-sans)}
-.review-grade.is-direct{border-color:#d4d4d4;color:#6b6b6b}
-.review-grade.is-partial{border-color:#8a8a8a;color:#2b2b2b}
-.review-grade.is-none,.review-grade.is-lower{border-color:#b42318;color:#b42318}
-.review-toggle{display:flex;align-items:center;gap:9px;margin-top:2px;color:#0a0a0a;font:600 13px/1.4 var(--font-sans);cursor:pointer}
-.review-toggle input{width:17px;height:17px;accent-color:#141414}
-.review-toggle em{color:#6b6b6b;font:400 12px/1.4 var(--font-sans);font-style:normal}
-.review-decision{display:flex;gap:8px;margin-top:4px}
-.review-decision .flow-secondary{height:34px;min-width:84px;padding:0 16px;border:1px solid #cfcfcf;background:#fff;color:#2b2b2b}
-.review-decision .flow-secondary.is-picked{border-color:#141414;background:#141414;color:#fff}
-.review-decision .flow-secondary.is-picked.is-reject{border-color:#b42318;background:#b42318}
-.review-decision .flow-secondary:disabled{opacity:.5;cursor:default}
-.review-card footer{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-top:4px}
-.review-card footer small{color:#6b6b6b;font-size:12px;line-height:1.5}
-.review-card footer .flow-primary{flex:none}
-.review-empty{margin:10px 0;color:#5c5c5c;font-size:13.5px}
-.review-error{margin:0;color:#b42318;font:500 13px/1.5 var(--font-sans)}
-.review-error small{color:#b42318;opacity:.7}
-.review-card.is-blocked{border-color:#e7c9c5}
-.review-card.is-blocked header small,.review-card.is-blocked header h2{color:#b42318}
-@media (max-width:640px){.review-card{padding:20px 16px 16px}.review-card footer{flex-direction:column;align-items:stretch}}
+.review-sheet{position:fixed;inset:0;z-index:15;display:flex;align-items:flex-start;justify-content:center;padding:clamp(56px,8vh,88px) clamp(16px,4vw,82px) 28px;overflow-y:auto;overscroll-behavior:contain;font-family:var(--font-sans);animation:review-sheet-in .28s ease both}
+.review-sheet.is-inline{background:linear-gradient(180deg,rgba(248,248,248,.74),rgba(248,248,248,.9) 40%);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
+.review-sheet.is-float{background:rgba(247,247,247,.94);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+@keyframes review-sheet-in{from{opacity:0}to{opacity:1}}
+@keyframes review-rise{from{opacity:0;filter:blur(8px);transform:translateY(10px) scale(.985)}to{opacity:1;filter:blur(0);transform:none}}
+
+.review-panel.approval-panel{width:min(880px,100%);margin:auto 0;animation:review-rise .46s cubic-bezier(.16,1,.3,1) .04s both}
+.review-panel.approval-panel.has-aside{width:min(1280px,100%);display:grid;grid-template-columns:minmax(0,1.62fr) minmax(280px,.78fr);gap:32px;align-items:start}
+.review-main{min-width:0}
+
+/* 머리글: 단계 점 · 큰 제목 */
+.review-step{display:flex;align-items:center;gap:10px}
+.review-step.is-stop{color:#b42318}
+.review-dots{display:inline-flex;gap:4px}
+.review-dots i{width:16px;height:3px;border-radius:2px;background:#d6d6d6}
+.review-dots i.is-on{background:#141414}
+
+/* 장부: 기능 | 대상 대응 | 필수 여부 | 이 선택의 결과 (+ 아래 줄: 제안 · 잃는 것) */
+.review-ledger{margin:18px 0 0;padding:0;list-style:none;border-top:1px solid #e4e4e4}
+.review-head,.review-row{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(92px,.62fr) minmax(176px,auto) minmax(112px,.8fr);align-items:center;column-gap:16px}
+.review-head{padding:9px 0 8px;border-bottom:1px solid #e4e4e4;color:var(--text-muted);font-size:11px;font-weight:650;letter-spacing:.02em}
+.review-row{row-gap:6px;padding:12px 0 11px;border-bottom:1px solid #e4e4e4}
+.review-name{display:flex;flex-direction:column;gap:2px;min-width:0}
+.review-name strong{color:#0a0a0a;font-size:14px;font-weight:650;line-height:1.3;overflow-wrap:anywhere}
+.review-name small{color:#8a8a8a;font-size:11.5px;line-height:1.4;overflow-wrap:anywhere}
+.review-badge{min-width:0}
+.review-meta{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:2px 14px;margin:0;color:#6b6b6b;font-size:12px;line-height:1.5}
+.review-meta span{overflow-wrap:anywhere}
+.review-proposal.is-changed{color:#141414;font-weight:550}
+.review-proposal.is-changed::after{content:' *';color:#8a8a8a}
+
+/* 등급: 무채색 단계. 대체 불가만 검은 테두리로 도드라지게(붉은색은 결과에만). */
+.review-grade{display:inline-block;padding:3px 9px;border:1px solid transparent;border-radius:999px;background:#efefef;color:#444;font-size:11px;font-weight:600;line-height:1.35;white-space:nowrap}
+.review-grade.is-direct{background:#f3f3f3;color:#6b6b6b}
+.review-grade.is-partial{background:#e4e4e4;color:#2b2b2b}
+.review-grade.is-none{border-color:#141414;background:#fff;color:#141414}
+.review-compare{color:#3d3d3d;font-size:12px;line-height:1.4}
+
+/* 알약형 칸 나눔 선택 */
+.review-seg{display:inline-flex;justify-self:start;gap:2px;padding:3px;border-radius:999px;background:#ececec}
+.review-seg button{height:30px;padding:0 14px;border:0;border-radius:999px;background:transparent;color:#5c5c5c;font:600 12px/1 var(--font-sans);white-space:nowrap;cursor:pointer;transition:background .18s,color .18s,box-shadow .18s}
+.review-seg button:hover:not(.is-on):not(:disabled){color:#141414}
+.review-seg button.is-on{background:#111;color:#fff;box-shadow:0 3px 10px rgba(0,0,0,.14)}
+.review-seg button.is-on.is-stop{background:#fff;color:#b42318;box-shadow:0 1px 4px rgba(0,0,0,.12)}
+.review-seg button:focus{outline:none}
+.review-seg button:focus-visible{outline:2px solid #3d3d3d;outline-offset:1px}
+.review-seg button:disabled{opacity:.5;cursor:default}
+
+/* 결과 */
+.review-outcome{display:inline-flex;align-items:center;gap:7px;color:#5c5c5c;font-size:12.5px;font-weight:500;line-height:1.35}
+.review-outcome i{flex:none;width:7px;height:7px;border:1.3px solid currentColor;border-radius:50%}
+.review-outcome.is-proceed i{background:currentColor}
+.review-outcome.is-approval{color:#141414;font-weight:650}
+.review-outcome.is-block{color:#b42318;font-weight:650}
+.review-outcome.is-block i{border-radius:1px;background:currentColor}
+.review-outcome.is-pending{color:#a3a3a3}
+.review-outcome.is-pending i{border-style:dashed}
+
+.review-summary{margin:12px 0 0;color:#5c5c5c;font-size:12px;font-variant-numeric:tabular-nums}
+.review-warn{margin:12px 0 0;padding:11px 14px;border-radius:14px;background:#efefef;color:#b42318;font-size:12.5px;font-weight:550;line-height:1.5}
+.review-actions{align-items:center;justify-content:space-between;flex-wrap:wrap}
+.review-actions small{flex:1 1 220px;color:#6b6b6b;font-size:12px;line-height:1.5}
+.review-actions .flow-primary{margin-left:auto}
+.review-actions .flow-primary:disabled{opacity:.4;cursor:not-allowed}
+.review-empty{margin:14px 0 0;color:#5c5c5c;font-size:13px}
+.review-error{margin:12px 0 0;color:#b42318;font-size:12.5px;line-height:1.5}
+.review-error small{opacity:.7}
+
+/* 막힘 */
+.review-ledger.is-blocked .review-row{grid-template-columns:minmax(0,1.2fr) minmax(92px,auto) minmax(0,1.6fr)}
+.review-why{margin:0;color:#b42318;font-size:13px;font-weight:550;line-height:1.45}
+.review-server{color:#a3a3a3;font-size:11px}
+.review-panel.is-blocked h2{color:#0a0a0a}
+
+/* 보안 비교(보조 칸): 회색 안쪽 상자 */
+.review-aside{position:sticky;top:0;padding:16px 16px 12px;border-radius:18px;background:#efefef}
+.review-aside-title{display:block;color:#222;font-size:13px;font-weight:650}
+.review-aside-lead{margin:4px 0 0;color:#6b6b6b;font-size:12px;line-height:1.5}
+.review-sec{margin:10px 0 0;padding:0;list-style:none}
+.review-sec li{padding:10px 0 9px;border-top:1px solid #dcdcdc}
+.review-sec-line{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.review-sec-name{color:#141414;font-size:13px;font-weight:600}
+.review-verdict{flex:none;padding:2px 8px;border-radius:999px;background:#fff;color:#5c5c5c;font-size:10.5px;font-weight:650;white-space:nowrap}
+.review-verdict.is-lower{background:#141414;color:#fff}
+.review-verdict.is-unknown{border:1px dashed #a3a3a3;background:transparent;color:#444}
+.review-verdict.is-higher{color:#141414}
+.review-sec-compare{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;margin-top:4px;color:#3d3d3d;font-size:12px}
+.review-sec p{margin:3px 0 0;color:#6b6b6b;font-size:11.5px;line-height:1.45}
+.review-tag{padding:1px 7px;border:1px solid #c4c4c4;border-radius:999px;color:#5c5c5c;font-size:10px;font-weight:650;white-space:nowrap}
+.review-tag.is-ask{border-color:#141414;color:#141414}
+
+@media(max-width:1000px){
+  .review-panel.approval-panel.has-aside{grid-template-columns:1fr;gap:20px}
+  .review-aside{position:static}
+}
+@media(max-width:760px){
+  .review-sheet{padding:48px 12px 96px}
+  .review-panel.approval-panel{padding:20px 16px 16px;border-radius:22px}
+  .review-head{display:none}
+  .review-row{grid-template-columns:minmax(0,1fr) auto;row-gap:8px}
+  .review-row .review-seg{grid-column:1/2}
+  .review-row .review-outcome{justify-self:end}
+  .review-ledger.is-blocked .review-row{grid-template-columns:minmax(0,1fr) auto}
+  .review-ledger.is-blocked .review-why{grid-column:1/-1}
+  .review-actions .flow-primary,.review-actions .flow-secondary{width:100%;margin-left:0}
+}
+@media(max-width:420px){
+  .review-row .review-seg{grid-column:1/-1}
+  .review-row .review-outcome{grid-column:1/-1;justify-self:start}
+  .review-seg button{padding:0 12px}
+}
+@media(prefers-reduced-motion:reduce){
+  .review-sheet,.review-panel.approval-panel{animation:none}
+  .review-seg button{transition:none}
+}

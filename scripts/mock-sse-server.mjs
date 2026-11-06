@@ -300,13 +300,20 @@ function openStream(req, res, record) {
 // ---- 분석 검토 게이트(플랫폼 GET|POST /migrations/{id}/analysis/review를 흉내 낸다) ----
 // MOCK_REVIEW_GATE=1 일 때만 켠다(꺼져 있으면 404: 검토 API가 없는 서버와 같다). 시작 3초 뒤 필수 기능 확정을 기다린다.
 const REVIEW_GATE = process.env.MOCK_REVIEW_GATE === '1'
+// 실제 플랫폼 ReviewGate.view() 모양: capability는 카탈로그 id, usage·loses·required_reason은 영어 자유 문장.
+// 등급을 고루 섞어 등급 × 필수 결과(진행·승인·차단)를 모두 볼 수 있게 한다.
 const reviewRows = () => [
-  { id: 'a', capability: 'Realtime chat messages', usage: 'POST /api/messages · SSE', grade: 'DIRECT', loses: [], required_proposed: true, required_reason: 'core user flow', required: null, treatment: null },
-  { id: 'b', capability: 'Profile image upload', usage: 'S3 presigned URL', grade: 'PARTIAL', loses: ['CDN cache', 'presigned expiry'], required_proposed: false, required_reason: 'optional for the demo', required: null, treatment: null },
-  { id: 'c', capability: 'Push notifications', usage: 'SNS topic', grade: 'NONE', loses: ['mobile push'], required_proposed: false, required_reason: 'no consumer found', required: null, treatment: null },
+  { id: 'map-postgres-orders', capability: 'postgres', usage: 'Orders and users tables read and written by the API (psycopg2, 14 call sites)', grade: 'DIRECT', loses: [], required_proposed: true, required_reason: 'Called on every checkout request in the trace', required: null, treatment: null },
+  { id: 'map-s3-avatars', capability: 's3', usage: 'Profile images uploaded with presigned PUT URLs', grade: 'API_DIFF', loses: ['Presigned URL signature format changes'], required_proposed: true, required_reason: 'The sign-up flow uploads an avatar', required: null, treatment: null },
+  { id: 'map-storage-lifecycle', capability: 'object-storage', usage: 'Nightly export bucket with a 30-day lifecycle rule', grade: 'PARTIAL', loses: ['Automatic deletion after 30 days'], required_proposed: false, required_reason: 'Only a batch job uses it; no user path', required: null, treatment: null },
+  { id: 'map-ingress-waf', capability: 'ingress', usage: 'Managed WAF rule set on the load balancer', grade: 'NONE', loses: ['Managed WAF rules', 'Bot control'], required_proposed: false, required_reason: 'No request in the trace matched a WAF rule', required: null, treatment: null },
 ]
+// cmp_scanners.security_judge 모양: LOWER 1개(승인 대상)와 SAME·UNKNOWN·weak_source를 섞는다. proof는 PROOF 표와 같다.
 const reviewSecurity = () => [
-  { id: 'security:EXTERNAL_HTTPS', criterion: 'EXTERNAL_HTTPS', source_state: 'PROTECTED', target_state: 'UNPROTECTED', verdict: 'LOWER', weak_source: false, reasons: ['TARGET_ENTRY_WITHOUT_TLS'], suggestion: 'ENFORCE_HTTPS_AT_ENTRY', proof: null, approvable: true, decision: null },
+  { id: 'security:EXTERNAL_HTTPS', criterion: 'EXTERNAL_HTTPS', source_state: 'PROTECTED', target_state: 'UNPROTECTED', verdict: 'LOWER', weak_source: false, reasons: ['TARGET_ENTRY_WITHOUT_TLS'], suggestion: 'ENFORCE_HTTPS_AT_ENTRY', proof: 'POST_DEPLOY', approvable: true, decision: null },
+  { id: 'security:DB_ACCESS_SCOPE', criterion: 'DB_ACCESS_SCOPE', source_state: 'PROTECTED', target_state: 'PROTECTED', verdict: 'SAME', weak_source: false, reasons: ['TARGET_DEFAULT_DENY_NETWORK_POLICY'], suggestion: 'RESTRICT_DB_INGRESS_TO_APP', proof: 'SANDBOX', approvable: false, decision: null },
+  { id: 'security:DB_TRANSPORT_ENCRYPTION', criterion: 'DB_TRANSPORT_ENCRYPTION', source_state: 'UNPROTECTED', target_state: 'UNPROTECTED', verdict: 'SAME', weak_source: true, reasons: ['TARGET_DB_SSL_NOT_CONFIGURED'], suggestion: 'REQUIRE_DB_SSL', proof: 'SANDBOX', approvable: false, decision: null },
+  { id: 'security:ADMIN_API_EXPOSURE', criterion: 'ADMIN_API_EXPOSURE', source_state: 'UNKNOWN', target_state: 'UNKNOWN', verdict: 'UNKNOWN', weak_source: false, reasons: ['SOURCE_ADMIN_EXPOSURE_UNKNOWN'], suggestion: 'BLOCK_ADMIN_PATHS_AT_ENTRY', proof: 'POST_DEPLOY', approvable: false, decision: null },
 ]
 const reviews = new Map()
 function reviewOf(record) {
@@ -315,16 +322,26 @@ function reviewOf(record) {
   if (review.phase === 'ANALYZING' && Date.now() - review.startedAt > 3000 / SPEED) review.phase = 'WAITING_CONFIRMATION'
   return review
 }
+// 플랫폼 ReviewGate.blocked(): 행 막힘 사유는 한국어 고정 문장, 보안 막힘은 'SECURITY_LOWER: <기준>'(화면은 등급·기준으로 문구를 고른다).
+const REVIEW_ALTERNATIVES = { NONE: '대상에서 대체할 수 없는 기능이다. 기능을 쓰지 않도록 코드를 고치거나 다른 대상을 검토한다.', PARTIAL: '대상에서 일부만 지원한다. 대체 방법을 증명하거나 필수 여부를 다시 검토한다.' }
+const reviewSecurityRejected = review => review.security.filter(item => item.approvable && review.approvals[item.id] === 'REJECTED')
 function reviewView(review) {
   const pending = review.phase === 'WAITING_CONFIRMATION' ? 'confirm_requirements' : review.phase === 'WAITING_APPROVAL' ? 'approve_losses' : null
-  const blocked = review.rows.filter(row => row.treatment === 'BLOCK').map(row => ({ id: row.id, capability: row.capability, usage: row.usage, grade: row.grade, reason: 'Required feature is ' + row.grade + ', cannot migrate.', alternative: 'Stop using it or pick another target.' }))
+  const blocked = [
+    ...review.rows.filter(row => row.treatment === 'BLOCK').map(row => ({ id: row.id, capability: row.capability, usage: row.usage, grade: row.grade, reason: `필수 기능이 ${row.grade} 등급이라 이전할 수 없다.`, alternative: REVIEW_ALTERNATIVES[row.grade] ?? '' })),
+    ...reviewSecurityRejected(review).map(item => ({ id: item.id, capability: 'security', usage: item.criterion, grade: 'LOWER', reason: 'SECURITY_LOWER: ' + item.criterion, alternative: item.suggestion ?? '' })),
+  ]
   return { phase: review.phase, analysis_ref: review.phase === 'ANALYZING' ? null : { id: 'analysis', version: '1' }, pending, items: review.phase === 'ANALYZING' ? [] : review.rows, security: review.phase === 'ANALYZING' ? [] : review.security.map(item => ({ ...item, decision: review.approvals[item.id] ?? null })), blocked, rejections: review.rejections }
 }
+// cmp_agents.mapping.compute_treatment: DIRECT·API_DIFF는 진행, 그 밖은 필수면 차단·아니면 승인. 확정 전(null)은 비어 있다.
+const reviewTreatment = (grade, required) => required == null ? null : grade === 'DIRECT' || grade === 'API_DIFF' ? 'PROCEED' : required ? 'BLOCK' : 'APPROVAL'
+// ReviewGate._recompute: 차단이나 거절한 보안이 있으면 BLOCKED, 승인할 것이 있고 아직 답이 없으면 WAITING_APPROVAL, 아니면 APPROVED.
 function reviewRecompute(review) {
-  for (const row of review.rows) row.treatment = row.required && row.grade === 'NONE' ? 'BLOCK' : !row.required && row.grade !== 'DIRECT' ? 'APPROVAL' : 'MIGRATE'
-  const asking = review.rows.some(row => row.treatment === 'APPROVAL') || review.security.some(item => item.approvable)
-  if (review.rows.some(row => row.treatment === 'BLOCK')) review.phase = 'BLOCKED'
-  else review.phase = asking && Object.keys(review.approvals).length === 0 ? 'WAITING_APPROVAL' : 'APPROVED'
+  for (const row of review.rows) row.treatment = reviewTreatment(row.grade, row.required)
+  const lower = review.security.some(item => item.approvable)
+  if (review.rows.some(row => row.treatment === 'BLOCK') || reviewSecurityRejected(review).length > 0) review.phase = 'BLOCKED'
+  else if ((review.rows.some(row => row.treatment === 'APPROVAL') || lower) && Object.keys(review.approvals).length === 0) review.phase = 'WAITING_APPROVAL'
+  else review.phase = 'APPROVED'
 }
 function reviewDecide(review, kind, body) {
   const reject = code => { review.rejections.push({ signal: kind, code, detail: '' }); return { status: 422, body: { detail: code } } }
@@ -345,13 +362,12 @@ function reviewDecide(review, kind, body) {
   if (Object.keys(given).some(id => !asking.includes(id))) return reject('NOT_APPROVABLE')
   if (asking.some(id => !(id in given))) return reject('MISSING_ROW')
   review.approvals = { ...given }
+  // 거절한 손실은 그 기능이 필수라는 뜻이다(BLOCK이 된다). 거절한 보안은 reviewRecompute가 BLOCKED로 만든다.
   for (const [id, decision] of Object.entries(given)) {
-    if (decision !== 'REJECTED') continue
     const row = review.rows.find(item => item.id === id)
-    if (row) row.required = true
-    else review.phase = 'BLOCKED'
+    if (row && decision === 'REJECTED') row.required = true
   }
-  if (review.phase !== 'BLOCKED') { review.rows.forEach(row => { if (row.treatment === 'APPROVAL' && given[row.id] === 'REJECTED') row.treatment = 'BLOCK' }); reviewRecompute(review); if (review.phase === 'WAITING_APPROVAL') review.phase = 'APPROVED' }
+  reviewRecompute(review)
   return { status: 202, body: { phase: review.phase } }
 }
 

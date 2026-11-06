@@ -485,7 +485,8 @@ export default function FlowApp() {
       onComplete={() => sayVoice(voiceText(voiceLang, 'r.migration.done'), voiceLang !== lang ? voiceText(lang, 'r.migration.done') : undefined)}
       onRestart={() => jump('intro')} />}
     <StatusPanel stage={stage} onHome={() => jump('intro')} onSetup={() => jump('setup')} />
-    {review.view && showReviewPanel({ mode, stage, view: review.view }) && <ReviewGatePanel view={review.view} onView={review.setView} />}
+    {review.view && showReviewPanel({ mode, stage, view: review.view }) && <ReviewGatePanel view={review.view} onView={review.setView} inline={stage === 'analysis'}
+      onHome={() => { review.dismiss(); jump('intro') }} onSetup={() => { review.dismiss(); jump('setup') }} />}
     <TransitionLayer />
     {backTo && !dissolving && <BackButton onBack={goBack} />}
     <div className={'flow-toast' + (notice ? ' is-on' : '')} role="status" aria-hidden={!notice}>{t('nav.noBack')}</div>

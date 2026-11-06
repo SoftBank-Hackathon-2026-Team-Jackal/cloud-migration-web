@@ -162,3 +162,101 @@ test('SSE 공급자: 서버가 거절하면 코드를 그대로 돌려주고 화
     assert.ok(!actions.some(action => action.type === 'fail' && action.error.code === 'request_failed'), '요청 실패 안내를 띄우지 않는다')
   } finally { restore() }
 })
+
+// ---- 등급 × 필수 결과 미리보기(플랫폼 cmp_agents.mapping.compute_treatment와 같은 표) ----
+import { approvePreview, blockedText, confirmOutcome, confirmPreview, decisionOutcome, proofKey, reviewPollMs, securityRows, treatmentOf } from '../../src/lib/migration/review.ts'
+
+test('검토 게이트: 등급 × 필수 → 처리는 플랫폼 표와 같다', () => {
+  for (const grade of ['DIRECT', 'API_DIFF']) {
+    assert.equal(treatmentOf(grade, true), 'PROCEED')
+    assert.equal(treatmentOf(grade, false), 'PROCEED')
+  }
+  for (const grade of ['PARTIAL', 'NONE', 'SOMETHING_NEW']) {
+    assert.equal(treatmentOf(grade, true), 'BLOCK', grade)
+    assert.equal(treatmentOf(grade, false), 'APPROVAL', grade)
+  }
+  assert.equal(confirmOutcome('NONE', true), 'block')
+  assert.equal(confirmOutcome('PARTIAL', false), 'approval')
+  assert.equal(confirmOutcome('DIRECT', false), 'proceed')
+  assert.equal(decisionOutcome('APPROVED'), 'proceed')
+  assert.equal(decisionOutcome('REJECTED'), 'block')
+  assert.equal(decisionOutcome(undefined), null)
+})
+
+test('검토 게이트: 확정 미리보기는 차단·승인·진행을 나누고, 차단이 있으면 2단계 없이 멈춘다', () => {
+  const view = parseReview(waitingConfirm)!
+  const proposed = confirmPreview(view, defaultRequired(view))
+  assert.deepEqual(proposed.blocks, [])
+  assert.deepEqual(proposed.approvals, ['b', 'c'])
+  assert.deepEqual(proposed.proceeds, ['a'])
+  assert.equal(proposed.asksApproval, true)
+  const stop = confirmPreview(view, { a: true, b: false, c: true })
+  assert.deepEqual(stop.blocks, ['c'])
+  assert.equal(stop.asksApproval, false)
+  // 승인할 행도, 낮아지는 보안도 없으면 2단계로 가지 않는다
+  const plain = parseReview({ ...waitingConfirm, items: [row('a', 'DIRECT')], security: [security('DB_ACCESS_SCOPE', 'SAME')] })!
+  assert.equal(confirmPreview(plain, { a: false }).asksApproval, false)
+  // 보안만 낮아져도 2단계로 간다
+  const lowerOnly = parseReview({ ...waitingConfirm, items: [row('a', 'DIRECT')] })!
+  assert.equal(confirmPreview(lowerOnly, { a: true }).asksApproval, true)
+})
+
+test('검토 게이트: 승인 미리보기는 거절한 항목(기능·보안)을 차단으로 센다', () => {
+  const view = parseReview({ ...waitingConfirm, phase: 'WAITING_APPROVAL', pending: 'approve_losses',
+    items: [row('a', 'DIRECT', { required: true, treatment: 'PROCEED' }), row('b', 'PARTIAL', { required: false, treatment: 'APPROVAL' })] })!
+  assert.deepEqual(approvePreview(view, {}), [])
+  assert.deepEqual(approvePreview(view, { b: 'APPROVED', 'security:EXTERNAL_HTTPS': 'REJECTED' }), ['security:EXTERNAL_HTTPS'])
+  assert.deepEqual(approvePreview(view, { b: 'REJECTED', 'security:EXTERNAL_HTTPS': 'APPROVED', a: 'REJECTED' }), ['b'])
+})
+
+test('검토 게이트: 보안 판정은 LOWER → UNKNOWN → SAME·HIGHER 순서로, 증명 방식은 문구 키로', () => {
+  const view = parseReview({ ...waitingConfirm, security: [
+    { ...security('DB_ACCESS_SCOPE', 'SAME'), proof: 'SANDBOX' }, security('X', 'HIGHER'), security('ADMIN_API_EXPOSURE', 'UNKNOWN'),
+    { ...security('EXTERNAL_HTTPS', 'LOWER'), proof: 'POST_DEPLOY' }, { ...security('Y', 'SAME'), proof: 'SOMETIME' },
+  ] })!
+  assert.deepEqual(securityRows(view).map(item => item.verdict), ['LOWER', 'UNKNOWN', 'SAME', 'SAME', 'HIGHER'])
+  assert.deepEqual(securityRows(view).map(item => item.criterion), ['EXTERNAL_HTTPS', 'ADMIN_API_EXPOSURE', 'DB_ACCESS_SCOPE', 'Y', 'X'])
+  assert.deepEqual(view.security.map(item => item.proof), ['SANDBOX', null, null, 'POST_DEPLOY', null])
+  assert.equal(proofKey('SANDBOX'), 'reviewGate.proof.SANDBOX')
+  assert.equal(proofKey('POST_DEPLOY'), 'reviewGate.proof.POST_DEPLOY')
+  assert.equal(proofKey(null), null)
+})
+
+test('검토 게이트: 막힘 사유는 서버 문장이 아니라 등급·기준으로 문구를 고른다', () => {
+  // 플랫폼 ReviewGate.blocked() 그대로의 값
+  const none = blockedText({ id: 'r', capability: 'ingress', usage: 'WAF', grade: 'NONE', reason: '필수 기능이 NONE 등급이라 이전할 수 없다.', alternative: '…' })
+  assert.deepEqual(none, { kind: 'feature', reasonKey: 'reviewGate.blockedWhy.NONE', altKey: 'reviewGate.alt.NONE', criterion: '' })
+  assert.equal(blockedText({ id: 'r', capability: 's3', usage: '', grade: 'PARTIAL', reason: '', alternative: '' }).reasonKey, 'reviewGate.blockedWhy.PARTIAL')
+  assert.equal(blockedText({ id: 'r', capability: 's3', usage: '', grade: 'ODD', reason: '', alternative: '' }).altKey, null)
+  const sec = blockedText({ id: 'security:EXTERNAL_HTTPS', capability: 'security', usage: 'EXTERNAL_HTTPS', grade: 'LOWER', reason: 'SECURITY_LOWER: EXTERNAL_HTTPS', alternative: 'ENFORCE_HTTPS_AT_ENTRY' })
+  assert.deepEqual(sec, { kind: 'security', reasonKey: 'reviewGate.blockedWhy.security', altKey: 'reviewGate.suggest.ENFORCE_HTTPS_AT_ENTRY', criterion: 'EXTERNAL_HTTPS' })
+  for (const dict of [ko, en, ja]) {
+    for (const key of [none.reasonKey, none.altKey!, sec.reasonKey, sec.altKey!, 'reviewGate.blockedWhy.PARTIAL', 'reviewGate.blockedWhy.other', 'reviewGate.alt.PARTIAL']) assert.ok(key in dict, key)
+  }
+})
+
+test('검토 게이트: 분석이 끝났는데 게이트가 아직이면 1초, 그 밖에는 2초마다 읽는다', () => {
+  const analyzing = parseReview({ ...waitingConfirm, phase: 'ANALYZING', pending: null, items: [] })
+  const waiting = parseReview(waitingConfirm)
+  assert.equal(reviewPollMs({ analysisDone: true, view: null }), 1000)
+  assert.equal(reviewPollMs({ analysisDone: true, view: analyzing }), 1000)
+  assert.equal(reviewPollMs({ analysisDone: true, view: waiting }), 2000)
+  assert.equal(reviewPollMs({ analysisDone: false, view: null }), 2000)
+  assert.equal(reviewPollMs({ analysisDone: false, view: analyzing }), 2000)
+})
+
+test('검토 게이트: 플랫폼이 보내는 기준·상태·판정·사유·제안·증명·카탈로그 id 문구가 세 언어에 있다', () => {
+  const codes = {
+    criterion: ['EXTERNAL_HTTPS', 'DB_ACCESS_SCOPE', 'DB_TRANSPORT_ENCRYPTION', 'ADMIN_API_EXPOSURE'],
+    state: ['PROTECTED', 'PARTIAL', 'UNPROTECTED', 'NOT_APPLICABLE', 'UNKNOWN'],
+    verdict: ['LOWER', 'SAME', 'HIGHER', 'UNKNOWN'],
+    reason: ['TARGET_ENTRY_TLS_AT_RELAY', 'TARGET_TLS_UNTRUSTED_CERT', 'TARGET_ENTRY_WITHOUT_TLS', 'TARGET_ENTRY_NOT_DEFINED', 'TARGET_DEFAULT_DENY_NETWORK_POLICY', 'TARGET_DATABASE_NOT_IN_REQUIREMENTS', 'TARGET_DB_SSL_NOT_CONFIGURED', 'TARGET_ENTRY_HAS_NO_PATH_FILTER', 'SOURCE_ADMIN_EXPOSURE_UNKNOWN', 'TARGET_PROVIDER_UNKNOWN', 'REQUIREMENTS_MISSING', 'TARGET_NOT_DEFINED'],
+    suggest: ['ENFORCE_HTTPS_AT_ENTRY', 'RESTRICT_DB_INGRESS_TO_APP', 'REQUIRE_DB_SSL', 'BLOCK_ADMIN_PATHS_AT_ENTRY'],
+    proof: ['SANDBOX', 'POST_DEPLOY'],
+    cap: ['postgres', 's3', 'object-storage', 'ingress'],
+    outcome: ['proceed', 'approval', 'block'],
+  }
+  for (const dict of [ko, en, ja]) {
+    for (const [group, list] of Object.entries(codes)) for (const code of list) assert.ok(`reviewGate.${group}.${code}` in dict, `reviewGate.${group}.${code}`)
+  }
+})
