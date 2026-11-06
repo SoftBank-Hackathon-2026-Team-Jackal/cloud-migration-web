@@ -24,6 +24,12 @@ const PORT = Number(process.env.PORT || 3412)
 const BASE = 'http://127.0.0.1:' + PORT
 const KEY = 'e2e-operator-key-NOT-REAL-7d1c'
 const PUBLIC_URL = 'https://cmp.e2e.example'
+// 운영자 키가 있으면 연결·Agent 관리 API는 허용 GitHub 계정만 통과한다(guard). 시험용 AUTH_SECRET으로 만든 세션 쿠키를 쓴다.
+const { encode } = await import('@auth/core/jwt')
+const SECRET = 'e2e-auth-secret-not-real-settings-0123'
+const LOGIN = 'octo-admin'
+const session = await encode({ token: { name: 'Octo Admin', picture: null, sub: '1', accessToken: 'gho_e2e_not_real', login: LOGIN }, secret: SECRET, salt: 'authjs.session-token', maxAge: 3600 })
+const COOKIE = 'authjs.session-token=' + session
 const SHOTS = process.env.SHOTS || ''
 if (SHOTS) mkdirSync(SHOTS, { recursive: true })
 const problems = []
@@ -67,12 +73,13 @@ const PLATFORM = 'http://127.0.0.1:' + platform.address().port
 const control = path => fetch(PLATFORM + path)
 
 const app = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '-H', '127.0.0.1', '-p', String(PORT)], {
-  env: { ...process.env, PLATFORM_API_BASE: PLATFORM, PLATFORM_ENROLLMENT_ADMIN_KEY: KEY, PLATFORM_PUBLIC_URL: PUBLIC_URL, PLATFORM_OWNER_ID: 'platform', PLATFORM_KNOWN_AGENT_IDS: '', PLATFORM_CONNECTIONS: 'mock' },
+  env: { ...process.env, PLATFORM_API_BASE: PLATFORM, PLATFORM_ENROLLMENT_ADMIN_KEY: KEY, PLATFORM_PUBLIC_URL: PUBLIC_URL, PLATFORM_OWNER_ID: 'platform', PLATFORM_KNOWN_AGENT_IDS: '', PLATFORM_CONNECTIONS: 'mock',
+    AUTH_SECRET: SECRET, AUTH_URL: '', AUTH_GITHUB_ID: 'e2e-client-id', AUTH_GITHUB_SECRET: 'e2e-client-secret', ADMIN_GITHUB_LOGINS: LOGIN },
   stdio: 'ignore',
 })
 async function waitFor(url) {
   for (let i = 0; i < 120; i++) {
-    try { const r = await fetch(url); if (r.ok) return } catch { /* 아직 */ }
+    try { const r = await fetch(url, { headers: { cookie: COOKIE } }); if (r.ok) return } catch { /* 아직 */ }
     await new Promise(resolve => setTimeout(resolve, 250))
   }
   throw new Error('앱이 뜨지 않았습니다: ' + url)
@@ -92,8 +99,17 @@ try {
   }
 
   await waitFor(BASE + '/api/connections')
+  console.log('입구: 운영자 키가 있는 서버의 관리 API는 허용 계정 로그인만 통과한다')
+  {
+    const anonymous = await fetch(BASE + '/api/connections')
+    check(anonymous.status === 401 && (await anonymous.json()).detail === 'LOGIN_REQUIRED', '로그인 없으면 401 LOGIN_REQUIRED')
+    const other = await encode({ token: { name: 'Other', picture: null, sub: '2', accessToken: 'gho_other_not_real', login: 'someone-else' }, secret: SECRET, salt: 'authjs.session-token', maxAge: 3600 })
+    const notAllowed = await fetch(BASE + '/api/connections', { headers: { cookie: 'authjs.session-token=' + other } })
+    check(notAllowed.status === 403 && (await notAllowed.json()).detail === 'NOT_ALLOWED', '허용 목록에 없는 계정은 403 NOT_ALLOWED')
+  }
   browser = await chromium.launch(process.env.PW_CHANNEL ? { channel: process.env.PW_CHANNEL } : {})
   const context = await browser.newContext({ viewport: { width: 1536, height: 860 } })
+  await context.addCookies([{ name: 'authjs.session-token', value: session, domain: '127.0.0.1', path: '/', httpOnly: true, sameSite: 'Lax' }])
   await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: BASE })
   const page = await context.newPage()
   page.setDefaultTimeout(15000)
