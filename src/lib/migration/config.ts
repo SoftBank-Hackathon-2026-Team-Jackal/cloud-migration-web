@@ -26,3 +26,12 @@ export function sseStartMode(): SseStartMode {
 export function requiresSource(mode: ApiMode, start: SseStartMode = sseStartMode()): boolean {
   return mode === 'sse' && start !== 'legacy'
 }
+
+/**
+ * 계획 승인을 보낼 곳(NEXT_PUBLIC_APPROVAL_RELAY, 기본 relay).
+ * - relay: 웹 서버 중계 /api/approvals(승인자 토큰 PLATFORM_APPROVER_TOKEN은 웹 서버만 갖는다).
+ * - direct: 브라우저가 NEXT_PUBLIC_API_BASE의 승인 경로로 직접 보낸다. 토큰이 필요 없는 목업 SSE 서버 단독 시험 전용.
+ */
+export function approvalBase(): string | undefined {
+  return process.env.NEXT_PUBLIC_APPROVAL_RELAY === 'direct' ? undefined : '/api/approvals'
+}

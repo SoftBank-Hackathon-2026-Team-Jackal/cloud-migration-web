@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useState, type ReactNode } from 'react'
-import { apiBase, apiMode, sseStartMode, type ApiMode } from './config'
+import { apiBase, apiMode, approvalBase, sseStartMode, type ApiMode } from './config'
 import type { BackendPhase, Target } from './events'
 import { initialState, reducer, type Action, type MigrationState } from './reducer'
 import { reportFor } from './script'
@@ -31,7 +31,7 @@ export function MigrationProvider({ children, mode = apiMode() }: { children: Re
   const [listeners] = useState(() => new Set<(action: Action) => void>())
   const [provider] = useState<Provider>(() => {
     const host = { dispatch: (action: Action) => { dispatch(action); listeners.forEach(listener => listener(action)) } }
-    return mode === 'sse' ? new SseProvider(host, { baseUrl: apiBase(), startMode: sseStartMode() }) : new MockProvider(host)
+    return mode === 'sse' ? new SseProvider(host, { baseUrl: apiBase(), startMode: sseStartMode(), approvalBase: approvalBase() }) : new MockProvider(host)
   })
   const subscribe = useCallback((listener: (action: Action) => void) => { listeners.add(listener); return () => { listeners.delete(listener) } }, [listeners])
   useEffect(() => () => provider.dispose(), [provider])

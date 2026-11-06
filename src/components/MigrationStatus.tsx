@@ -1,6 +1,6 @@
 'use client'
 
-import { useT } from '../lib/i18n'
+import { useT, useTOr } from '../lib/i18n'
 import { useMigration } from '../lib/migration/MigrationProvider'
 import { PHASE_OF_STAGE } from '../lib/migration/events'
 import { BACKEND_PENDING, SOURCE_REQUIRED } from '../lib/migration/sseProvider'
@@ -21,6 +21,7 @@ export function ConnectionToast() {
  */
 export function StatusPanel({ stage, onHome, onSetup }: { stage: Stage; onHome: () => void; onSetup?: () => void }) {
   const t = useT()
+  const tOr = useTOr()
   const { state, provider } = useMigration()
   const phase = stage in PHASE_OF_STAGE ? PHASE_OF_STAGE[stage as keyof typeof PHASE_OF_STAGE] : null
   if (!phase) return null
@@ -70,12 +71,14 @@ export function StatusPanel({ stage, onHome, onSetup }: { stage: Stage; onHome: 
       </div>
     </section>
   }
+  // 웹 서버가 돌려준 오류 코드(예: APPROVER_TOKEN_NOT_CONFIGURED)가 있으면 그 원인 문구를 보여 준다.
+  const detail = 'detail' in failure && typeof failure.detail === 'string' ? failure.detail : ''
   return <section className="flow-stage approval-stage is-ready" role="alert" aria-label={t('fail.step')}>
     <div className="approval-panel">
       <small className="approval-step">{t('fail.step')}</small>
       <h2>{t('fail.title')}</h2>
-      <p className="approval-lead">{failure.message || t('fail.lead')}</p>
-      <p className="approval-lead">{t('fail.noRetry')}{failure.code ? ' (' + t('fail.code', { code: failure.code }) + ')' : ''}</p>
+      <p className="approval-lead">{(detail && tOr('cx.code.' + detail, '')) || failure.message || t('fail.lead')}</p>
+      <p className="approval-lead">{t('fail.noRetry')}{failure.code ? ' (' + t('fail.code', { code: detail || failure.code }) + ')' : ''}</p>
       <div className="approval-actions">
         <button type="button" className="flow-primary" onClick={onHome}>{t('fail.home')} <span aria-hidden="true">→</span></button>
       </div>

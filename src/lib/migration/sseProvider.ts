@@ -12,6 +12,12 @@ type Options = {
   getHeaders?: () => Record<string, string> | Promise<Record<string, string>>
   /** 시작 방식(config.ts의 sseStartMode). 기본 wait: 백엔드가 source를 받기 전까지 POST /migrations를 부르지 않는다. */
   startMode?: SseStartMode
+  /**
+   * 승인 중계(BFF) 주소(예: /api/approvals). 있으면 계획 승인·거절·다시 전달을 플랫폼이 아니라 우리 웹 서버로 보낸다:
+   * 플랫폼 승인 API는 승인자 토큰(Bearer)이 필요하고, 그 토큰은 웹 서버만 갖는다(PLATFORM_APPROVER_TOKEN).
+   * 없으면 예전처럼 baseUrl의 플랫폼 경로로 직접 보낸다(목업 SSE 서버 단독 시험용).
+   */
+  approvalBase?: string
 }
 
 /** 이전을 시작하지 않고 멈춘 이유(StatusPanel이 실패가 아니라 대기 안내로 보여 준다). */
@@ -64,16 +70,28 @@ export class SseProvider implements MigrationProvider {
     this.host.dispatch({ type: 'fail', error })
   }
 
-  /** POST를 보내고 응답 본문(JSON이 아니면 null)을 돌려준다. 실패하면 화면에 요청 실패를 알리고 undefined. */
-  private async post(path: string, body?: object, absolute = false): Promise<unknown> {
+  /**
+   * POST를 보내고 응답 본문(JSON이 아니면 null)을 돌려준다. 실패하면 화면에 요청 실패를 알리고 undefined.
+   * to: 이전 경로(/migrations/{id} 뒤) · 플랫폼 절대 경로(baseUrl 뒤) · 웹 서버 중계 주소(그대로).
+   * 오류 본문의 detail이 코드(APPROVER_TOKEN_NOT_CONFIGURED 등)면 함께 넘겨 화면이 원인 문구를 보여 준다.
+   */
+  private async post(path: string, body?: object, to: 'migration' | 'platform' | 'relay' = 'migration'): Promise<unknown> {
     if (!this.migrationId) return undefined
     try {
-      const response = await fetch(this.options.baseUrl + (absolute ? '' : '/migrations/' + this.migrationId) + path, {
+      const url = to === 'relay' ? path : this.options.baseUrl + (to === 'platform' ? '' : '/migrations/' + this.migrationId) + path
+      const headers: Record<string, string> = body ? { 'Content-Type': 'application/json' } : {}
+      const response = await fetch(url, {
         method: 'POST',
-        headers: await this.headers(body ? { 'Content-Type': 'application/json' } : {}),
+        // 중계(같은 출처)에는 플랫폼용 헤더를 붙이지 않는다. 로그인 쿠키는 브라우저가 붙인다.
+        headers: to === 'relay' ? headers : await this.headers(headers),
         body: body ? JSON.stringify(body) : undefined,
       })
-      if (!response.ok) throw new Error('HTTP ' + response.status)
+      if (!response.ok) {
+        const data = await response.json().catch(() => null) as { detail?: unknown } | null
+        const detail = typeof data?.detail === 'string' && /^[A-Z0-9_]{1,64}$/.test(data.detail) ? data.detail : undefined
+        this.fail({ code: 'request_failed', message: 'HTTP ' + response.status, phase: null, retryable: true, ...(detail ? { detail } : {}) })
+        return undefined
+      }
       return await response.json().catch(() => null)
     } catch (error) {
       this.fail({ code: 'request_failed', message: error instanceof Error ? error.message : String(error), phase: null, retryable: true })
@@ -157,19 +175,24 @@ export class SseProvider implements MigrationProvider {
 
   /**
    * 계획 승인·거절. [백엔드 openapi 확정] POST /provisioning/plans/{plan_id}/revisions/{revision}/approvals
-   * 본문 {decision: APPROVE|REJECT, scope, manifest_digest, preview_digest}, 승인자 인증은 getHeaders(Bearer).
+   * 본문 {decision: APPROVE|REJECT, scope, manifest_digest, preview_digest}, 승인자 인증은 Bearer 토큰.
+   * approvalBase가 있으면(실제 모드) 웹 서버 중계 {approvalBase}/{plan_id}/{revision}로 보내고, 웹 서버가 토큰을 붙인다.
    * plan.ready에 계획 ID·버전·digest가 없으면 옛 경로로 보낸다. 옛 경로 [확정: 학습용 뼈대] POST /migrations/{id}/approve
    */
   private decide(decision: 'APPROVE' | 'REJECT', fallback: () => void) {
     const plan = this.plan
     if (!plan?.plan_id || plan.revision === undefined || !plan.manifest_digest || !plan.preview_digest) { fallback(); return }
-    const path = '/provisioning/plans/' + encodeURIComponent(plan.plan_id) + '/revisions/' + plan.revision + '/approvals'
+    const relay = this.options.approvalBase?.replace(/\/+$/, '')
+    const to = relay ? 'relay' : 'platform'
+    const path = relay
+      ? relay + '/' + encodeURIComponent(plan.plan_id) + '/' + plan.revision
+      : '/provisioning/plans/' + encodeURIComponent(plan.plan_id) + '/revisions/' + plan.revision + '/approvals'
     // 같은 계획 버전의 승인이 기록됐지만 전달에 실패했으면, 새로 결정하지 않고 같은 승인을 다시 전달한다(openapi: POST …/approvals/{approval_id}/delivery).
     const last = this.decision
     const redeliver = decision === 'APPROVE' && last && last.decision === 'APPROVE' && last.plan_id === plan.plan_id && last.revision === plan.revision && last.delivery_status === 'FAILED'
     const request = redeliver
-      ? this.post(path + '/' + encodeURIComponent(last.approval_id) + '/delivery', undefined, true)
-      : this.post(path, { decision, scope: 'FULL', manifest_digest: plan.manifest_digest, preview_digest: plan.preview_digest }, true)
+      ? this.post(path + '/' + encodeURIComponent(last.approval_id) + '/delivery', undefined, to)
+      : this.post(path, { decision, scope: 'FULL', manifest_digest: plan.manifest_digest, preview_digest: plan.preview_digest }, to)
     void request.then(body => this.takeDecision(body))
   }
 
