@@ -32,9 +32,11 @@ const fake = createServer((req, res) => {
   req.on('data', chunk => { body += chunk })
   req.on('end', () => {
     received.push({ url: req.url, key: req.headers['x-api-key'], body: body ? JSON.parse(body) : null })
-    if (fakeMode === 'fail') { res.writeHead(500); return res.end('{"error":"boom"}') }
+    const translating = String(JSON.parse(body || '{}').system ?? '').includes('화면 자막')
+    if (fakeMode === 'fail' || (fakeMode === 'caption-fail' && translating)) { res.writeHead(500); return res.end('{"error":"boom"}') }
     res.writeHead(200, { 'content-type': 'application/json' })
-    res.end(JSON.stringify({ content: [{ type: 'text', text: '모델 답변: 지금은 트래픽 단계예요.' }] }))
+    const text = translating ? '字幕: 今はトラフィック段階です。' : '모델 답변: 지금은 트래픽 단계예요.'
+    res.end(JSON.stringify({ content: [{ type: 'text', text }] }))
   })
 })
 await new Promise(resolve => fake.listen(0, '127.0.0.1', resolve))
@@ -55,11 +57,12 @@ async function waitFor(url) {
 }
 
 const browser = await chromium.launch()
-async function ask(port, text) {
+async function ask(port, text, { screen = 'ko', voice } = {}) {
   const page = await browser.newPage({ viewport: { width: 1536, height: 800 } })
   const browserRequests = []
   page.on('request', request => browserRequests.push({ url: request.url(), headers: request.headers(), body: request.postData() }))
-  await page.goto(`http://127.0.0.1:${port}/?lang=ko&stage=traffic&target=gcp&speed=${process.env.E2E_SPEED ?? '10'}`)
+  if (voice) await page.addInitScript(lang => { try { localStorage.setItem('jackal.voiceLang', lang) } catch {} }, voice)
+  await page.goto(`http://127.0.0.1:${port}/?lang=${screen}&stage=traffic&target=gcp&speed=${process.env.E2E_SPEED ?? '10'}`)
   await page.waitForTimeout(4000)
   // 시연 중에는 위젯이 접혀 있다: 눌러서 열고, 입력창에 질문을 쓴다.
   await page.locator('.jv-pill').click()
@@ -71,6 +74,7 @@ async function ask(port, text) {
     caption: await page.locator('.jv-msg.is-agent p').last().innerText(),
     userMessage: await page.locator('.jv-msg.is-user p').last().innerText(),
     reports: await page.locator('[data-msg-tag="report"]').count(),
+    subtitle: await page.locator('[data-voice-caption]').innerText().catch(() => ''),
     html: await page.content(),
     browserRequests,
   }
@@ -96,6 +100,20 @@ try {
   check(typeof call?.body?.system === 'string' && call.body.system.includes('자칼'), '시스템 지침이 서버에서 붙는다')
   const leaked = first.html.includes(TEST_KEY) || first.browserRequests.some(item => JSON.stringify(item.headers).includes(TEST_KEY) || (item.body ?? '').includes(TEST_KEY))
   check(!leaked, '키가 브라우저(화면·요청)로 새지 않는다')
+
+  console.log('4) 화면 언어 자막(음성 한국어, 화면 일본어)')
+  const subtitled = await ask(3401, '지금 무슨 단계야?', { screen: 'ja', voice: 'ko' })
+  check(subtitled.source === 'model', '모델 답이다')
+  check(subtitled.subtitle.includes('모델 답변') && subtitled.subtitle.includes('字幕'), '하단 자막에 음성 문장과 일본어 자막이 같이 보인다')
+  const translateCall = received.at(-1)
+  check(String(translateCall?.body?.system ?? '').includes('日本語'), '서버가 답을 일본어로 옮겨 달라고 모델에 한 번 더 묻는다')
+  const askApi = (body) => fetch('http://127.0.0.1:3401/api/agent', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question: '지금?', context: '', lang: 'ko', ...body }) }).then(r => r.json())
+  const sameLang = await askApi({ captionLang: 'ko' })
+  check(sameLang.answer && !('caption' in sameLang), '화면 언어가 같으면 번역하지 않는다')
+  fakeMode = 'caption-fail'
+  const noCaption = await askApi({ captionLang: 'ja' })
+  check(noCaption.answer?.includes('모델 답변') && !('caption' in noCaption), '번역이 실패해도 답은 그대로 온다(자막만 빠진다)')
+  fakeMode = 'ok'
 
   console.log('3) 모델 서버 장애')
   fakeMode = 'fail'

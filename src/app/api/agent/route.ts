@@ -4,7 +4,10 @@
  *   ANTHROPIC_API_KEY, AGENT_MODEL(기본 claude-haiku-5-5), ANTHROPIC_BASE_URL(시험용)
  *   GEMINI_API_KEY, AGENT_MODEL(기본 gemini-2.5-flash), GEMINI_BASE_URL(시험용)
  *   gemini-live: Gemini Live(웹소켓)로 묻고, 오디오는 버리고 "출력 전사"(말한 내용의 글)만 답으로 쓴다. 모델은 AGENT_MODEL(기본 gemini-3.8-live)
- * 요청: { question, context, lang }. context는 화면이 만든 "현재 상태 요약"(비밀값 없음).
+ * 요청: { question, context, lang, captionLang? }. context는 화면이 만든 "현재 상태 요약"(비밀값 없음).
+ * 자막: captionLang이 lang과 다르면(예: 음성 한국어, 화면 일본어) 답을 화면 언어로 한 번 더 옮겨 caption으로 돌려준다.
+ *   번역은 같은 제공자의 일반(비 Live) 모델로 한다. gemini-live는 AGENT_CAPTION_MODEL(기본 gemini-2.5-flash)을 쓴다.
+ *   번역이 실패하거나 AGENT_CAPTION_TIMEOUT_MS(기본 8000)를 넘으면 caption 없이 답만 돌려준다(답을 막지 않는다).
  */
 import { NextResponse } from 'next/server'
 
@@ -12,8 +15,13 @@ const MAX_QUESTION = 300
 const MAX_CONTEXT = 6000
 // 무료 모델은 느릴 수 있어(실측 13~25초) 넉넉히 둔다. AGENT_TIMEOUT_MS로 바꿀 수 있다.
 const TIMEOUT_MS = Number(process.env.AGENT_TIMEOUT_MS) || 45000
+// 자막 번역은 답을 읽기 전에 기다리므로 짧게 둔다.
+const CAPTION_TIMEOUT_MS = Number(process.env.AGENT_CAPTION_TIMEOUT_MS) || 8000
 const LANGUAGE = { ko: '한국어', en: 'English', ja: '日本語' } as const
 type Lang = keyof typeof LANGUAGE
+type CallOptions = { model?: string; timeoutMs?: number }
+
+const asLang = (value: unknown): Lang | null => value === 'ko' || value === 'en' || value === 'ja' ? value : null
 
 function systemPrompt(lang: Lang) {
   return [
@@ -25,26 +33,34 @@ function systemPrompt(lang: Lang) {
   ].join('\n')
 }
 
-async function callAnthropic(system: string, user: string): Promise<string> {
+function captionPrompt(from: Lang, to: Lang) {
+  return [
+    `다음 ${LANGUAGE[from]} 문장을 화면 자막으로 쓸 ${LANGUAGE[to]}로 옮긴다.`,
+    '뜻을 더하거나 빼지 않는다. 숫자·단위·제품명·코드(예: GKE, PgBouncer, Digest)는 그대로 둔다.',
+    '번역문만 출력한다. 설명·따옴표·마크다운은 쓰지 않는다.',
+  ].join('\n')
+}
+
+async function callAnthropic(system: string, user: string, options: CallOptions = {}): Promise<string> {
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) throw new Error('no_key')
   const base = process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com'
   const response = await fetch(base + '/v1/messages', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model: process.env.AGENT_MODEL || 'claude-haiku-5-5', max_tokens: 300, system, messages: [{ role: 'user', content: user }] }),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    body: JSON.stringify({ model: options.model || process.env.AGENT_MODEL || 'claude-haiku-5-5', max_tokens: 300, system, messages: [{ role: 'user', content: user }] }),
+    signal: AbortSignal.timeout(options.timeoutMs ?? TIMEOUT_MS),
   })
   if (!response.ok) throw new Error('upstream_' + response.status)
   const data = await response.json() as { content?: Array<{ type: string; text?: string }> }
   return (data.content ?? []).filter(part => part.type === 'text').map(part => part.text ?? '').join('').trim()
 }
 
-async function callGemini(system: string, user: string): Promise<string> {
+async function callGemini(system: string, user: string, options: CallOptions = {}): Promise<string> {
   const key = process.env.GEMINI_API_KEY
   if (!key) throw new Error('no_key')
   const base = process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com'
-  const model = process.env.AGENT_MODEL || 'gemini-2.5-flash'
+  const model = options.model || process.env.AGENT_MODEL || 'gemini-2.5-flash'
   // Gemma 계열은 시스템 지침 필드를 받지 않으므로 지침을 사용자 글 앞에 붙인다.
   const body = model.startsWith('gemma')
     ? { contents: [{ role: 'user', parts: [{ text: `${system}\n\n${user}` }] }], generationConfig: { maxOutputTokens: 300 } }
@@ -53,7 +69,7 @@ async function callGemini(system: string, user: string): Promise<string> {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: AbortSignal.timeout(options.timeoutMs ?? TIMEOUT_MS),
   })
   if (!response.ok) throw new Error('upstream_' + response.status)
   const data = await response.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }
@@ -95,11 +111,27 @@ async function callGeminiLive(system: string, user: string): Promise<string> {
   })
 }
 
+/** 답을 화면 언어 자막으로 옮긴다. 실패하면 null(자막만 빠지고 답은 그대로 간다). */
+async function translateCaption(provider: string, answer: string, from: Lang, to: Lang): Promise<string | null> {
+  const system = captionPrompt(from, to)
+  const options: CallOptions = { timeoutMs: CAPTION_TIMEOUT_MS }
+  try {
+    const caption = provider === 'anthropic'
+      ? await callAnthropic(system, answer, { ...options, model: process.env.AGENT_CAPTION_MODEL })
+      // Live 모델은 일반 호출을 받지 않으므로 일반 모델로 옮긴다.
+      : await callGemini(system, answer, { ...options, model: process.env.AGENT_CAPTION_MODEL || (provider === 'gemini-live' ? 'gemini-2.5-flash' : undefined) })
+    return caption || null
+  } catch {
+    return null
+  }
+}
+
 export async function POST(request: Request) {
-  const body = await request.json().catch(() => null) as { question?: unknown; context?: unknown; lang?: unknown } | null
+  const body = await request.json().catch(() => null) as { question?: unknown; context?: unknown; lang?: unknown; captionLang?: unknown } | null
   const question = String(body?.question ?? '').trim().slice(0, MAX_QUESTION)
   const context = String(body?.context ?? '').slice(0, MAX_CONTEXT)
-  const lang: Lang = body?.lang === 'en' || body?.lang === 'ja' ? body.lang : 'ko'
+  const lang: Lang = asLang(body?.lang) ?? 'ko'
+  const captionLang = asLang(body?.captionLang)
   if (!question) return NextResponse.json({ error: 'empty_question' }, { status: 400 })
 
   const provider = process.env.AGENT_PROVIDER || (process.env.ANTHROPIC_API_KEY ? 'anthropic' : process.env.GEMINI_API_KEY ? 'gemini' : 'none')
@@ -110,7 +142,9 @@ export async function POST(request: Request) {
     const system = systemPrompt(lang)
     const answer = provider === 'anthropic' ? await callAnthropic(system, user) : provider === 'gemini-live' ? await callGeminiLive(system, user) : await callGemini(system, user)
     if (!answer) return NextResponse.json({ answer: null, provider, error: 'empty_answer' })
-    return NextResponse.json({ answer, provider })
+    if (!captionLang || captionLang === lang) return NextResponse.json({ answer, provider })
+    const caption = await translateCaption(provider, answer, lang, captionLang)
+    return NextResponse.json(caption ? { answer, caption, provider } : { answer, provider })
   } catch (error) {
     // 키·상위 응답 본문은 돌려주지 않는다. 화면은 규칙 기반 답으로 대신한다.
     return NextResponse.json({ answer: null, provider, error: error instanceof Error ? error.message : 'failed' }, { status: 502 })

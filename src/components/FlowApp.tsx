@@ -198,15 +198,16 @@ export default function FlowApp() {
   // 에이전트 질문: 화면의 현재 상태를 요약해 임시 백엔드(/api/agent)에 묻고, 답은 말로도 읽어 준다.
   const [question, setQuestion] = useState('')
   const [asking, setAsking] = useState(false)
-  const askContext = useRef({ migrationState, stage, lang: voiceLang })
-  askContext.current = { migrationState, stage, lang: voiceLang }
+  // captionLang: 화면 언어. 음성 언어와 다르면 답을 화면 언어 자막으로도 받는다(심사 화면은 일본어, 음성은 한국어 같은 경우).
+  const askContext = useRef({ migrationState, stage, lang: voiceLang, captionLang: lang })
+  askContext.current = { migrationState, stage, lang: voiceLang, captionLang: lang }
   askHandler.current = async (text: string) => {
     setAsking(true)
-    const { migrationState: current, stage: currentStage, lang: currentLang } = askContext.current
+    const { migrationState: current, stage: currentStage, lang: currentLang, captionLang } = askContext.current
     const facts = buildAgentFacts(current, currentStage, t(('stage.' + currentStage) as MsgKey))
-    const { answer, source } = await askAgent(text, facts, currentLang)
+    const { answer, source, caption } = await askAgent(text, facts, currentLang, captionLang)
     setAsking(false)
-    voice.speakText(answer, currentLang, source)
+    voice.speakText(answer, currentLang, source, caption)
   }
 
   // 자칼의 말: 미리 녹음한 한국어 문구는 녹음 파일로, 대상·개수가 들어간 문장과 다른 언어는 음성 합성으로 읽는다.
@@ -286,11 +287,11 @@ export default function FlowApp() {
   // 모든 단계의 음성 명령(다음·승인해·롤백해·지금 어디야 …)은 useStageVoice가 받는다. 설정 화면의 예전 시작 명령도 그대로 받는다.
   // "지금 어디야": 모델(AI)이 있으면 현재 상태를 보고 풀어서 답한다(없거나 실패하면 useStageVoice가 고정 문장으로 답한다).
   const askStatus = async (isStale: () => boolean) => {
-    const { migrationState: current, stage: currentStage, lang: currentLang } = askContext.current
+    const { migrationState: current, stage: currentStage, lang: currentLang, captionLang } = askContext.current
     const facts = buildAgentFacts(current, currentStage, t(('stage.' + currentStage) as MsgKey))
-    const { answer, source } = await askAgent(STATUS_QUESTION[currentLang], facts, currentLang)
+    const { answer, source, caption } = await askAgent(STATUS_QUESTION[currentLang], facts, currentLang, captionLang)
     if (isStale() || source !== 'model') return false
-    voice.speakText(answer, currentLang, source)
+    voice.speakText(answer, currentLang, source, caption)
     return true
   }
   const stageVoice = useStageVoice({ stage, lang: voiceLang, captionLang: lang, speaking: voice.speaking, lastLine: voice.message, speak: sayVoice, onSetupStart: () => setupStart.current?.(), askStatus })
