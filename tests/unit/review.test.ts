@@ -238,8 +238,8 @@ test('검토 게이트: 막힘 사유는 서버 문장이 아니라 등급·기�
 test('검토 게이트: 분석이 끝났는데 게이트가 아직이면 1초, 그 밖에는 2초마다 읽는다', () => {
   const analyzing = parseReview({ ...waitingConfirm, phase: 'ANALYZING', pending: null, items: [] })
   const waiting = parseReview(waitingConfirm)
-  assert.equal(reviewPollMs({ analysisDone: true, view: null }), 1000)
-  assert.equal(reviewPollMs({ analysisDone: true, view: analyzing }), 1000)
+  assert.equal(reviewPollMs({ analysisDone: true, view: null }), 300)
+  assert.equal(reviewPollMs({ analysisDone: true, view: analyzing }), 300)
   assert.equal(reviewPollMs({ analysisDone: true, view: waiting }), 2000)
   assert.equal(reviewPollMs({ analysisDone: false, view: null }), 2000)
   assert.equal(reviewPollMs({ analysisDone: false, view: analyzing }), 2000)

@@ -4,13 +4,13 @@
  * 단계 표시줄(z 20)·언어 버튼(z 40)·Jackal 위젯(z 55)보다 아래에 둬서 가리지 않는다.
  * 색은 회색 단계만 쓰고, 붉은색은 막힘·이전 중단의 글자색에만 쓴다.
  */
-.review-sheet{position:fixed;inset:0;z-index:15;display:flex;align-items:flex-start;justify-content:center;padding:clamp(56px,8vh,88px) clamp(16px,4vw,82px) 28px;overflow-y:auto;overscroll-behavior:contain;font-family:var(--font-sans);animation:review-sheet-in .28s ease both}
+.review-sheet{position:fixed;inset:0;z-index:15;display:flex;align-items:flex-start;justify-content:center;padding:clamp(56px,8vh,88px) clamp(16px,4vw,82px) 28px;overflow-y:auto;overscroll-behavior:contain;font-family:var(--font-sans);animation:review-sheet-in .16s ease both}
 .review-sheet.is-inline{background:linear-gradient(180deg,rgba(248,248,248,.74),rgba(248,248,248,.9) 40%);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
 .review-sheet.is-float{background:rgba(247,247,247,.94);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
 @keyframes review-sheet-in{from{opacity:0}to{opacity:1}}
 @keyframes review-rise{from{opacity:0;filter:blur(8px);transform:translateY(10px) scale(.985)}to{opacity:1;filter:blur(0);transform:none}}
 
-.review-panel.approval-panel{width:min(880px,100%);margin:auto 0;animation:review-rise .46s cubic-bezier(.16,1,.3,1) .04s both}
+.review-panel.approval-panel{width:min(880px,100%);margin:auto 0;animation:review-rise .26s cubic-bezier(.16,1,.3,1) both}
 .review-panel.approval-panel.has-aside{width:min(1280px,100%);display:grid;grid-template-columns:minmax(0,1.62fr) minmax(280px,.78fr);gap:32px;align-items:start}
 .review-main{min-width:0}
 
