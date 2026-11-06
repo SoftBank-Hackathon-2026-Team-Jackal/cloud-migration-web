@@ -39,13 +39,15 @@ const normalize = (value: string) => value.toLowerCase().replace(/[\s.,!?~·]/g,
 const recorded = new Set(RECORDED_CLIPS)
 const clipByText = new Map(Object.entries(voiceClips).filter(([id]) => recorded.has(id)).map(([id, text]) => [text, id]))
 
-export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWake, onStart, onIntent, onCommand, onAsk, onSay, onHeard }: {
+export function useVoiceGuide({ started, active, ask = false, lang = 'ko', recognitionLang, onWake, onStart, onIntent, onCommand, onAsk, onSay, onHeard }: {
   started: boolean
   active: boolean
   /** 시연이 시작된 뒤(첫 화면이 아닐 때): "헤이 자칼, …" 질문을 onAsk로 보낸다. */
   ask?: boolean
   /** 화면 언어: 음성 인식 언어와 말하는 언어 */
   lang?: 'ko' | 'en' | 'ja'
+  /** 알아듣는 언어(Chrome 음성 인식 언어). 없으면 lang과 같다. 말하는 언어와 따로 고를 수 있다. */
+  recognitionLang?: 'ko' | 'en' | 'ja'
   onWake: () => void
   onStart: () => void
   /** 호출 뒤 첫 화면에서 들은 말(이전 의도). 있으면 onStart 대신 이쪽으로 보낸다. */
@@ -96,14 +98,22 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
   const speakRef = useRef<((text: string) => void) | null>(null)
   const utterToken = useRef(0)
   const langRef = useRef(lang)
+  const recognitionLangRef = useRef(recognitionLang ?? lang)
+  // 명령을 처리하는 동안 자칼의 채팅 기록을 잠시 모아 두는 곳(사용자의 말이 먼저 남도록)
+  const chatHold = useRef<Array<() => void> | null>(null)
+  const emitSay = (text: string, meta: { kind: 'report' | 'answer'; source?: 'model' | 'local' }) => {
+    const emit = () => callbacksRef.current.onSay?.(text, meta)
+    if (chatHold.current) chatHold.current.push(emit); else emit()
+  }
 
   useEffect(() => { startedRef.current = started }, [started])
   useEffect(() => { callbacksRef.current = { onWake, onStart, onIntent, onCommand, onAsk, onSay, onHeard } }, [onWake, onStart, onIntent, onCommand, onAsk, onSay, onHeard])
   useEffect(() => { askRef.current = ask }, [ask])
   useEffect(() => {
     langRef.current = lang
-    if (recognitionRef.current) recognitionRef.current.lang = RECOGNITION_LANG[lang]
-  }, [lang])
+    recognitionLangRef.current = recognitionLang ?? lang
+    if (recognitionRef.current) recognitionRef.current.lang = RECOGNITION_LANG[recognitionLangRef.current]
+  }, [lang, recognitionLang])
   useEffect(() => { warmTts() }, [])
   useEffect(() => {
     activeRef.current = active
@@ -348,7 +358,7 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
     setMessage(text)
     setCaption(options?.caption ?? '')
     setUtterance(count => count + 1)
-    callbacksRef.current.onSay?.(text, { kind: 'report' })
+    emitSay(text, { kind: 'report' })
     utter(text, options?.lang ?? langRef.current, options)
   }, [utter])
 
@@ -359,7 +369,7 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
     setMessage(text)
     setCaption('')
     setUtterance(count => count + 1)
-    callbacksRef.current.onSay?.(text, { kind: 'answer', source })
+    emitSay(text, { kind: 'answer', source })
     utter(text, language)
   }, [utter])
 
@@ -414,7 +424,7 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
     }
     armAudio()
     const recognition = new Constructor()
-    recognition.lang = RECOGNITION_LANG[langRef.current]
+    recognition.lang = RECOGNITION_LANG[recognitionLangRef.current]
     recognition.continuous = false
     recognition.interimResults = false
     recognition.onresult = event => {
@@ -426,7 +436,14 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', onWak
       console.info('[jackal-voice]', JSON.stringify({ lang: recognition.lang, heard: transcript, woke }))
       // 호출 직후(띠링 → "네, 말씀하세요")에는 호출어 없이 말해도 다음 한 마디를 받는다.
       const armedNow = askRef.current && Date.now() < awakeUntil.current
-      if (callbacksRef.current.onCommand?.(transcript, { armed: armedNow })) { disarm(); callbacksRef.current.onHeard?.(transcript.trim()); return }
+      // 명령 응답이 사용자가 한 말보다 먼저 채팅에 남지 않게: 명령을 처리하는 동안의 채팅 기록은 모아 두었다가 사용자의 말을 먼저 남긴다.
+      chatHold.current = []
+      let handled = false
+      try { handled = callbacksRef.current.onCommand?.(transcript, { armed: armedNow }) ?? false } finally { /* 아래에서 비운다 */ }
+      const held = chatHold.current ?? []
+      chatHold.current = null
+      if (handled) { disarm(); callbacksRef.current.onHeard?.(transcript.trim()); held.forEach(emit => emit()); return }
+      held.forEach(emit => emit())
       if (askRef.current && callbacksRef.current.onAsk) {
         // 시연 중에는 호출어(헤이 자칼) 뒤의 말이나 호출 직후의 말만 질문으로 받는다.
         // 호출어만 말하면 띠링 소리와 "네, 말씀하세요"로 답하고 10초 동안 다음 한 마디를 기다린다.

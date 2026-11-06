@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import { RECORDED_CLIPS } from '../../src/lib/voiceRecorded.ts'
-import { isStartCommand, targetFromUtterance } from '../../src/lib/agent/intent.ts'
+import { isRecommendRequest, isStartCommand, targetFromUtterance } from '../../src/lib/agent/intent.ts'
 import { classifyEnv, crossCheck, envCounts, parseEnvKeys } from '../../src/lib/setup/envFile.ts'
 import { DEMO_SCAN, EXAMPLE_ENV } from '../../src/lib/setup/demoRepo.ts'
 import { detectStack, displayTree, runtimeFromDockerfile, scanPublicSource } from '../../src/lib/github/scan.ts'
@@ -161,4 +161,9 @@ test('녹음 목록은 public/voice의 mp3와 같고, 모두 voiceClips에 있�
   const files = readdirSync(new URL('../../public/voice/', import.meta.url)).filter(name => name.endsWith('.mp3')).map(name => name.replace(/\.mp3$/, '')).sort()
   assert.deepEqual([...RECORDED_CLIPS].sort(), files)
   for (const id of RECORDED_CLIPS) assert.ok(clips[id], 'not in voiceClips: ' + id)
+})
+
+test('대상 선택을 자칼에게 맡기는 말(추천해 줘 등)을 알아본다', () => {
+  for (const said of ['추천해 봐', '알아서 골라줘', '어디가 좋아?', 'Recommend one', 'You choose', 'おすすめは？', 'お任せします']) assert.equal(isRecommendRequest(said), true, said)
+  for (const said of ['GCP로 옮겨 줘', '지금 어디야', '다음 넘어가자']) assert.equal(isRecommendRequest(said), false, said)
 })
