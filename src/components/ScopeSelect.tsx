@@ -20,7 +20,7 @@ type Field = 'connection_id' | 'region' | 'cluster' | 'namespace' | 'workload'
 const LEVELS: Array<{ level: ScopeLevel; field: Exclude<Field, 'connection_id'> }> = [
   { level: 'regions', field: 'region' }, { level: 'clusters', field: 'cluster' }, { level: 'namespaces', field: 'namespace' }, { level: 'workloads', field: 'workload' },
 ]
-type Options = { status: 'idle' | 'loading' | 'ready' | 'error'; items: string[]; error?: ApiErrorCode }
+type Options = { status: 'idle' | 'loading' | 'ready' | 'error'; items: string[]; error?: ApiErrorCode; detail?: string | null }
 const IDLE: Options = { status: 'idle', items: [] }
 
 /**
@@ -67,7 +67,7 @@ export default function ScopeSelect({ sources, onConfirmed, onBack, actionRef, o
     for (const [key, value] of Object.entries(selection)) if (value) params.set(key, value)
     void api<{ options: string[] }>('/api/scope/options?' + params, { signal: controller.signal }).then(result => {
       if (controller.signal.aborted) return
-      if (!result.ok) { setOptions(current => ({ ...current, [level]: { status: 'error', items: [], error: result.error } })); return }
+      if (!result.ok) { setOptions(current => ({ ...current, [level]: { status: 'error', items: [], error: result.error, detail: result.detail } })); return }
       const items = result.data.options
       setOptions(current => ({ ...current, [level]: { status: 'ready', items } }))
       const preferred = field === 'region' ? source?.region : field === 'cluster' ? source?.eks_clusters?.[0] : undefined
@@ -143,7 +143,7 @@ export default function ScopeSelect({ sources, onConfirmed, onBack, actionRef, o
           field === 'region' ? value => value + ' · ' + tOr('region.' + value, value) : undefined))}
       </div>}
     {emptyLevel && <p className="setup2-note" role="status">{t(('scope.empty.' + emptyLevel.field) as 'scope.empty.cluster')}</p>}
-    {errorLevel && <p className="setup2-note is-alert" role="alert">{t(('cx.err.' + options[errorLevel.level].error) as 'cx.err.not_found')}</p>}
+    {errorLevel && <p className="setup2-note is-alert" role="alert">{tOr('cx.code.' + (options[errorLevel.level].detail ?? ''), '') || t(('cx.err.' + options[errorLevel.level].error) as 'cx.err.not_found')}{options[errorLevel.level].detail && <code className="scope-code">{options[errorLevel.level].detail}</code>}</p>}
     {analyzing && <div className="scope-progress" role="status"><i />{t('scope.analyzing', { workload: selection.workload ?? '' })}</div>}
     {analysis && <div className="scope-result">
       <div className="scope-sum">

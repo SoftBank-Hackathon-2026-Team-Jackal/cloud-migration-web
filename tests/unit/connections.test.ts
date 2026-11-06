@@ -347,3 +347,44 @@ test('관리 API 접근: 목업 모드이고 운영자 키가 없으면 로그�
   // 목업이어도 키가 있으면 실제 권한이므로 닫는다
   assert.equal(decideAccess({ mock: true, hasAdminKey: true, login: null, allowed: ['alice'] }), 'login_required')
 })
+
+// ---- 이전 범위 선택: 실제 API(Ticket 56) ----
+test('실제 범위 선택: 리전·클러스터·Namespace·워크로드·분석·확정이 플랫폼 경로를 부르고 웹 형태로 돌려준다', async () => {
+  const calls: { method: string; path: string; body: unknown }[] = []
+  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(String(input))
+    const method = init?.method ?? 'GET'
+    const body = init?.body ? JSON.parse(String(init.body)) : null
+    calls.push({ method, path: url.pathname + url.search, body })
+    const p = url.pathname
+    if (p === '/connections/c-src') return Response.json({ connection_id: 'c-src', kind: 'AWS_SOURCE', display_name: 's', region: 'us-west-2', status: 'CONNECTED' })
+    if (p === '/connections/c-src/eks-clusters') return Response.json({ connection_id: 'c-src', region: 'us-west-2', eks_clusters: ['prod-a'] })
+    if (p === '/connections/c-src/eks-clusters/prod-a/namespaces') return Response.json({ connection_id: 'c-src', region: 'us-west-2', cluster: 'prod-a', namespaces: ['demo-source'] })
+    if (p === '/connections/c-src/eks-clusters/prod-a/namespaces/demo-source/workloads') return Response.json({ workloads: [{ kind: 'Deployment', name: 'demo-api' }, { kind: 'StatefulSet', name: 'demo-db' }, { kind: 'StatefulSet', name: 'demo-api' }] })
+    if (p === '/connections/c-src/scope-analyses') return Response.json({ analysis_id: 'sa-1', selection: { connection_id: 'c-src', region: 'us-west-2', cluster: 'prod-a', namespace: 'demo-source', workload: 'demo-api', workload_kind: 'Deployment' }, candidates: [{ candidate_id: 'rds', resource_type: 'RDS', name: 'db', arn: null, evidence: [{ kind: 'CONFIG', location: 'env DB_HOST' }], suggested: true }] })
+    if (p === '/scope-analyses/sa-1/confirm') return Response.json({ scope_id: 'scope-1', analysis_id: 'sa-1', included: body.included, excluded: [], confirmed_at: '2026-11-06T00:00:00Z' })
+    if (p.endsWith('/namespaces') ) return Response.json({ detail: 'EKS_ACCESS_DENIED' }, { status: 409 })
+    if (p === '/scope-analyses/sa-x/confirm') return Response.json({ detail: 'INVALID_SCOPE' }, { status: 400 })
+    return Response.json({ detail: 'CONNECTION_NOT_FOUND' }, { status: 404 })
+  }) as typeof fetch
+  const api = createRealConnections({ base: 'http://platform.test', enrollmentAdminKey: KEY, fetchImpl })
+
+  const regions = await api.listScopeOptions('regions', { connection_id: 'c-src' })
+  assert.equal(regions[0], 'us-west-2')
+  assert.ok(regions.includes('ap-northeast-2') && new Set(regions).size === regions.length)
+  assert.deepEqual(await api.listScopeOptions('clusters', { connection_id: 'c-src', region: 'us-west-2' }), ['prod-a'])
+  assert.deepEqual(await api.listScopeOptions('namespaces', { connection_id: 'c-src', region: 'us-west-2', cluster: 'prod-a' }), ['demo-source'])
+  assert.deepEqual(await api.listScopeOptions('workloads', { connection_id: 'c-src', region: 'us-west-2', cluster: 'prod-a', namespace: 'demo-source' }), ['demo-api', 'demo-db'])
+  assert.ok(calls.some(c => c.path === '/connections/c-src/eks-clusters/prod-a/namespaces/demo-source/workloads?region=us-west-2'))
+
+  const analysis = await api.analyzeScope({ connection_id: 'c-src', region: 'us-west-2', cluster: 'prod-a', namespace: 'demo-source', workload: 'demo-api' })
+  assert.deepEqual(analysis.selection, { connection_id: 'c-src', region: 'us-west-2', cluster: 'prod-a', namespace: 'demo-source', workload: 'demo-api' })
+  assert.equal(analysis.candidates[0].candidate_id, 'rds')
+  assert.deepEqual(calls.at(-1), { method: 'POST', path: '/connections/c-src/scope-analyses', body: { region: 'us-west-2', cluster: 'prod-a', namespace: 'demo-source', workload: 'demo-api' } })
+  assert.equal((await api.confirmScope('sa-1', ['rds'])).scope_id, 'scope-1')
+
+  await assert.rejects(api.listScopeOptions('namespaces', { connection_id: 'c-src', region: 'us-west-2', cluster: 'other' }),
+    (error: PlatformError) => error.status === 409 && error.detail === 'EKS_ACCESS_DENIED')
+  await assert.rejects(api.confirmScope('sa-x', ['nope']), (error: PlatformError) => error.status === 400 && error.detail === 'INVALID_SCOPE')
+  await assert.rejects(api.listScopeOptions('regions', { connection_id: 'missing' }), (error: PlatformError) => error.status === 404 && error.detail === 'CONNECTION_NOT_FOUND')
+})

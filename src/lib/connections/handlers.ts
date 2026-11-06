@@ -163,7 +163,7 @@ export async function handleForget(_request: Request, deps: ConnectionsDeps, age
 }
 
 const LEVELS: ScopeLevel[] = ['regions', 'clusters', 'namespaces', 'workloads']
-// 클러스터 단계는 #23의 GET /connections/{id}/eks-clusters?region= 로 바꿔 끼울 자리다(지금은 목업 어댑터가 같은 값을 준다).
+// 실제 모드는 real.ts가 Ticket 56 API(eks-clusters → namespaces → workloads → scope-analyses)로, 목업 모드는 mockScope가 답한다.
 const NAME = /^[\w.\-:/]{1,128}$/
 const field = (value: unknown) => (typeof value === 'string' && NAME.test(value) ? value : undefined)
 

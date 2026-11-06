@@ -30,7 +30,7 @@ export function errorFor(status: number, detail: string | null): PlatformError {
   if (status === 403 || status === 401) return new PlatformError(403, 'operator_key')
   if (status === 404) return new PlatformError(404, 'not_found', detail)
   if (status === 409) return new PlatformError(409, 'conflict', detail)
-  if (status === 422 || status === 400) return new PlatformError(400, 'bad_request')
+  if (status === 422 || status === 400) return new PlatformError(400, 'bad_request', detail)
   if (status === 503) return new PlatformError(503, 'unavailable')
   return new PlatformError(502, 'platform_error')
 }

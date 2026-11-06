@@ -1,7 +1,6 @@
 import type { ConnectionsApi } from './adapter.ts'
-import { mockScope } from './mock.ts'
 import { call, PlatformError, type PlatformDeps } from './platform.ts'
-import type { ClusterList, Connection, ConnectionKind, ConnectionStatus, CreatedConnection, DeletedConnection, TunnelStatus, VerifyResult } from './types.ts'
+import { AWS_REGIONS, type ClusterList, type Connection, type ConnectionKind, type ConnectionStatus, type CreatedConnection, type DeletedConnection, type ScopeAnalysis, type ScopeConfirmation, type ScopeSelection, type TunnelStatus, type VerifyResult } from './types.ts'
 
 /**
  * 연결 관리의 실제 어댑터: 플랫폼 API(백엔드 Ticket 23, ADR-005)의 /connections를 웹 서버 안에서 부른다.
@@ -9,7 +8,7 @@ import type { ClusterList, Connection, ConnectionKind, ConnectionStatus, Created
  * - Launch Stack 링크(launch_stack_url)는 백엔드가 만든다. 백엔드에 템플릿 주소·플랫폼 주체 ARN이 설정되지 않았으면 null이다.
  * - 목록 응답(요약)에는 역할 ARN·External ID·마지막 코드가 없어서 연결마다 상세를 한 번 더 읽는다.
  * - EKS 클러스터 목록은 확인(verify) 결과를 웹 서버 메모리에 기억해 두고 쓴다. 목록을 새로 고칠 때마다 AWS를 부르지 않는다.
- * - 이전 범위 선택은 백엔드에 아직 없어서 목업(mockScope)이 답한다. 연결이 있고 확인됐는지만 실제 API로 본다.
+ * - 이전 범위 선택(Ticket 56): 리전은 연결 리전 + 지원 리전 목록, 그 아래(클러스터 → Namespace → 워크로드 → 후보 → 확정)는 플랫폼이 실제로 읽는다.
  */
 
 type Detail = {
@@ -116,6 +115,31 @@ export function createRealConnections(deps: PlatformDeps): ConnectionsApi {
         db_connect_ok: fresh ? tunnel.db_connect_ok : null,
       } satisfies TunnelStatus
     },
-    ...mockScope(async connectionId => toConnection(await detail(connectionId))),
+    async listScopeOptions(level, selection) {
+      const connectionId = selection.connection_id ?? ''
+      const base = '/connections/' + id(connectionId)
+      const region = selection.region ? '?region=' + id(selection.region) : ''
+      if (level === 'regions') {
+        // 리전 목록 API는 없다: 연결의 리전을 맨 앞에 두고 지원 리전을 잇는다(연결이 없으면 404).
+        const connection = await detail(connectionId)
+        return [...new Set([connection.region, ...AWS_REGIONS])]
+      }
+      if (level === 'clusters') return (await call<ClusterList>(deps, 'GET', base + '/eks-clusters' + region)).eks_clusters
+      const cluster = base + '/eks-clusters/' + id(selection.cluster ?? '')
+      if (level === 'namespaces') return (await call<{ namespaces: string[] }>(deps, 'GET', cluster + '/namespaces' + region)).namespaces
+      const list = await call<{ workloads: { kind: string; name: string }[] }>(deps, 'GET', cluster + '/namespaces/' + id(selection.namespace ?? '') + '/workloads' + region)
+      // 화면은 이름만 고른다. 같은 이름의 Deployment·StatefulSet이 있으면 백엔드가 Deployment를 먼저 고른다.
+      return [...new Set(list.workloads.map(workload => workload.name))]
+    },
+    async analyzeScope(selection) {
+      const result = await call<ScopeAnalysis & { selection: ScopeSelection & { workload_kind?: string } }>(deps, 'POST', '/connections/' + id(selection.connection_id) + '/scope-analyses',
+        { region: selection.region, cluster: selection.cluster, namespace: selection.namespace, workload: selection.workload })
+      // 웹 형태에 없는 workload_kind는 빼고 돌려준다.
+      const { connection_id, region, cluster, namespace, workload } = result.selection
+      return { analysis_id: result.analysis_id, selection: { connection_id, region, cluster, namespace, workload }, candidates: result.candidates }
+    },
+    async confirmScope(analysisId, included) {
+      return await call<ScopeConfirmation>(deps, 'POST', '/scope-analyses/' + id(analysisId) + '/confirm', { included })
+    },
   }
 }
