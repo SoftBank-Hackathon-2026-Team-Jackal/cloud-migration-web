@@ -4,7 +4,7 @@
  * - applied_defaults → changes의 같은 줄(유형·이름)에 defaulted 표시, 없으면 기본값 줄로 붙인다
  * - action READ·NO_CHANGE → 기존 사용(EXISTING: 대상에 이미 있는 것을 읽어 쓴다)
  * - warnings·errors·pending_decisions(ValidationIssue{code, path, message}) → PlanIssue(id = code, resource = path에서 찾은 리소스)
- * - Preview에 없는 PINNED·KEEP_SOURCE는 매핑에서 만든다: APP은 검증한 Digest가 있으면 Digest 고정,
+ * - Preview에 없는 PINNED·KEEP_SOURCE는 매핑에서 만든다: APP 본체(isAppBody)는 검증한 Digest가 있으면 Digest 고정,
  *   원본 유지(keep_source) 인프라 매핑 중 Preview에 같은 종류가 없는 것은 원본 유지 줄로 붙인다.
  * - env_remap·security_rules·source·target은 Preview에 없다(앱 Values·계획 입력). 감싸기에 없으면 비운다.
  */
@@ -14,6 +14,15 @@ const ID_OF_TYPE: Record<string, string> = { NETWORK: 'vpc', INGRESS: 'lb', CLUS
 const GROUP_OF_TYPE: Record<string, PlanResourceGroup> = { NETWORK: 'network', INGRESS: 'network', CLUSTER: 'compute', NODE: 'compute', APP: 'compute', DATABASE: 'data', STORAGE: 'other' }
 const KIND_OF_TYPE: Record<string, PlanNodeKind> = { NETWORK: 'network', INGRESS: 'ingress', CLUSTER: 'compute', NODE: 'compute', APP: 'compute', DATABASE: 'database', STORAGE: 'storage' }
 const GROUP_OF_KIND: Partial<Record<PlanNodeKind, PlanResourceGroup>> = { network: 'network', ingress: 'network', compute: 'compute', proxy: 'compute', database: 'data', cache: 'data', config: 'data' }
+
+/**
+ * APP 종류 중 앱 본체(이미지를 띄우는 줄)인가. Service·Secret 같은 부속 줄(예: "chat-app Service",
+ * "앱 환경변수 Secret chat-app-env 생성·갱신")은 이미지가 없으니 Digest 고정이 아니다. size에 이미지 Digest가 있으면 본체다.
+ */
+export function isAppBody(change: Pick<PreviewChange, 'name' | 'size'>): boolean {
+  if ((change.size ?? '').includes('@sha256:')) return true
+  return !/(?:^|\s)(?:Service|Secret|ConfigMap|Namespace|NetworkPolicy|PVC|Ingress)(?:\s|$)|\.env|\(EXCLUDED\)/.test(change.name ?? '')
+}
 
 function changeOf(action: string, type: string, pinned: boolean): PlanResource['change'] {
   if (action === 'DELETE') return 'DELETE'
@@ -35,7 +44,7 @@ function resourceOf(change: PreviewChange, id: string, pinned: boolean, defaulte
     detail: '',
     backend_name: change.name,
     size: quantity && quantity > 1 && size ? size + ' × ' + quantity : size || (quantity ? String(quantity) : ''),
-    change: changeOf(String(change.action), type, pinned),
+    change: changeOf(String(change.action), type, pinned && isAppBody(change)),
     resource_type: type,
     ...(quantity !== undefined ? { quantity } : {}),
     ...(defaulted ? { defaulted: true } : {}),

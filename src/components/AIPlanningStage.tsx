@@ -8,7 +8,7 @@ import { useT, useTOr, type MsgKey, type TranslateOr } from '../lib/i18n'
 import { ViewTabs } from './DiagramParts'
 import PlanTopology from './PlanTopology'
 import { issueText, placeText, stepText } from './planText'
-import { LEDGER_GROUPS, PLAN_MAX_REVEAL, SOURCE_FALLBACK, backendResourceTitle, costViewOf, infraScanState, ledgerGroupOf, mappingNotRunReason, planReveal, planSummary, planWarnings, targetEnvOf } from '../lib/migration/planModel'
+import { LEDGER_GROUPS, PLAN_MAX_REVEAL, SOURCE_FALLBACK, costViewOf, realLedger, type LedgerRow, type LedgerText, infraScanState, ledgerGroupOf, mappingNotRunReason, planReveal, planSummary, planWarnings, targetEnvOf } from '../lib/migration/planModel'
 import CostCompare from './CostCompare'
 import FixerEnvNotice from './FixerEnvNotice'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
@@ -31,32 +31,43 @@ function WarnDot({ label }: { label?: string }) {
 function Ledger({ preview, path, revealed, warnings, fixes, real }: { preview: PlanPreviewData; path: Target; revealed: number; warnings: PlanIssue[]; fixes: BuildFixData[]; real: boolean }) {
   const t = useT()
   const tOr = useTOr()
-  const groups = LEDGER_GROUPS.map(group => ({ group, rows: preview.resources.filter(resource => ledgerGroupOf(resource) === group) })).filter(item => item.rows.length > 0)
+  const warnOf = (ids: string[]) => warnings.find(issue => !!issue.resource && ids.includes(issue.resource))
+  // 실제 모드: 백엔드 name·size(긴 문장)를 짧은 이름·보조 줄·크기 칸으로 나누고, NetworkPolicy는 한 줄로 묶는다(planModel.realLedger).
+  // 목업 모드(또는 백엔드 name이 없는 줄): 화면 사전의 이름·설명을 그대로 쓴다.
+  const fromBackend = real && preview.resources.some(resource => !!resource.backend_name)
+  const own = (resource: PlanResource) => ({ name: resourceText(tOr, resource, path, 'name'), detail: resourceText(tOr, resource, path, 'detail') || resource.backend_name || '' })
+  const real_ = fromBackend ? realLedger(preview.resources, own) : null
+  const rows: LedgerRow[] = real_ ? real_.rows : preview.resources.map(resource => {
+    const { name, detail } = own(resource)
+    return { id: resource.id, ids: [resource.id], resource, title: name, full: name, sub: [detail], size: resource.size || '', chip: true, change: resource.change, defaulted: !!resource.defaulted }
+  })
+  const text = (value: LedgerText) => typeof value === 'string' ? value : tOr(value.key, '', value.params)
+  // 보안 규칙: Preview(앱 Values)에 있으면 그것을, 없으면 실제 모드 NetworkPolicy 줄에서 만든 규칙을 보인다.
+  const derivedRules = preview.security_rules.length === 0 ? real_?.rules ?? [] : []
+  const groups = LEDGER_GROUPS.map(group => ({ group, rows: rows.filter(row => ledgerGroupOf(row.resource) === group) })).filter(item => item.rows.length > 0)
   let index = 0
-  const warnOf = (id: string) => warnings.find(issue => issue.resource === id)
-  return <div className="plan-ledger-wrap" style={{ '--rows': preview.resources.length, '--groups': groups.length } as CSSProperties}>
+  return <div className="plan-ledger-wrap" style={{ '--rows': rows.length, '--groups': groups.length } as CSSProperties}>
     <table className="plan-ledger">
       <thead><tr><th scope="col">{t('plan.col.resource')}</th><th scope="col" className="is-num">{t('plan.col.size')}</th><th scope="col" className="is-change">{t('plan.col.change')}</th></tr></thead>
       {groups.map(({ group, rows }) => <tbody key={group}>
         <tr className="plan-ledger-group"><th scope="rowgroup" colSpan={3}>{t(('plan.group.' + group) as MsgKey)}</th></tr>
-        {rows.map(resource => {
+        {rows.map(row => {
           const order = index++
-          const warn = warnOf(resource.id)
-          // 실제 모드: 백엔드 name이 사람이 읽는 제목이다(화면 id·사전의 고정 설명은 실제와 다를 수 있다). 보조 줄은 리소스 종류.
-          const fromBackend = real && !!resource.backend_name
-          const name = fromBackend ? backendResourceTitle(resource.backend_name!) : resourceText(tOr, resource, path, 'name')
-          const detail = fromBackend ? tOr('plan.type.' + resource.resource_type, resource.resource_type ?? '') : resourceText(tOr, resource, path, 'detail') || resource.backend_name
-          const size = resource.size || '—'
-          return <tr key={resource.id} className={'plan-ledger-row plan-reveal' + (revealed > order ? ' is-visible' : '') + (resource.change === 'KEEP_SOURCE' ? ' is-keep' : '')}>
+          const warn = warnOf(row.ids)
+          const name = text(row.title)
+          const detail = row.sub.map(text).filter(Boolean).join(' · ')
+          const size = row.size || '—'
+          const sizeDetail = row.resource.size_detail
+          return <tr key={row.id} className={'plan-ledger-row plan-reveal' + (revealed > order ? ' is-visible' : '') + (row.change === 'KEEP_SOURCE' ? ' is-keep' : '')}>
             <th scope="row">
-              <span className="plan-cell-main"><span className="plan-cell-text" title={name}>{name}</span>{warn && <WarnDot label={t('plan.warnAria', { text: issueText(tOr, warn) })} />}</span>
-              <span className="plan-cell-sub">{detail}{resource.defaulted && <em className="plan-default">{t('plan.defaulted')}</em>}</span>
+              <span className="plan-cell-main"><span className="plan-cell-text" title={row.full || name}>{name}</span>{warn && <WarnDot label={t('plan.warnAria', { text: issueText(tOr, warn) })} />}</span>
+              <span className="plan-cell-sub" title={real_ ? detail : undefined}>{detail}{row.defaulted && <em className="plan-default" title={t('plan.defaultedHint')}>{t('plan.defaulted')}</em>}</span>
             </th>
-            <td className="is-num" title={resource.size_detail ? size + ' · ' + resource.size_detail : size}>
+            <td className="is-num" title={sizeDetail ? size + ' · ' + sizeDetail : size}>
               <span className="plan-cell-main">{size}</span>
-              {resource.size_detail && <span className="plan-cell-sub">{resource.size_detail}</span>}
+              {sizeDetail && <span className="plan-cell-sub">{sizeDetail}</span>}
             </td>
-            <td className="is-change"><span className={'plan-chip is-' + resource.change}>{t(('plan.change.' + resource.change) as MsgKey)}</span></td>
+            <td className="is-change">{row.chip && <span className={'plan-chip is-' + row.change}>{t(('plan.change.' + row.change) as MsgKey)}</span>}</td>
           </tr>
         })}
       </tbody>)}
@@ -79,6 +90,13 @@ function Ledger({ preview, path, revealed, warnings, fixes, real }: { preview: P
         <dl>{preview.security_rules.map((rule: SecurityRule, ruleIndex) => <div key={ruleIndex}>
           <dt>{rule.from === '*' && rule.to === '*' ? roleText(tOr, '*') : roleText(tOr, rule.from) + ' → ' + roleText(tOr, rule.to)}</dt>
           <dd>{rule.action === 'DENY' ? t('plan.rule.deny') : rule.port === null ? <span aria-label={t('plan.rule.allAria')}>*</span> : rule.port}</dd>
+        </div>)}</dl>
+      </details>}
+      {derivedRules.length > 0 && <details className="plan-well plan-well-fold" aria-labelledby="plan-well-sec">
+        <summary><h3 id="plan-well-sec">{t('plan.well.security')}</h3></summary>
+        <dl>{derivedRules.map((rule, ruleIndex) => <div key={ruleIndex} title={rule.full}>
+          <dt>{rule.deny ? roleText(tOr, '*') : rule.to ? rule.from + ' → ' + rule.to : rule.from}</dt>
+          <dd>{rule.deny ? t('plan.rule.deny') : rule.ports}</dd>
         </div>)}</dl>
       </details>}
       <section className="plan-well" aria-labelledby="plan-well-val">

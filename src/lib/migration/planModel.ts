@@ -197,3 +197,165 @@ export function infraScanState(mode: 'mock' | 'sse', analysis: Pick<MigrationSta
     || analysis.findings.some(update => update.stream === 'infrastructure')
   return collected ? 'done' : 'skipped'
 }
+
+/* ==== 실제 모드 대상 구성 표(Ledger) 줄 만들기 ====
+ * 백엔드 Preview의 name·size는 사람이 읽는 긴 문장이다. 표가 읽히도록 짧은 이름(제목)·설명(보조 줄)·크기 칸으로 나눈다.
+ * 모양을 모르는 문장은 예전처럼 그대로 제목에 둔다(안전한 기본). 목업 모드는 이 함수를 쓰지 않는다.
+ */
+
+/** 화면 문구: 그대로 보일 값이거나 사전 키(+값) */
+export type LedgerText = string | { key: string; params?: Record<string, string | number> }
+export type LedgerRow = {
+  /** 줄 key·경고를 찾는 리소스 id(묶은 줄은 첫 리소스) */
+  id: string
+  ids: string[]
+  resource: PlanResource
+  title: LedgerText
+  /** 제목 칸 툴팁(백엔드 원문) */
+  full: string
+  sub: LedgerText[]
+  size: string
+  /** false면 변경 칩을 붙이지 않는다(예: 외부 공개 없음 안내 줄) */
+  chip: boolean
+  change: PlanResource['change']
+  defaulted: boolean
+}
+/** 보안 규칙 칸 한 줄. deny는 기본 차단(그 외 전부 차단), ports는 "TCP 5432" 같은 프로토콜·포트 */
+export type LedgerRule = { from: string; to: string; ports: string; deny: boolean; full: string }
+
+const UUID = /\b([0-9a-f]{8})-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi
+/** 클러스터 UID 같은 긴 UUID는 앞 8자 + … */
+export function shortenIds(text: string): string {
+  return text.replace(UUID, '$1…')
+}
+
+/** 이미지 주소(레지스트리/저장소@sha256:…)를 짧게: 긴 레지스트리 호스트는 첫 마디만, Digest는 앞 12자 */
+export function shortImage(image: string): string {
+  const at = image.indexOf('@sha256:')
+  if (at < 0) return image
+  const repo = image.slice(0, at)
+  const digest = image.slice(at + 1).replace(/^sha256:/, '').replace(/[^0-9a-f].*$/i, '').slice(0, 12)
+  const slash = repo.indexOf('/')
+  const host = slash > 0 ? repo.slice(0, slash) : ''
+  const path = slash > 0 ? repo.slice(slash + 1) : repo
+  const shortHost = host.length > 24 && host.includes('.') ? host.split('.')[0] + '…' : host
+  return (shortHost ? shortHost + '/' : '') + path + '@sha256:' + digest
+}
+
+const SIZE_PART = /^(?:(?:CPU|vCPU|메모리|Memory|メモリ)\s+\S+|\d+(?:\.\d+)?\s?(?:GiB|MiB|TiB|GB|MB|TB))$/i
+/**
+ * size 문자열을 크기 칸(CPU·메모리·용량)과 나머지(보조 줄)로 나눈다. 이미지 주소는 짧게 줄여 보조 줄로 간다.
+ * 어댑터가 붙인 "× 개수"는 크기 칸에 남긴다.
+ */
+export function splitBackendSize(size: string): { size: string; extra: string[] } {
+  const raw = size.trim()
+  if (!raw || raw === '—') return { size: '', extra: [] }
+  const times = /\s×\s(\d+)$/.exec(raw)
+  const body = times ? raw.slice(0, times.index) : raw
+  const sizes: string[] = []
+  const extra: string[] = []
+  for (const piece of body.split(' · ').map(part => part.trim()).filter(Boolean)) {
+    if (piece.includes('@sha256:')) extra.push(shortImage(piece))
+    else if (SIZE_PART.test(piece)) sizes.push(piece)
+    else extra.push(piece)
+  }
+  const count = times ? '× ' + times[1] : ''
+  return { size: [sizes.join(' · '), count].filter(Boolean).join(' '), extra }
+}
+
+const KIND_TOKEN = /(?:^|\s)(Namespace|Secret|Service|Deployment|StatefulSet|ConfigMap|PVC)\s+([a-z0-9][a-z0-9.\-/]*)/
+const KIND_SUFFIX = /^([a-z0-9][a-z0-9.\-]*)\s+(Service|PVC|Deployment|StatefulSet)$/
+/** 한국어 조사(이름 바로 뒤에 붙은 가·를 등)를 떼어 남은 설명만 둔다 */
+const PARTICLE = /^(?:가|이|를|을|는|은|로|으로)(?=\s)/
+
+/**
+ * 백엔드 name을 짧은 이름(title)과 설명(rest)으로 나눈다. 모르는 모양이면 title = 원문(ok=false).
+ * - "Namespace cmp-app가 없으면 …" → "Namespace cmp-app" / "없으면 …"
+ * - "앱 환경변수 Secret chat-app-env 생성·갱신" → "Secret chat-app-env" / "앱 환경변수", "생성·갱신"
+ * - "기존 K3s <UID> · Agent a · Namespace n" → "기존 K3s <UID 8자>…" / "Agent a · Namespace n"
+ * - "대상 DB 출력 연결(REPLACED, secretKeyRef)" → "대상 DB 출력 연결" / "REPLACED, secretKeyRef"
+ * - "chat-app Service"·"chat-app"처럼 이미 짧은 이름은 그대로
+ */
+export function splitBackendName(name: string): { title: string; rest: string[]; ok: boolean } {
+  const text = shortenIds(name.trim())
+  if (KIND_SUFFIX.test(text) || /^[a-z0-9][a-z0-9.\-]*$/.test(text)) return { title: text, rest: [], ok: true }
+  if (text.includes(' · ')) {
+    const [head, ...tail] = text.split(' · ')
+    return { title: head.trim(), rest: [tail.join(' · ').trim()].filter(Boolean), ok: true }
+  }
+  const kind = KIND_TOKEN.exec(text)
+  if (kind) {
+    const start = kind.index + kind[0].indexOf(kind[1])
+    const prefix = text.slice(0, start).trim()
+    const after = text.slice(kind.index + kind[0].length).replace(PARTICLE, '').trim()
+    return { title: kind[1] + ' ' + kind[2], rest: [prefix, after].filter(Boolean), ok: true }
+  }
+  const paren = /^(.+?)\s*\(([^()]+)\)$/.exec(text)
+  if (paren) return { title: paren[1].trim(), rest: [paren[2].trim()], ok: true }
+  return { title: backendResourceTitle(text), rest: [], ok: false }
+}
+
+const NP_PREFIX = /^NetworkPolicy\s+/
+const NP_DENY = /^Namespace\s+기본\s+차단/
+/**
+ * NetworkPolicy 한 줄(백엔드 문장)을 보안 규칙 칸의 한 줄로. 예:
+ * "chat-app → chat-db TCP 5432 허용" → chat-app → chat-db · TCP 5432,
+ * "chat-db 자기 점검·복제 연결 TCP 5432 허용(수신은 자신만)" → chat-db 자기 점검·복제 연결 · TCP 5432,
+ * "Namespace 기본 차단(…)" → 그 외 전부 차단. 모양을 모르면 문장 전체를 출발 칸에 둔다.
+ */
+export function networkPolicyRule(name: string): LedgerRule {
+  const full = name.replace(NP_PREFIX, '').trim()
+  if (NP_DENY.test(full)) return { from: '*', to: '*', ports: '', deny: true, full }
+  const match = /^(.+?)\s+((?:UDP\/TCP|TCP\/UDP|TCP|UDP|SCTP))\s+(\d+(?:-\d+)?)\s+허용/.exec(full)
+  if (!match) return { from: full.replace(/\s*허용$/, ''), to: '', ports: '', deny: false, full }
+  const [from, to] = match[1].split(/\s+→\s+/)
+  return { from: from.trim(), to: (to ?? '').trim(), ports: match[2] + ' ' + match[3], deny: false, full }
+}
+
+/**
+ * 실제 모드 표의 줄과 보안 규칙. NetworkPolicy 줄은 "NetworkPolicy N개" 한 줄로 묶고, 각 규칙은 보안 규칙 칸으로 보낸다.
+ * 외부 공개가 없다는 진입 안내 줄은 "외부 진입" 줄의 보조 줄로 두고 변경 칩을 붙이지 않는다.
+ */
+export function realLedger(resources: PlanResource[], fallback: (resource: PlanResource) => { name: string; detail: string }): { rows: LedgerRow[]; rules: LedgerRule[] } {
+  const rows: LedgerRow[] = []
+  const policies = resources.filter(resource => resource.resource_type === 'NETWORK' && NP_PREFIX.test(resource.backend_name ?? ''))
+  const rules = policies.map(resource => networkPolicyRule(resource.backend_name!))
+  for (const resource of resources) {
+    if (policies.includes(resource)) {
+      if (resource !== policies[0]) continue
+      const allow = rules.filter(rule => !rule.deny).length
+      const deny = rules.some(rule => rule.deny)
+      rows.push({
+        id: resource.id, ids: policies.map(item => item.id), resource,
+        title: { key: 'plan.np.title', params: { n: policies.length } },
+        full: policies.map(item => item.backend_name).join('\n'),
+        sub: [{ key: deny ? 'plan.np.subDeny' : 'plan.np.sub', params: { n: allow } }],
+        size: '', chip: true, change: 'CREATE', defaulted: false,
+      })
+      continue
+    }
+    const name = resource.backend_name ?? ''
+    // 백엔드 이름이 없는 줄(매핑에서 만든 원본 유지 줄 등)은 화면 사전 문구를 그대로 쓴다
+    if (!name) {
+      const own = fallback(resource)
+      rows.push({ id: resource.id, ids: [resource.id], resource, title: own.name, full: own.name, sub: [own.detail], size: resource.size === '—' ? '' : resource.size, chip: true, change: resource.change, defaulted: !!resource.defaulted })
+      continue
+    }
+    const { size, extra } = splitBackendSize(resource.size ?? '')
+    const typeLabel: LedgerText = { key: 'plan.type.' + (resource.resource_type ?? '') }
+    // 진입이 없다는 안내(예: "외부 공개 없음; 클러스터 내부 Service만"): 진입 줄 하나로, 칩 없이
+    if (resource.resource_type === 'INGRESS' && resource.change === 'EXISTING' && /없음|\bnone\b|no (?:public|external)/i.test(name)) {
+      rows.push({ id: resource.id, ids: [resource.id], resource, title: typeLabel, full: name, sub: [name, ...extra], size, chip: false, change: resource.change, defaulted: !!resource.defaulted })
+      continue
+    }
+    const parsed = splitBackendName(name)
+    const sub = [...parsed.rest, ...extra]
+    rows.push({
+      id: resource.id, ids: [resource.id], resource,
+      title: parsed.title, full: name,
+      sub: sub.length > 0 ? sub : [typeLabel],
+      size, chip: true, change: resource.change, defaulted: !!resource.defaulted,
+    })
+  }
+  return { rows, rules }
+}
