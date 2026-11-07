@@ -1,0 +1,37 @@
+/* 샌드박스 화면의 레드팀 점검 패널. 흑백 바탕에 심각도·결과만 색이 붙는다. */
+.rt{margin-top:14px;padding:16px 18px;border:1px solid #e1e1e1;border-radius:16px;background:#fff;color:#202020}
+.rt-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px}
+.rt-head small{width:100%;color:#8a8a8a;font-size:10px;font-weight:650;letter-spacing:.1em}
+.rt-head strong{font-size:15px;font-weight:700;letter-spacing:-.01em}
+.rt-phase{margin-left:auto;padding:2px 9px;border-radius:999px;background:#f1f1f1;color:#555;font-size:11px;font-weight:600}
+.rt-consent{margin-top:10px;font-size:12px;color:#555}
+.rt-consent summary{cursor:pointer;font-weight:600;color:#333}
+.rt-lead{margin:10px 0 0;font-size:13px;line-height:1.55;color:#333}
+.rt-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px 18px;margin:12px 0 0}
+.rt-facts div{display:flex;flex-direction:column;gap:2px;padding:8px 0;border-top:1px solid #efefef}
+.rt-facts dt{color:#8a8a8a;font-size:11px;font-weight:600}
+.rt-facts dd{margin:0;font-size:13px;font-weight:600;word-break:break-all}
+.rt-note{margin:10px 0 0;color:#777;font-size:12px;line-height:1.5}
+.rt-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.rt-doing{display:flex;align-items:center;gap:8px;margin:12px 0 0;font-size:13px;font-weight:600}
+.rt-doing span{width:8px;height:8px;border-radius:50%;background:#111;animation:rt-pulse 1.1s ease-in-out infinite}
+@keyframes rt-pulse{0%,100%{opacity:.25;transform:scale(.8)}50%{opacity:1;transform:scale(1.15)}}
+@media(prefers-reduced-motion:reduce){.rt-doing span{animation:none}}
+.rt-findings{display:flex;flex-direction:column;gap:8px;margin:12px 0 0;padding:0;list-style:none}
+.rt-find{padding:10px 12px;border:1px solid #ececec;border-radius:12px;background:#fafafa}
+.rt-find p{margin:6px 0 0;font-size:13px;line-height:1.5}
+.rt-find details{margin-top:4px;font-size:12px;color:#666}
+.rt-find details summary{cursor:pointer}
+.rt-find details p{margin:4px 0 0;font-size:12px;color:#555}
+.rt-find-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.rt-find-top code{font-size:12px;color:#333}
+.rt-state{margin-left:auto;font-size:11px;font-weight:650;color:#555}
+.rt-find.is-fixed{opacity:.72}.rt-find.is-fixed .rt-state{color:#2e7d32}
+.rt-find.is-still_open .rt-state,.rt-find.is-open .rt-state{color:#9a6b00}
+.rt-sev{padding:1px 8px;border-radius:999px;font-size:11px;font-weight:700;background:#ececec;color:#444}
+.rt-sev.is-critical,.rt-sev.is-high{background:#fdeaea;color:#c62828}
+.rt-sev.is-medium{background:#fff3d6;color:#8a5a00}
+.rt-result{margin:12px 0 0;padding:10px 12px;border-radius:12px;font-size:13px;font-weight:600;line-height:1.5;background:#f4f4f4}
+.rt-result.is-clean,.rt-result.is-fixed{background:#eaf6ec;color:#256a2b}
+.rt-result.is-open{background:#fff3d6;color:#7a5200}
+.rt-result.is-error{background:#fdeaea;color:#a02020}

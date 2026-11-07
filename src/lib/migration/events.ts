@@ -620,6 +620,40 @@ export type SnapshotData = {
   events: MigrationEvent[]
 }
 
+/**
+ * [가정: 백엔드 계약 없음] 샌드박스 레드팀(능동 공격 검증). 시작할 때 받은 동의 범위와 실행 결과 `redteam`을
+ * 화면용으로 묶은 모양이다. 실제 연결 때 이벤트 계약(승철님 ADR-008)에 맞춰 바뀔 수 있다.
+ */
+export type RedTeamIntensity = 'PASSIVE' | 'ACTIVE'
+export type RedTeamSeverity = 'INFO' | 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
+export type RedTeamFindingState = 'OPEN' | 'FIXED' | 'STILL_OPEN'
+export type RedTeamFinding = { id: string; category: string; severity: RedTeamSeverity; endpoint: string; summary: string; repro_summary: string; state: RedTeamFindingState }
+/** 이전을 시작할 때 동의한 범위(값·비밀 없이 사실과 이름만). 중간에 다시 묻지 않는다. */
+export type RedTeamConsent = {
+  target: string
+  scope: string
+  intensity: RedTeamIntensity
+  time_budget_seconds: number
+  test_data_is_reset_afterwards: boolean
+  outside_calls_are_cut_meanwhile: boolean
+}
+export type RedTeamPhase = 'RUNNING' | 'FIXING' | 'DONE'
+export type RedTeamStatus = 'CLEAN' | 'FIXED' | 'OPEN' | 'STILL_OPEN' | 'SKIPPED' | 'ERROR'
+export type RedTeamData = {
+  phase: RedTeamPhase
+  /** 동의한 범위. 동의 없이 건너뛴 실행은 null */
+  consent: RedTeamConsent | null
+  /** 보안 수정 회차(기능 수정 횟수와 따로 센다) */
+  round: number
+  max_rounds: number
+  findings: RedTeamFinding[]
+  status: RedTeamStatus | null
+  /** 건너뜀·오류 사유(REDTEAM_DECLINED 등) */
+  code: string | null
+  /** 증거에 비밀이 남아 저장하지 않은 약점 수 */
+  withheld: number
+}
+
 type Base<Type extends string, Data> = {
   seq: number
   /** UTC ISO */
@@ -647,6 +681,7 @@ export type MigrationEvent =
   | Base<'sandbox.tests', SandboxTestsData>
   | Base<'sandbox.attempt', SandboxAttemptData>
   | Base<'sandbox.done', SandboxDoneData>
+  | Base<'sandbox.redteam', RedTeamData>
   | Base<'plan.ready', PlanReadyData>
   | Base<'plan.preview', PlanPreviewData | BackendPreviewData>
   | Base<'approval.required', ApprovalRequiredData>

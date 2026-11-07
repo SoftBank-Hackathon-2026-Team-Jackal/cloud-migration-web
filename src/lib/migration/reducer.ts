@@ -10,7 +10,7 @@ import type {
   ShadowProgressData, ShadowResultData,
   SandboxAttemptData, SandboxDoneData, SandboxEnvData, SandboxStep, SandboxStepData, SandboxTestsData,
 } from './events'
-import { isBackendPreview, normalizeEvidence } from './events.ts'
+import { isBackendPreview, normalizeEvidence, type RedTeamData } from './events.ts'
 import { adaptBackendPreview } from './previewAdapter.ts'
 import { markTime, type StepTime } from './sandboxProgress.ts'
 import { nextFlowStage } from './stageOf.ts'
@@ -48,7 +48,7 @@ export type MigrationState = {
   /** attempt: 지금 몇 번째 시도인지(build.check·build.result에서). review: 사람 검토 대기 */
   build: { checks: Record<string, BuildCheckData>; lastCheck: BuildCheckData | null; fixes: BuildFixData[]; attempt: number | null; result: BuildResultData | null; review: BuildReviewData | null; buildAt: StepTime | null }
   /** 샌드박스 검증 루프: steps[트랙 순번][단계], at: 단계별 시작·끝 시각(이벤트 at), attempts는 판정이 끝난 트랙들 */
-  sandbox: { env: SandboxEnvData | null; steps: Record<number, Partial<Record<SandboxStep, SandboxStepData['state']>>>; at: Record<number, Partial<Record<SandboxStep, StepTime>>>; tests: SandboxTestsData | null; attempts: SandboxAttemptData[]; done: SandboxDoneData | null }
+  sandbox: { env: SandboxEnvData | null; steps: Record<number, Partial<Record<SandboxStep, SandboxStepData['state']>>>; at: Record<number, Partial<Record<SandboxStep, StepTime>>>; tests: SandboxTestsData | null; attempts: SandboxAttemptData[]; done: SandboxDoneData | null; redteam: RedTeamData | null }
   /** preview: 계획 미리보기(만들 리소스·재매핑·보안 규칙·검증). 없으면 화면은 매핑 항목만 보인다. */
   /** backend: 백엔드 Preview 원본. 오면 preview는 이 값과 매핑·계획 완료 값으로 다시 만든다(previewAdapter). */
   plan: { steps: PlanStepData[]; ready: boolean; meta: PlanReadyData | null; preview: PlanPreviewData | null; backend: BackendPreviewData | null }
@@ -91,7 +91,7 @@ export const initialState: MigrationState = {
   flowStage: null,
   analysis: { findings: [], scans: [], done: false },
   build: { checks: {}, lastCheck: null, fixes: [], attempt: null, result: null, review: null, buildAt: null },
-  sandbox: { env: null, steps: {}, at: {}, tests: null, attempts: [], done: null },
+  sandbox: { env: null, steps: {}, at: {}, tests: null, attempts: [], done: null, redteam: null },
   plan: { steps: [], ready: false, meta: null, preview: null, backend: null },
   approval: { required: false, excluded: [], rollbackPolicy: '', pendingDecisions: [], cutoverRequired: false, decision: null },
   provision: { resources: [], checks: [] },
@@ -244,6 +244,8 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
       return { ...next, sandbox: { ...next.sandbox, tests: event.data } }
     case 'sandbox.attempt':
       return { ...next, build: { ...next.build, attempt: event.data.attempt }, sandbox: { ...next.sandbox, attempts: [...next.sandbox.attempts.filter(item => item.run !== event.data.run), event.data].sort((a, b) => a.run - b.run) } }
+    case 'sandbox.redteam':
+      return { ...next, sandbox: { ...next.sandbox, redteam: event.data } }
     case 'sandbox.done': {
       const sandbox = { ...next.sandbox, done: event.data }
       // 사람 검토로 멈춤: build.review가 따로 오지 않아도 검토 안내(수정 후 재시도·취소)를 띄운다.
