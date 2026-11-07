@@ -16,6 +16,7 @@ import './redteam.css'
 import './temporal-sidebar.css'
 import { I18nProvider } from '../lib/i18n'
 import TemporalSidebar from '../components/TemporalSidebar'
+import ToolsPanel from '../components/tools/ToolsPanel'
 
 export const metadata: Metadata = {
   title: 'Jackal Voice Migration Demo',
@@ -30,6 +31,6 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return <html lang="ko">
-    <body><I18nProvider>{children}</I18nProvider><TemporalSidebar /></body>
+    <body><I18nProvider>{children}<ToolsPanel /></I18nProvider><TemporalSidebar /></body>
   </html>
 }

@@ -1,5 +1,5 @@
 /* ── /settings 연결 관리: 흑백 원장(ledger) 카드. 금색은 통과, 빨강은 실패에만 ── */
-.cx-page,.cx-dialog,.tsb-tools{--cx-ink:#0a0a0a;--cx-muted:#6b6b6b;--cx-faint:#a3a3a3;--cx-border:#e6e6e6;--cx-rule:#efefef;--cx-gold:#b08a2e;--cx-gold-bg:#f6eedb;--cx-gold-ink:#6b5113;--cx-neg:#c4242a;--cx-neg-bg:#ffedea;--cx-neg-ink:#831c1e;--cx-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.cx-page,.cx-dialog,.tlp-body{--cx-ink:#0a0a0a;--cx-muted:#6b6b6b;--cx-faint:#a3a3a3;--cx-border:#e6e6e6;--cx-rule:#efefef;--cx-gold:#b08a2e;--cx-gold-bg:#f6eedb;--cx-gold-ink:#6b5113;--cx-neg:#c4242a;--cx-neg-bg:#ffedea;--cx-neg-ink:#831c1e;--cx-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .cx-page{position:fixed;inset:0;overflow-y:auto;background:#f7f7f7;color:var(--cx-ink);font-family:var(--font-sans);scrollbar-width:thin}
 .cx-top{position:sticky;top:0;z-index:5;height:56px;padding:0 clamp(16px,3vw,40px);display:flex;align-items:center;justify-content:space-between;background:rgba(247,247,247,.86);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
 .cx-top .lang-switch{position:static}
