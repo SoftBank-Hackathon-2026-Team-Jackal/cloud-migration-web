@@ -186,7 +186,12 @@ test('데이터 복제 진행 값(0~30초)이 스키마를 통과한다', () => 
   }
 })
 
-// ---- 데이터 이전 단계 상세 [가정] ----
+// ---- 데이터 이전 단계 상세 ----
+test('data.phase tunnel(원본 쪽 복제 통로를 여는 중, 플랫폼 #312)이 스키마를 통과하고 모르는 phase는 거부한다', () => {
+  assertValid(validateEvent, stamp({ type: 'data.phase', phase: 'data_copy', status: 'running', data: { phase: 'tunnel' } }), 'data.phase tunnel')
+  assert.equal(validateEvent(stamp({ type: 'data.phase', phase: 'data_copy', status: 'running', data: { phase: 'tunneling' } })), false, '모르는 phase')
+})
+
 test('데이터 이전 대본(사전 검사 3가지 × 대상)과 250ms 틱이 스키마를 통과한다', () => {
   const start = Date.UTC(2026, 10, 5, 9, 0, 0)
   for (const target of ['gcp', 'onprem'] as Target[]) {
