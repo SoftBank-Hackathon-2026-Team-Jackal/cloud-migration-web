@@ -36,16 +36,13 @@ export function renderReport(report: Report, lang: VoiceLang): string {
 /** 프론트 단계 → 백엔드 phase (events.ts의 PHASE_OF_STAGE와 같다. 런타임 import를 피하려고 다시 적는다) */
 const PHASE_OF: Record<string, BackendPhase> = {
   analysis: 'analysis', rehearsal: 'build', planning: 'planning', approval: 'awaiting_approval',
-  provisioning: 'provisioning', data: 'data_copy', traffic: 'traffic', cutover: 'verification',
+  provisioning: 'provisioning', data: 'data_copy', cutover: 'verification', traffic: 'traffic',
 }
-/** 단계 순서(lib/stages.ts의 STAGE_ORDER와 같다) */
-const STAGE_ORDER = ['intro', 'setup', 'analysis', 'rehearsal', 'planning', 'approval', 'provisioning', 'data', 'traffic', 'cutover'] as const
-/** 플랫폼 실제 순서(데이터 → DB 전환 → 트래픽 → 완료 리포트). lib/stages.ts의 DB_FIRST_ORDER와 같고, 끝은 완료 리포트다. */
-const DB_FIRST_NEXT: Partial<Record<string, string>> = { data: 'cutover', cutover: 'traffic', traffic: 'report' }
-/** 이 phase 다음 단계의 이름 키(stage.<다음>). 마지막이면 null. dbFirst: DB 전환 계획이 트래픽보다 먼저 왔다(실제 순서). */
-export function nextStageOf(phase: BackendPhase, dbFirst = false): string | null {
+/** 단계 순서(lib/stages.ts의 STAGE_ORDER와 같다: 데이터 복제 → DB 전환 → 트래픽 전환 → 완료 리포트). 런타임 import를 피하려고 다시 적는다. */
+const STAGE_ORDER = ['intro', 'setup', 'analysis', 'rehearsal', 'planning', 'approval', 'provisioning', 'data', 'cutover', 'traffic', 'report'] as const
+/** 이 phase 다음 단계의 이름 키(stage.<다음>). 마지막이면 null. */
+export function nextStageOf(phase: BackendPhase): string | null {
   const stage = Object.keys(PHASE_OF).find(key => PHASE_OF[key] === phase)
-  if (dbFirst && stage && DB_FIRST_NEXT[stage]) return 'stage.' + DB_FIRST_NEXT[stage]
   const index = stage ? STAGE_ORDER.indexOf(stage as typeof STAGE_ORDER[number]) : -1
   const next = index >= 0 ? STAGE_ORDER[index + 1] : undefined
   return next ? 'stage.' + next : null
@@ -80,6 +77,23 @@ const PREFLIGHT_PASS: Record<string, VoiceKey> = {
 const labelOf = (prefix: string, key: string, fallback?: string) => (prefix + key) in VOICE_MESSAGES.ko ? prefix + key : fallback || 'code:' + key
 
 /**
+ * 롤백 보고: 플랫폼이 판정 근거(kind)를 보냈으면 그 이유를 말하고, 없으면 예전처럼 "기준 초과"라고만 말한다.
+ * p99는 밀리초, 실패는 건수, 요청 부족은 본 요청 수를 말한다.
+ */
+function trafficRollbackReport(
+  notes: Array<{ key: string; params?: Record<string, string | number> }> | undefined,
+  make: (key: VoiceKey, kind: ReportKind, params?: VoiceParams) => Report,
+): Report {
+  const params = notes?.find(note => note.key === 'gateFail')?.params
+  switch (params?.kind) {
+    case 'p99': return make('r.traffic.rollbackP99', 'failure', { p: Number(params.p99_ms ?? 0) })
+    case 'failed': return make('r.traffic.rollbackFailed', 'failure', { n: Number(params.failed ?? 0) })
+    case 'requests': return make('r.traffic.rollbackRequests', 'failure', { n: Number(params.requests ?? 0) })
+    default: return make('r.traffic.rollback', 'failure')
+  }
+}
+
+/**
  * 이벤트를 보고로 바꾼다. 상태를 조금 기억한다(한 번만 말할 것, 스캔에서 찾은 것, 계획 요약, 승인 전 경고).
  * 지금 화면의 단계와 다른 phase의 이벤트(예: 승인 화면이 다시 받는 계획 이벤트)는 실패만 말한다.
  */
@@ -98,9 +112,6 @@ export class ReportEngine {
   private trafficStep = -1
   private trafficPhase = ''
   private gatesPassed = new Set<number>()
-  /** 트래픽 이벤트보다 DB 전환 계획·승인 요청이 먼저 왔는지(reducer의 cutover.dbFirst와 같은 규칙) */
-  private dbFirst = false
-  private trafficSeen = false
   private checksums: boolean[] = []
   writePauseMs: number | null = null
 
@@ -108,7 +119,6 @@ export class ReportEngine {
     this.once.clear(); this.milestone.clear(); this.found.clear(); this.tables.clear(); this.planSteps.clear()
     this.keepNames = []; this.secretEnv = 0; this.warnings = []
     this.lastAttempt = 0; this.trafficStep = -1; this.trafficPhase = ''; this.gatesPassed.clear(); this.checksums = []; this.writePauseMs = null
-    this.dbFirst = false; this.trafficSeen = false
   }
 
   /** 단계 화면을 다시 열어 그 단계를 처음부터 받을 때(목업의 resetPhase) */
@@ -162,11 +172,9 @@ export class ReportEngine {
 
   private read(event: MigrationEvent, at: number): Report[] {
     const phase = event.phase
-    if (event.type.startsWith('traffic.')) this.trafficSeen = true
-    if ((event.type === 'cutover.plan' || (event.type === 'approval.required' && event.data.gate === 'cutover')) && !this.trafficSeen) this.dbFirst = true
     const make = (key: VoiceKey, kind: ReportKind, params: VoiceParams = {}, extra: Partial<Report> = {}): Report => ({ key, params, kind, phase, at, ...extra })
     const ask = (key: VoiceKey, params: VoiceParams = {}) => {
-      const next = nextStageOf(phase, this.dbFirst)
+      const next = nextStageOf(phase)
       return make(key, 'complete', next ? { ...params, next } : params)
     }
     const scanDone = (stream: 'infrastructure' | 'code') => {
@@ -314,7 +322,7 @@ export class ReportEngine {
         const notes = event.data.notes ?? []
         if (state === 'rolledback') {
           // 안정화 구간에서 사람이 롤백했으면 "기준 초과" 대신 되돌린 사실을, DB까지 되돌렸으면 한 번 더 말한다.
-          if (previous !== 'rolledback') out.push(make(previous === 'stabilizing' ? 'r.traffic.rollbackManual' : 'r.traffic.rollback', 'failure'))
+          if (previous !== 'rolledback') out.push(previous === 'stabilizing' ? make('r.traffic.rollbackManual', 'failure') : trafficRollbackReport(event.data.notes, make))
           if (notes.some(note => note.key === 'dbRollback') && this.first(phase, 'dbRollback')) out.push(make('r.traffic.dbRollback', 'complete'))
           return out
         }
@@ -322,6 +330,9 @@ export class ReportEngine {
           if (previous !== 'stabilizing' && this.first(phase, 'stabilizing')) out.push(make('r.traffic.stabilizing', 'milestone'))
           return out
         }
+        // 사용자 트래픽이 없어 합성 요청으로 확인했으면 단계 안에서 한 번만 알린다.
+        const idle = event.data.notes?.find(note => note.key === 'idleProbe')
+        if (idle && this.first(phase, 'idleProbe')) out.push(make('r.traffic.idle', 'milestone', { n: Number(idle.params?.requests ?? 0) }, { series: 'idle:' + phase }))
         if (previous === 'rolledback') {
           this.trafficStep = -1; this.gatesPassed.clear()
           for (const key of ['done', 'stabilizing', 'dbRollback']) this.once.delete(phase + ':' + key)

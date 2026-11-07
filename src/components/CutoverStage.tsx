@@ -6,18 +6,17 @@ import ProposalTag from './ProposalTag'
 import CutoverDiagram, { CutoverQueue, type CutoverTopology, type CutoverView } from './CutoverDiagram'
 import CutoverTimeline, { formatMs, placeSteps, useReplay, type TraceStep } from './CutoverTimeline'
 import MigrationLanes from './MigrationLanes'
-import MigrationReport from './MigrationReport'
 import { ArriveMorph } from './ScreenFx'
 import { runTransition } from '../lib/particleHandoff'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
 import type { MigrationState } from '../lib/migration/reducer'
 import type { CutoverPlanData, CutoverStepData, CutoverStepPlan } from '../lib/migration/events'
-import { cutoverAfter, cutoverEntry, cutoverRunView, type CutoverRunView } from '../lib/migration/flow'
+import { canApproveCutover, cutoverEntry, cutoverGate, cutoverRunView, type CutoverRunView } from '../lib/migration/flow'
 import { useVoiceActions } from '../lib/voice/actions'
 import type { Target } from '../lib/stages'
 import { useT, useTOr, type MsgKey } from '../lib/i18n'
 
-type Phase = 'approve' | 'running' | 'done'
+type Phase = 'approve' | 'running'
 type RunView = CutoverRunView
 
 /** 받은 쓰기 중단 구간(몇 ms)을 화면에서 느리게 다시 보여 주는 시간. 표현용 값이며 데이터가 아니다. */
@@ -26,41 +25,41 @@ const REPLAY_MS = 3600
 const EMPTY_TOPOLOGY: CutoverTopology = { app: '—', pooler: '—', source_db: '—', target_db: '—', source_where: '—', target_where: '—', writes_per_sec: 0 }
 
 /**
- * onTraffic: DB 전환을 트래픽보다 먼저 한 경우(플랫폼 실제 순서) 전환 통과 뒤 "다음"이 가는 곳.
- * 트래픽을 마치고 다시 들어오면 바로 완료 리포트를, 트래픽 진행 중에 다시 들어오면 전환 결과를 보인다(flow.ts cutoverEntry).
+ * DB 전환(승인 2/2 → 쓰기 중단 구간 → 검증). 백엔드 순서대로 데이터 복제 뒤, 트래픽 전환 앞에 온다.
+ * 승인 버튼은 승인 요청(approval.required gate=cutover)이 와야 열린다. 전환이 통과하면 "트래픽 전환으로"(onTraffic).
+ * 다시 들어오면 전환이 시작됐거나 끝났을 때 전환 결과를, 아니면 승인 화면을 보인다(flow.ts cutoverEntry).
  */
-const ENTRY_PHASE: Record<ReturnType<typeof cutoverEntry>, Phase> = { approve: 'approve', run: 'running', report: 'done' }
-
-export default function CutoverStage({ target, onRestart, onComplete, onTraffic }: { target: Target; onRestart: () => void; onComplete: () => void; onTraffic: () => void }) {
+export default function CutoverStage({ target, onTraffic }: { target: Target; onTraffic: () => void }) {
   const t = useT()
   const { state } = useMigration()
-  const [phase, setPhase] = useState<Phase>(() => ENTRY_PHASE[cutoverEntry(state)])
+  const [phase, setPhase] = useState<Phase>(() => cutoverEntry(state) === 'approve' ? 'approve' : 'running')
   // 본문이 알려 주는 지금 상태(쓰기 중단 구간 재생이 끝나야 결과 제목으로 바뀐다).
   const [run, setRun] = useState<RunView>('wait')
   // 다시 시도할 때 승인 순간의 시도 번호. 새 시도(cutover.ready의 attempt)가 오기 전까지 지난 결과는 숨긴다.
   const [stale, setStale] = useState(0)
+  // 전환을 마친 뒤 롤백돼 승인 요청이 다시 오면 승인 화면으로 돌아간다(버튼이 다시 열린다).
+  const required = state.approval.cutoverRequired
+  const switchedBefore = state.cutover.outcome?.result === 'switched'
+  useEffect(() => { if (required && switchedBefore) setPhase('approve') }, [required, switchedBefore])
   const plan = state.cutover.plan
+  const gate = cutoverGate(state, false)
   const kicker = phase === 'approve' ? 'APPROVAL 2/2 · DB CUTOVER' : 'DB CUTOVER · VERIFY'
-  const title = phase === 'approve' ? t('cutover.approve.title') : t(('cut.title.' + run) as MsgKey)
+  const title = phase === 'approve' ? t(gate === 'waiting' ? 'cut.gate.waitTitle' : 'cutover.approve.title') : t(('cut.title.' + run) as MsgKey)
   const subtitle = phase === 'approve'
-    ? t('cutover.approve.lead', { pooler: plan?.topology.pooler ?? 'PgBouncer', target: plan?.topology.target_db ?? t('cut.d.target', { where: '' }) })
+    ? gate === 'waiting' ? t('cut.gate.waitLead') : t('cutover.approve.lead', { pooler: plan?.topology.pooler ?? 'PgBouncer', target: plan?.topology.target_db ?? t('cut.d.target', { where: '' }) })
     : t(('cut.sub.' + run) as MsgKey)
-  return <StageShell kicker={kicker} title={title} subtitle={subtitle} className="cx-stage" hideHeader={phase === 'done'}>
-    {ready => <CutoverBody ready={ready} target={target} phase={phase} setPhase={setPhase} onRestart={onRestart} onComplete={onComplete} onTraffic={onTraffic} stale={stale} onApproved={() => setStale(state.cutover.attempt)} onView={setRun} />}
+  return <StageShell kicker={kicker} title={title} subtitle={subtitle} className="cx-stage">
+    {ready => <CutoverBody ready={ready} target={target} phase={phase} setPhase={setPhase} onTraffic={onTraffic} stale={stale} onApproved={() => setStale(state.cutover.attempt)} onView={setRun} />}
   </StageShell>
 }
 
-type BodyProps = { ready: boolean; target: Target; phase: Phase; setPhase: (phase: Phase) => void; onRestart: () => void; onComplete: () => void; onTraffic: () => void; stale: number; onApproved: () => void; onView: (view: RunView) => void }
+type BodyProps = { ready: boolean; target: Target; phase: Phase; setPhase: (phase: Phase) => void; onTraffic: () => void; stale: number; onApproved: () => void; onView: (view: RunView) => void }
 
-function CutoverBody({ ready, target, phase, setPhase, onRestart, onComplete, onTraffic, stale, onApproved, onView }: BodyProps) {
-  const { state } = useMigration()
+function CutoverBody({ ready, target, phase, setPhase, onTraffic, stale, onApproved, onView }: BodyProps) {
   // 두 번째 승인(approveCutover) 전후의 전환 계획·단계·검증 이벤트를 읽는다.
   useStageFeed('verification', ready, target)
   if (phase === 'approve') return <><CutoverApproval onApprove={() => { onApproved(); setPhase('running') }} /><ArriveMorph key="cut-approve" /></>
-  if (phase === 'done') return <><MigrationReport target={target} onRestart={onRestart} /><ArriveMorph key="cut-done" /></>
-  // DB 전환을 먼저 했으면(실제 순서) 통과 뒤 트래픽으로, 아니면 완료 리포트로.
-  const next = cutoverAfter(state) === 'traffic' ? onTraffic : () => runTransition(() => { setPhase('done'); onComplete() })
-  return <><CutoverRun stale={stale} onView={onView} onRetry={() => setPhase('approve')} onNext={next} /><ArriveMorph key="cut-run" /></>
+  return <><CutoverRun stale={stale} onView={onView} onRetry={() => setPhase('approve')} onNext={onTraffic} /><ArriveMorph key="cut-run" /></>
 }
 
 /* ===================== 승인 2/2 ===================== */
@@ -74,10 +73,24 @@ function CutoverApproval({ onApprove }: { onApprove: () => void }) {
   const tOr = useTOr()
   const { state, provider } = useMigration()
   const [checked, setChecked] = useState(false)
+  // 승인을 보내는 중(중복 클릭 막음). 202면 진행 화면으로, 거절(409 CUTOVER_NOT_READY 등)이면 안내와 함께 다시 누를 수 있다.
+  const [sending, setSending] = useState(false)
   const plan = state.cutover.plan
   const allPass = !plan || plan.preconditions.every(item => item.state === 'pass')
-  // 음성: "승인해"는 전제 조건이 모두 통과했을 때만 받는다(체크도 함께 켠다).
-  useVoiceActions({ approve: allPass && (() => runTransition(() => { setChecked(true); provider.approveCutover(); onApprove() })) })
+  const gate = cutoverGate(state, sending)
+  const approveError = gate === 'rejected' ? state.requestErrors.cutover : undefined
+  const approveErrorText = useApproveErrorText()
+  const send = () => {
+    if (sending || !canApproveCutover(gate)) return
+    setSending(true)
+    void provider.approveCutover().then(accepted => {
+      setSending(false)
+      if (accepted) runTransition(onApprove)
+    })
+  }
+  const canSend = canApproveCutover(gate) && allPass
+  // 음성: "승인해"는 승인 요청이 왔고 전제 조건이 모두 통과했을 때만 받는다(체크도 함께 켠다).
+  useVoiceActions({ approve: canSend && (() => { setChecked(true); send() }) })
   const preview = timedTrace(plan?.steps ?? [], [], tOr)
   const topology = plan?.topology ?? EMPTY_TOPOLOGY
   const maxRehearsal = Math.max(1, ...(plan?.rehearsal.methods.map(item => item.pause_ms) ?? [1]))
@@ -125,13 +138,16 @@ function CutoverApproval({ onApprove }: { onApprove: () => void }) {
         </div>
       </section>}
 
-      <div className="cx-decide">
+      <div className="cx-decide" data-gate={gate}>
         <label className="approval-check">
           <input type="checkbox" checked={checked} onChange={event => setChecked(event.target.checked)} />
           <span>{t('cutover.approve.check')}</span>
         </label>
+        <p className="cx-gate-note" role={approveError ? 'alert' : 'status'}>
+          {approveError ? approveErrorText(approveError.detail) : t(('cut.gate.' + gate) as MsgKey)}
+        </p>
         <div className="approval-actions">
-          <button type="button" className="flow-primary" disabled={!checked || !allPass} onClick={() => runTransition(() => { provider.approveCutover(); onApprove() })}>{t('cutover.approve.go')} <span aria-hidden="true">→</span></button>
+          <button type="button" className="flow-primary" disabled={!checked || !canSend} aria-busy={sending} onClick={send}>{t(gate === 'sending' ? 'cut.gate.sendingBtn' : 'cutover.approve.go')} <span aria-hidden="true">→</span></button>
         </div>
       </div>
     </div>
@@ -224,9 +240,8 @@ function CutoverRun({ stale, onView, onRetry, onNext }: { stale: number; onView:
   const shownMs = stage === 'after' ? outcome?.pause_ms ?? null : stage === 'pause' && timed ? progress : null
   const dest = refused || stage !== 'after' ? topology.source_db : topology.target_db
 
-  // 완료(이전 끝) 또는 DB 전환을 먼저 해 트래픽이 남은 경우 "다음"을 연다.
-  const toTraffic = cutoverAfter(state) === 'traffic'
-  const finishedOk = view === 'done' && (state.status === 'done' || toTraffic)
+  // 전환·검증이 통과하면 "트래픽 전환으로"를 연다(트래픽은 DB 전환이 끝나야 시작한다).
+  const finishedOk = view === 'done'
   // 2차 승인 요청이 거절됐다(409 CUTOVER_NOT_READY·404·503): 이전은 계속 돈다. 전환이 시작되기 전이면 이 화면 안에서 알리고 다시 승인하게 한다.
   const approveError = view === 'wait' ? state.requestErrors.cutover : undefined
   const approveErrorText = useApproveErrorText()
@@ -268,10 +283,10 @@ function CutoverRun({ stale, onView, onRetry, onNext }: { stale: number; onView:
     <div className="cx-foot">
       <MigrationLanes stage="cutover" />
       <div className="flow-footer cx-go">
-        <small role={approveError ? 'alert' : undefined}>{approveError ? approveErrorText(approveError.detail) : refused ? t('cut.foot.refused') : view === 'mismatch' ? t('cut.foot.mismatch') : finishedOk ? t(toTraffic ? 'cut.foot.toTraffic' : 'cut.foot.done') : stage === 'after' ? t('cutover.foot.verify') : t('cutover.foot.running')}</small>
+        <small role={approveError ? 'alert' : undefined}>{approveError ? approveErrorText(approveError.detail) : refused ? t('cut.foot.refused') : view === 'mismatch' ? t('cut.foot.mismatch') : finishedOk ? t('cut.foot.toTraffic') : stage === 'after' ? t('cutover.foot.verify') : t('cutover.foot.running')}</small>
         {refused || approveError
           ? <button type="button" className="flow-primary" onClick={onRetry}>{t('cut.retry')} <span aria-hidden="true">→</span></button>
-          : <button type="button" className="flow-primary" disabled={!finishedOk} onClick={onNext}>{t(toTraffic ? 'cut.toTraffic' : 'cutover.next')} <span aria-hidden="true">→</span></button>}
+          : <button type="button" className="flow-primary" disabled={!finishedOk} onClick={onNext}>{t('cut.toTraffic')} <span aria-hidden="true">→</span></button>}
       </div>
     </div>
   </div>

@@ -145,6 +145,8 @@ export class SseProvider implements MigrationProvider {
     if (preflight === 'route' || preflight === 'unknown') query.set('preflight', preflight)
     const cutover = search.get('cutover')
     if (cutover && cutover !== 'fast' && ['classic', 'kill', 'tamper', 'tamper-classic'].includes(cutover)) query.set('cutover', cutover)
+    // 목업 서버 데모: 첫 DB 전환 승인을 409 CUTOVER_NOT_READY로 거절한다.
+    if (search.get('cutover_not_ready') === '1') query.set('cutover_not_ready', '1')
     const text = query.toString()
     return text ? '?' + text : ''
   }
@@ -260,7 +262,12 @@ export class SseProvider implements MigrationProvider {
    * DataMigrationWorkflow에 switchover 신호. 409 CUTOVER_NOT_READY(복제가 아직 streaming이 아님)·404·503은
    * 이전이 계속 도는 중이므로 전환 화면 안 오류로만 보인다(이전 전체를 실패로 바꾸지 않는다). 다시 승인할 수 있다.
    */
-  approveCutover() { void this.post('/approve?gate=cutover', undefined, { phase: 'verification', request: 'cutover' }) }
+  async approveCutover() {
+    const body = await this.post('/approve?gate=cutover', undefined, { phase: 'verification', request: 'cutover' })
+    if (body === undefined) return false
+    this.host.dispatch({ type: 'cutoverApproved' })
+    return true
+  }
   /** [확정: 학습용 뼈대] POST /migrations/{id}/cancel */
   cancel() { void this.post('/cancel') }
   /** [가정] 트래픽 롤백·재시도 경로는 정해지지 않았다. */

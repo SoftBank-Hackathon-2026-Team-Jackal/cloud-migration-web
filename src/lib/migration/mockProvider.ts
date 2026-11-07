@@ -68,7 +68,8 @@ export class MockProvider implements MigrationProvider {
     const keepResult = phase === 'analysis' && this.analysisDone
     // 분석 결과는 뒤 단계(계획)도, 샌드박스 결과(Fixer 수정·새 환경 변수)는 계획 화면도, 계획 결과(이미지 Digest·계획 버전)는 승인 화면도 읽으므로 화면을 떠나도 지우지 않는다.
     // 다른 단계는 떠날 때 비워 두었다가 다시 들어오면 처음부터 시작한다(들어올 때는 어느 단계든 위에서 비운다).
-    const clearOnLeave = phase !== 'analysis' && phase !== 'planning' && phase !== 'build'
+    // DB 전환 결과는 다음 트래픽 화면과 완료 리포트(쓰기 중단 시간)가 읽으므로 남긴다.
+    const clearOnLeave = phase !== 'analysis' && phase !== 'planning' && phase !== 'build' && phase !== 'verification'
     if (!keepResult) this.host.dispatch({ type: 'resetPhase', phase })
     switch (phase) {
       case 'analysis':
@@ -119,9 +120,10 @@ export class MockProvider implements MigrationProvider {
         break
       }
       case 'verification':
-        // 승인 화면이 읽을 전환 계획을 먼저 알린다. 두 번째 승인(approveCutover)이 있어야 전환을 시작한다. 승인 뒤의 대본은 여기서 정리한다.
+        // 백엔드와 같은 순서: 전환 계획 → DB 전환 승인 요청(gate=cutover). 두 번째 승인(approveCutover)이 있어야 전환을 시작한다. 승인 뒤의 대본은 여기서 정리한다.
         this.cutoverAttempt = 0
         this.emit({ type: 'cutover.plan', phase: 'verification', status: 'waiting', data: cutoverPlan(this.target, cutoverScenario()) })
+        this.emit({ type: 'approval.required', phase: 'verification', status: 'waiting', data: { excluded: [], rollback_policy: 'reverse_replication', gate: 'cutover' } })
         stop = () => { this.cutoverCancel?.(); this.cutoverCancel = null }
         break
     }
@@ -157,10 +159,12 @@ export class MockProvider implements MigrationProvider {
     this.buildPlay = this.play(this.scripted('build'))
   }
 
-  approveCutover() {
+  async approveCutover() {
     this.cutoverCancel?.()
     this.cutoverAttempt += 1
+    this.host.dispatch({ type: 'cutoverApproved' })
     this.cutoverCancel = this.play(cutoverRun(cutoverScenario(), this.cutoverAttempt, DATA_TABLES))
+    return true
   }
 
   cancel() { this.host.dispatch({ type: 'cancelled' }) }

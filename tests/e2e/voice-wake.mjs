@@ -8,7 +8,7 @@ try { ({ chromium } = require('playwright')) } catch { ({ chromium } = require('
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:3000'
 const ANSWER = { ko: /네, 말씀하세요/, en: /Yes\? I'm listening/, ja: /はい、どうぞ/ }
 const PHRASES = { ko: '헤이 자칼', en: 'hey jackal', ja: 'ヘイ ジャッカル' }
-const STAGES = ['setup', 'analysis', 'rehearsal', 'planning', 'approval', 'provisioning', 'data', 'traffic', 'cutover']
+const STAGES = ['setup', 'analysis', 'rehearsal', 'planning', 'approval', 'provisioning', 'data', 'cutover', 'traffic']
 
 const browser = await chromium.launch({ ...(process.env.CHROME ? { executablePath: process.env.CHROME } : process.env.PW_CHANNEL ? { channel: process.env.PW_CHANNEL } : {}), args: ['--autoplay-policy=no-user-gesture-required', '--ignore-certificate-errors'] })
 

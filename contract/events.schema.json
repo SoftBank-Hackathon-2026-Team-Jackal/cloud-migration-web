@@ -715,7 +715,8 @@
                   "drained",
                   "restart",
                   "finalized",
-                  "dbRollback"
+                  "dbRollback",
+                  "idleProbe"
                 ]
               },
               "params": {

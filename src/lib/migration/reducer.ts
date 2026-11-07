@@ -12,6 +12,8 @@ import type {
 import { isBackendPreview, normalizeEvidence } from './events.ts'
 import { adaptBackendPreview } from './previewAdapter.ts'
 import { markTime, type StepTime } from './sandboxProgress.ts'
+import { nextFlowStage } from './stageOf.ts'
+import type { Stage } from '../stages.ts'
 
 export const LAG_HISTORY_POINTS = 48
 /** 복제 지연 오실로스코프가 그리는 표본 수(data.lsn, 250ms마다 → 약 40초) */
@@ -37,6 +39,8 @@ export type MigrationState = {
   lastSeq: number
   /** 마지막으로 받은 이벤트의 phase(snapshot 제외). 다시 붙었을 때 어느 화면을 열지 고른다. */
   lastPhase: BackendPhase | null
+  /** 받은 이벤트 type으로 고른 화면(stageOf.ts). 다시 붙었을 때 어느 화면을 열지 고른다. phase와 달리 전환 뒤 data.phase로 되돌아가지 않는다. */
+  flowStage: Stage | null
   /** findings: 예전 방식(항목마다 한 건) · scans: 스캔 Activity가 끝날 때마다 한 건(백엔드 방식, 개수 묶음) */
   analysis: { findings: AnalysisFindingData[]; scans: AnalysisScanData[]; done: boolean }
   /** attempt: 지금 몇 번째 시도인지(build.check·build.result에서). review: 사람 검토 대기 */
@@ -64,8 +68,6 @@ export type MigrationState = {
   cutover: {
     doneSteps: number; verifying: boolean; results: CutoverResultData[]; handover: HandoverData[]
     plan: CutoverPlanData | null; ready: CutoverReadyData | null; steps: CutoverStepData[]; outcome: CutoverOutcomeData | null; tables: CutoverVerifyData[]; attempt: number
-    /** 트래픽 전에 DB 전환 계획·승인 요청이 왔는지(플랫폼 실제 순서: 데이터 → DB 전환 → 트래픽). 목업 대본은 트래픽 뒤라 false. */
-    dbFirst: boolean
   }
   report: ReportData | null
   failures: Partial<Record<BackendPhase, Failure>>
@@ -80,6 +82,7 @@ export const initialState: MigrationState = {
   connection: 'connected',
   lastSeq: 0,
   lastPhase: null,
+  flowStage: null,
   analysis: { findings: [], scans: [], done: false },
   build: { checks: {}, lastCheck: null, fixes: [], attempt: null, result: null, review: null, buildAt: null },
   sandbox: { env: null, steps: {}, at: {}, tests: null, attempts: [], done: null },
@@ -88,7 +91,7 @@ export const initialState: MigrationState = {
   provision: { resources: [], checks: [] },
   data: { current: null, lagHistory: [], verify: [], preflight: null, phase: null, lsn: null, lagTrace: [], tables: [], readiness: null },
   traffic: { snapshot: null, logs: [], logCounter: 0, ready: null, prepare: null, trace: [], startedAt: null, alert: null },
-  cutover: { doneSteps: 0, verifying: false, results: [], handover: [], plan: null, ready: null, steps: [], outcome: null, tables: [], attempt: 0, dbFirst: false },
+  cutover: { doneSteps: 0, verifying: false, results: [], handover: [], plan: null, ready: null, steps: [], outcome: null, tables: [], attempt: 0 },
   report: null,
   failures: {},
   requestErrors: {},
@@ -108,6 +111,8 @@ export type Action =
   | { type: 'approvalDecision'; data: ApprovalDecisionData }
   /** 공급자가 직접 알리는 실패(요청 실패, 이전을 찾을 수 없음 등) */
   | { type: 'fail'; error: ErrorData }
+  /** DB 전환 승인(POST /approve?gate=cutover)이 받아들여졌다(202): 승인 요청을 닫는다. 롤백 뒤 새 요청이 오면 다시 열린다. */
+  | { type: 'cutoverApproved' }
   /** error가 null이면 그 요청 오류를 지운다. */
   | { type: 'requestError'; key: RequestKey; error: ErrorData | null }
 
@@ -126,7 +131,9 @@ function addTrafficLogs(state: MigrationState, data: TrafficSnapshotData, at: st
   for (const note of data.notes ?? []) {
     if (note.key === 'restart') { logs = []; trace = []; continue }
     counter += 1
-    logs = [{ id: counter, at, key: note.key, params: note.params ?? {}, ...(note.activity ? { activity: note.activity } : {}) }, ...logs].slice(0, TRAFFIC_LOG_LIMIT)
+    // 롤백·합성 요청 기록에는 지금 단계(%)를 같이 넣는다(문구가 {pct}를 쓴다). 서버가 보낸 값이 있으면 그대로 둔다.
+    const withStep = note.key === 'gateFail' || note.key === 'idleProbe' ? { pct: data.step, ...(note.params ?? {}) } : (note.params ?? {})
+    logs = [{ id: counter, at, key: note.key, params: withStep, ...(note.activity ? { activity: note.activity } : {}) }, ...logs].slice(0, TRAFFIC_LOG_LIMIT)
   }
   // 관찰 중·판정 중의 p99 비율만 추이에 남긴다(가중치 적용 중에는 아직 관찰하지 않는다).
   if (data.phase === 'observing' || data.phase === 'gate') trace = [...trace, data.gate.p99_ratio].slice(-TRAFFIC_TRACE_POINTS)
@@ -180,11 +187,6 @@ function withPreview(plan: MigrationState['plan'], digest: string | null | undef
   return plan.backend ? { ...plan, preview: adaptBackendPreview(plan.backend, { steps: plan.steps, meta: plan.meta, digest }) } : plan
 }
 
-/** DB 전환 계획·승인 요청이 지금 오면 트래픽보다 먼저인지(한 번 true면 그대로). */
-function dbFirstAfter(state: MigrationState) {
-  return state.cutover.dbFirst || !(state.traffic.snapshot || state.traffic.prepare || state.traffic.ready)
-}
-
 const NON_FATAL_FAILED: ReadonlySet<MigrationEvent['type']> = new Set(['data.verify', 'cutover.verify'])
 
 function fail(state: MigrationState, phase: BackendPhase, failure: Failure): MigrationState {
@@ -197,6 +199,8 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
   // 일시 정지(승인 대기) 중이던 이전은 다음 이벤트가 오면 다시 진행 중이다.
   if (state.status === 'idle' || state.status === 'waiting') next = { ...next, status: 'running' }
   if (event.type !== 'snapshot' && event.phase && next.lastPhase !== event.phase) next = { ...next, lastPhase: event.phase }
+  const flowStage = nextFlowStage(next.flowStage, event)
+  if (flowStage !== next.flowStage) next = { ...next, flowStage }
   // 검증 표(data.verify·cutover.verify)의 failed는 그 표의 "불일치"다: 이전 전체 실패로 바꾸지 않는다(검증 결과 화면이 보인다).
   if (event.status === 'failed' && event.type !== 'error' && !NON_FATAL_FAILED.has(event.type)) {
     next = fail(next, event.phase, { code: event.type, message: event.message ?? '', retryable: false })
@@ -258,7 +262,8 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
       return { ...next, plan: withPreview({ ...next.plan, ready: true, meta: Object.keys(event.data).length > 0 ? event.data : next.plan.meta }, next.build.result?.digest) }
     case 'approval.required': {
       const data: ApprovalRequiredData = event.data
-      if (data.gate === 'cutover') return { ...next, status: 'waiting', approval: { ...next.approval, cutoverRequired: true }, cutover: { ...next.cutover, dbFirst: dbFirstAfter(next) } }
+      // DB 전환 승인 요청(처음, 또는 롤백 뒤 다시): 버튼을 연다. 지난 승인 거절 안내는 새 요청으로 끝난다.
+      if (data.gate === 'cutover') return { ...withoutRequestError(next, 'cutover'), status: 'waiting', approval: { ...next.approval, cutoverRequired: true } }
       const approval = { ...next.approval, required: true, excluded: data.excluded ?? [], rollbackPolicy: data.rollback_policy ?? '', pendingDecisions: (data.pending_decisions ?? []).map(issue => issue.code) }
       return { ...next, status: 'waiting', approval }
     }
@@ -313,13 +318,14 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
     case 'traffic.alert':
       return { ...next, traffic: { ...next.traffic, ...addAlertLog(next, event.data, event.at), alert: event.data.state === 'breach' ? event.data : null } }
     case 'cutover.plan':
-      return { ...next, cutover: { ...next.cutover, plan: event.data, dbFirst: dbFirstAfter(next) } }
+      return { ...next, cutover: { ...next.cutover, plan: event.data } }
     case 'cutover.ready': {
       // 새 시도(attempt가 바뀜)면 지난 시도의 단계·결과·검증·인계를 비운다. 계획은 남긴다.
       const fresh = event.data.attempt !== next.cutover.attempt
-      const base = fresh ? { ...initialState.cutover, plan: next.cutover.plan, dbFirst: next.cutover.dbFirst } : next.cutover
-      // 전환이 시작됐으면 지난 2차 승인 요청 오류는 끝난 것이다.
-      return { ...withoutRequestError(next, 'cutover'), cutover: { ...base, ready: event.data, attempt: event.data.attempt } }
+      const base = fresh ? { ...initialState.cutover, plan: next.cutover.plan } : next.cutover
+      // 전환이 시작됐으면 승인 요청과 지난 2차 승인 요청 오류는 끝난 것이다.
+      const started = withoutRequestError(next, 'cutover')
+      return { ...started, approval: { ...started.approval, cutoverRequired: false }, cutover: { ...base, ready: event.data, attempt: event.data.attempt } }
     }
     case 'cutover.step': {
       const { n, state: stepState } = event.data
@@ -401,6 +407,10 @@ export function reducer(state: MigrationState, action: Action): MigrationState {
       return { ...state, status: 'cancelled' }
     case 'approvalDecision':
       return { ...state, approval: { ...state.approval, decision: mergeDecision(state.approval.decision, action.data) } }
+    case 'cutoverApproved': {
+      const accepted = withoutRequestError(state, 'cutover')
+      return { ...accepted, approval: { ...accepted.approval, cutoverRequired: false } }
+    }
     case 'requestError':
       return action.error ? { ...state, requestErrors: { ...state.requestErrors, [action.key]: action.error } } : withoutRequestError(state, action.key)
     case 'fail':
