@@ -4,12 +4,16 @@
  *   ANTHROPIC_API_KEY, AGENT_MODEL(기본 claude-haiku-5-5), ANTHROPIC_BASE_URL(시험용)
  *   GEMINI_API_KEY, AGENT_MODEL(기본 gemini-2.5-flash), GEMINI_BASE_URL(시험용)
  *   gemini-live: Gemini Live(웹소켓)로 묻고, 오디오는 버리고 "출력 전사"(말한 내용의 글)만 답으로 쓴다. 모델은 AGENT_MODEL(기본 gemini-3.8-live)
+ * PLATFORM_AGENT_URL(예: http://api:8000)이 있으면 먼저 플랫폼 서버(POST /agent/ask, 비용 장부·긴급 중지 적용)에 묻고, 못 받으면 아래 직접 경로로 대신한다.
+ * Accept: text/event-stream이면 진행 신호(status)와 함께 SSE로, 아니면 예전처럼 JSON 한 번으로 답한다.
  * 요청: { question, context, lang, captionLang? }. context는 화면이 만든 "현재 상태 요약"(비밀값 없음).
  * 자막: captionLang이 lang과 다르면(예: 음성 한국어, 화면 일본어) 답을 화면 언어로 한 번 더 옮겨 caption으로 돌려준다.
  *   번역은 같은 제공자의 일반(비 Live) 모델로 한다. gemini-live는 AGENT_CAPTION_MODEL(기본 gemini-2.5-flash)을 쓴다.
  *   번역이 실패하거나 AGENT_CAPTION_TIMEOUT_MS(기본 8000)를 넘으면 caption 없이 답만 돌려준다(답을 막지 않는다).
  */
 import { NextResponse } from 'next/server'
+import { askPlatform, type AgentInput } from '@/lib/agent/platform'
+import { sseBlock } from '@/lib/agent/sse'
 
 const MAX_QUESTION = 300
 const MAX_CONTEXT = 6000
@@ -126,6 +130,51 @@ async function translateCaption(provider: string, answer: string, from: Lang, to
   }
 }
 
+type Outcome =
+  | { kind: 'ok'; answer: string; caption?: string; provider: string }
+  | { kind: 'none' }
+  | { kind: 'failed'; provider: string; error: string; status: number }
+
+/** 예전 경로: 웹 서버가 제공자에게 직접 묻는다(플랫폼이 못 답할 때의 대비이기도 하다). */
+async function askDirect(question: string, context: string, lang: Lang, captionLang: Lang | null, onStatus: (step: string) => void): Promise<Outcome> {
+  const provider = process.env.AGENT_PROVIDER || (process.env.ANTHROPIC_API_KEY ? 'anthropic' : process.env.GEMINI_API_KEY ? 'gemini' : 'none')
+  if (provider !== 'anthropic' && provider !== 'gemini' && provider !== 'gemini-live') return { kind: 'none' }
+  const user = `현재 상태:
+${context || '(없음)'}
+
+질문: ${question}`
+  try {
+    const system = systemPrompt(lang)
+    onStatus('asking_model')
+    const answer = provider === 'anthropic' ? await callAnthropic(system, user) : provider === 'gemini-live' ? await callGeminiLive(system, user) : await callGemini(system, user)
+    if (!answer) return { kind: 'failed', provider, error: 'empty_answer', status: 200 }
+    if (!captionLang || captionLang === lang) return { kind: 'ok', answer, provider }
+    onStatus('translating')
+    const caption = await translateCaption(provider, answer, lang, captionLang)
+    return { kind: 'ok', answer, provider, ...(caption ? { caption } : {}) }
+  } catch (error) {
+    // 키·상위 응답 본문은 돌려주지 않는다. 화면은 규칙 기반 답으로 대신한다.
+    return { kind: 'failed', provider, error: error instanceof Error ? error.message : 'failed', status: 502 }
+  }
+}
+
+/** 플랫폼 서버가 설정돼 있으면 먼저 거기에 묻고(비용 장부·긴급 중지 적용), 못 받으면 예전 경로로 대신한다. */
+async function answer(input: AgentInput, onStatus: (step: string) => void): Promise<Outcome> {
+  const base = process.env.PLATFORM_AGENT_URL
+  if (base) {
+    const result = await askPlatform(base, input, status => onStatus(status.step))
+    if (result) return { kind: 'ok', ...result }
+    onStatus('fallback')
+  }
+  return askDirect(input.question, input.context, input.lang, input.captionLang, onStatus)
+}
+
+const jsonOf = (outcome: Outcome) => {
+  if (outcome.kind === 'none') return NextResponse.json({ answer: null, provider: 'none' })
+  if (outcome.kind === 'failed') return NextResponse.json({ answer: null, provider: outcome.provider, error: outcome.error }, { status: outcome.status === 200 ? 200 : outcome.status })
+  return NextResponse.json({ answer: outcome.answer, provider: outcome.provider, ...(outcome.caption ? { caption: outcome.caption } : {}) })
+}
+
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null) as { question?: unknown; context?: unknown; lang?: unknown; captionLang?: unknown } | null
   const question = String(body?.question ?? '').trim().slice(0, MAX_QUESTION)
@@ -133,20 +182,25 @@ export async function POST(request: Request) {
   const lang: Lang = asLang(body?.lang) ?? 'ko'
   const captionLang = asLang(body?.captionLang)
   if (!question) return NextResponse.json({ error: 'empty_question' }, { status: 400 })
+  const input: AgentInput = { question, context, lang, captionLang: captionLang && captionLang !== lang ? captionLang : null }
 
-  const provider = process.env.AGENT_PROVIDER || (process.env.ANTHROPIC_API_KEY ? 'anthropic' : process.env.GEMINI_API_KEY ? 'gemini' : 'none')
-  if (provider !== 'anthropic' && provider !== 'gemini' && provider !== 'gemini-live') return NextResponse.json({ answer: null, provider: 'none' })
+  // 진행 신호(분석 중…)를 받겠다는 요청이면 SSE로, 아니면 예전처럼 JSON 한 번.
+  if (!(request.headers.get('accept') ?? '').includes('text/event-stream')) return jsonOf(await answer(input, () => {}))
 
-  const user = `현재 상태:\n${context || '(없음)'}\n\n질문: ${question}`
-  try {
-    const system = systemPrompt(lang)
-    const answer = provider === 'anthropic' ? await callAnthropic(system, user) : provider === 'gemini-live' ? await callGeminiLive(system, user) : await callGemini(system, user)
-    if (!answer) return NextResponse.json({ answer: null, provider, error: 'empty_answer' })
-    if (!captionLang || captionLang === lang) return NextResponse.json({ answer, provider })
-    const caption = await translateCaption(provider, answer, lang, captionLang)
-    return NextResponse.json(caption ? { answer, caption, provider } : { answer, provider })
-  } catch (error) {
-    // 키·상위 응답 본문은 돌려주지 않는다. 화면은 규칙 기반 답으로 대신한다.
-    return NextResponse.json({ answer: null, provider, error: error instanceof Error ? error.message : 'failed' }, { status: 502 })
-  }
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (event: string, payload: unknown) => controller.enqueue(encoder.encode(sseBlock(event, payload)))
+      send('status', { step: 'reading_state' })
+      try {
+        const outcome = await answer(input, step => send('status', { step }))
+        if (outcome.kind === 'ok') send('answer', { answer: outcome.answer, provider: outcome.provider, ...(outcome.caption ? { caption: outcome.caption } : {}) })
+        else send('answer', { answer: null, provider: outcome.kind === 'none' ? 'none' : outcome.provider })
+      } finally {
+        send('done', {})
+        controller.close()
+      }
+    },
+  })
+  return new Response(stream, { headers: { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache, no-transform', 'x-accel-buffering': 'no' } })
 }

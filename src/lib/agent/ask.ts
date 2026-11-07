@@ -1,5 +1,6 @@
 import { factsToText, type AgentFacts } from './context'
 import { answerLocally, type AgentLang } from './mock'
+import { readSse } from './sse.ts'
 
 /** caption: 화면 언어 자막(음성 언어와 화면 언어가 다를 때만). */
 export type AgentAnswer = { answer: string; source: 'model' | 'local'; caption?: string }
@@ -13,17 +14,27 @@ const REQUEST_TIMEOUT_MS = 50000
  * captionLang(화면 언어)이 lang(음성 언어)과 다르면 화면 언어 자막도 받는다. 모델 답은 서버가 옮기고,
  * 규칙 기반 답은 같은 규칙으로 화면 언어 문장을 한 번 더 만든다.
  */
-export async function askAgent(question: string, facts: AgentFacts, lang: AgentLang, captionLang?: AgentLang): Promise<AgentAnswer> {
+export async function askAgent(question: string, facts: AgentFacts, lang: AgentLang, captionLang?: AgentLang, onStatus?: (step: string) => void): Promise<AgentAnswer> {
   const wantCaption = captionLang && captionLang !== lang ? captionLang : undefined
   try {
     const response = await fetch('/api/agent', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      // 진행 신호(분석 중… 같은 표시)를 받으려고 스트림을 요청한다. 서버가 예전 방식(JSON)으로 답해도 그대로 읽는다.
+      headers: { 'content-type': 'application/json', accept: 'text/event-stream, application/json' },
       body: JSON.stringify({ question, context: factsToText(facts), lang, ...(wantCaption ? { captionLang: wantCaption } : {}) }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
     if (response.ok) {
-      const data = await response.json() as { answer?: string | null; caption?: string | null }
+      let data: { answer?: string | null; caption?: string | null } = {}
+      if ((response.headers.get('content-type') ?? '').includes('text/event-stream') && response.body) {
+        await readSse(response.body, ({ event, data: payload }) => {
+          const body = (payload ?? {}) as { step?: unknown; answer?: unknown; caption?: unknown }
+          if (event === 'status' && typeof body.step === 'string') onStatus?.(body.step)
+          else if (event === 'answer') data = { answer: typeof body.answer === 'string' ? body.answer : null, caption: typeof body.caption === 'string' ? body.caption : null }
+        })
+      } else {
+        data = await response.json() as typeof data
+      }
       if (data.answer) return { answer: data.answer, source: 'model', ...(wantCaption && data.caption ? { caption: data.caption } : {}) }
     }
   } catch { /* 네트워크 실패·시간 초과: 아래 규칙 기반 답으로 */ }
