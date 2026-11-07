@@ -1,0 +1,37 @@
+/* 시연용 Tools 화면(/tools). 연결 관리(settings.css)의 cx-* 틀을 그대로 쓰고 필요한 것만 더한다. */
+.tools-card{gap:14px}
+.tools-h2{margin:0;font:600 16px/1.3 var(--font-sans)}
+.tools-current{margin:0;font:600 13px/1.4 var(--cx-mono);color:var(--cx-neg-ink)}
+.tools-field{margin:0;padding:0;border:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.tools-field legend{float:left;margin-right:6px;min-width:72px;color:var(--cx-muted);font:500 12px/32px var(--font-sans)}
+.tools-option{height:32px;padding:0 13px;display:inline-flex;align-items:center;border:1px solid rgba(0,0,0,.14);border-radius:999px;background:#fff;font:500 12.5px/1 var(--font-sans);cursor:pointer}
+.tools-option input{position:absolute;opacity:0;pointer-events:none}
+.tools-option.is-on{border-color:#111;background:#111;color:#fff}
+.tools-option:has(input:focus-visible){outline:2px solid #444;outline-offset:2px}
+.tools-actions{display:flex;gap:8px}
+.tools-danger{background:var(--cx-neg)}
+.tools-danger:hover:not(:disabled){background:#a51d22}
+.tools-age{color:var(--cx-muted)}
+.tools-age b{color:var(--cx-neg-ink);font-weight:600}
+.tools-sides{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tools-side{padding:12px 14px;border:1px solid var(--cx-border);border-radius:12px;display:grid;gap:8px}
+.tools-side>small{color:var(--cx-muted);font:600 12px/1 var(--font-sans)}
+.tools-side dl{margin:0;display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.tools-side dt{color:var(--cx-muted);font:400 11.5px/1.2 var(--font-sans)}
+.tools-side dd{margin:3px 0 0;font:600 18px/1.2 var(--cx-mono);font-variant-numeric:tabular-nums}
+.tools-side.is-bad{border-color:var(--cx-neg);background:var(--cx-neg-bg)}
+.tools-side.is-bad dd{color:var(--cx-neg-ink)}
+.tools-trend{margin:0;display:grid;gap:6px}
+.tools-trend figcaption{color:var(--cx-muted);font:500 12px/1 var(--font-sans)}
+.tools-bars{height:56px;display:flex;align-items:flex-end;gap:2px;border-bottom:1px solid var(--cx-rule)}
+.tools-bar{flex:1;height:100%;display:flex;align-items:flex-end;gap:1px}
+.tools-bar i{flex:1;min-height:0;border-radius:2px 2px 0 0}
+.tools-bar i.is-origin{background:#9a9a9a}
+.tools-bar i.is-target{background:var(--cx-neg)}
+@media (max-width:640px){.tools-sides{grid-template-columns:1fr}.tools-field legend{float:none;width:100%;line-height:1.4}}
+
+/* 데모 화면의 "장애 주입 중" 배지 */
+.fault-badge{position:fixed;left:50%;bottom:16px;z-index:60;transform:translateX(-50%);height:30px;padding:0 13px;display:inline-flex;align-items:center;gap:7px;border-radius:999px;background:#c4242a;color:#fff;font:600 12.5px/1 var(--font-sans);text-decoration:none;box-shadow:0 6px 20px rgba(196,36,42,.35)}
+.fault-badge i{width:7px;height:7px;border-radius:50%;background:#fff;animation:fault-blink 1.2s ease-in-out infinite}
+@keyframes fault-blink{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.fault-badge i{animation:none}}

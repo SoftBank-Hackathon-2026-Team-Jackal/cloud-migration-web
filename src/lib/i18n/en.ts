@@ -1,9 +1,11 @@
 import type { MsgKey } from './ko'
 import { connEn } from './connections.ts'
+import { toolsEn } from './tools.ts'
 
 export const en: Record<MsgKey, string> = {
   // 연결 관리·이전 범위 선택(connections.ts)
   ...connEn,
+  ...toolsEn,
   "nav.back": "Back",
   "nav.backAria": "Back to the previous step",
   "lang.aria": "Language",
