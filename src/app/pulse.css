@@ -1,0 +1,26 @@
+/* 서버 맥박 위젯: 오른쪽 위, 자칼 알약 왼쪽. 알약과 같은 높이·유리 느낌, 흑백에 오류 때만 색이 붙는다. */
+.pulse{position:fixed;z-index:40;top:10px;right:300px;display:flex;align-items:center;gap:10px;height:34px;padding:0 14px 0 8px;border:1px solid rgba(255,255,255,.92);border-radius:999px;background:rgba(255,255,255,.88);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);box-shadow:0 8px 26px rgba(0,0,0,.1);color:#202020;font:600 12px/1 var(--font-sans-jp,inherit);font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:auto;--run:1.4s}
+.pulse small{margin-right:5px;color:#8a8a8a;font-size:10px;font-weight:600;letter-spacing:.02em}
+.pulse-mem{display:inline-flex;align-items:center}
+.pulse-mem i{display:block;width:34px;height:6px;border-radius:999px;background:#e4e4e4;overflow:hidden}
+.pulse-mem b{display:block;height:100%;border-radius:999px;background:#202020;transition:width .6s ease}
+.pulse-err{display:inline-flex;align-items:center}
+.pulse.is-warn{border-color:#d9a400}.pulse.is-warn .pulse-err{color:#9a6b00}
+.pulse.is-bad{border-color:#c62828}.pulse.is-bad .pulse-err,.pulse.is-bad .pulse-cpu{color:#c62828}.pulse.is-bad .pulse-mem b{background:#c62828}
+
+.pulse-jackal{width:36px;height:21px;overflow:visible;fill:#202020;stroke:#202020;stroke-width:1;stroke-linejoin:round;stroke-linecap:round}
+.pj-leg{stroke-width:1.9}
+.pulse.is-bad .pulse-jackal{fill:#c62828;stroke:#c62828}
+.pj-body{animation:pj-bob var(--run) ease-in-out infinite}
+.pj-leg{transform-box:fill-box;transform-origin:50% 0}
+.pj-a{animation:pj-swing var(--run) ease-in-out infinite}
+.pj-b{animation:pj-swing var(--run) ease-in-out infinite;animation-delay:calc(var(--run) / -2)}
+@keyframes pj-swing{0%,100%{transform:rotate(-38deg)}50%{transform:rotate(38deg)}}
+@keyframes pj-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-1.2px)}}
+.pulse.is-idle .pj-body,.pulse.is-idle .pj-a,.pulse.is-idle .pj-b{animation:none}
+@media(prefers-reduced-motion:reduce){.pj-body,.pj-a,.pj-b{animation:none}}
+
+/* 자칼 알약이 언어 전환 아래로 내려가는 폭에서는 그 자리(언어 전환 왼쪽)로 옮긴다 */
+@media(max-width:1180px){.pulse{right:196px}}
+@media(max-width:760px){.pulse{gap:8px;padding:0 10px 0 6px}.pulse small{display:none}}
+@media(max-width:620px){.pulse-mem{display:none}}

@@ -28,6 +28,7 @@ import { pathOf, type Target as SetupTarget } from '../lib/migration/events'
 import { useVoiceGuide } from '../lib/useVoiceGuide'
 import { buildAgentFacts } from '../lib/agent/context'
 import { askAgent } from '../lib/agent/ask'
+import PulseWidget from './PulseWidget'
 import { AGENT_STEP_KEYS } from '../lib/agent/steps'
 import { FoldIcon, MicIcon, SpeakerIcon } from './JackalIcons'
 import { isRecommendRequest, isStartCommand, targetFromUtterance } from '../lib/agent/intent'
@@ -503,6 +504,7 @@ export default function FlowApp() {
     <div className={'flow-toast' + (notice ? ' is-on' : '')} role="status" aria-hidden={!notice}>{t('nav.noBack')}</div>
     <ConnectionToast />
     <LangSwitch />
+    <PulseWidget />
     {exited && <StageRail stage={stage} dbFirst={migrationState.cutover.dbFirst} complete={stage === 'cutover' && cutoverEntry(migrationState) === 'report'} />}
     {demoPanel && <DemoControls stage={stage} target={target} onJump={jump} onTarget={setTarget} />}
     <aside className={'jv is-' + jvStatus + (voice.awake ? ' is-awake' : '') + (chatOpen ? ' is-open' : '') + (stage === 'intro' ? ' is-intro' : '')} aria-label={t('agent.title')}>
