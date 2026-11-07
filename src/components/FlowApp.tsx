@@ -36,6 +36,7 @@ import VoiceHints from './VoiceHints'
 import VoiceCaption from './VoiceCaption'
 import ReviewGatePanel, { useReviewGate } from './ReviewGatePanel'
 import { showReviewPanel } from '../lib/migration/review'
+import { analysisWait, showMappingSheet } from '../lib/migration/analysisWait'
 import { browserSession, clearMigration, readMigration, saveMigration, stageForPhase } from '../lib/migration/session'
 
 // 실제 환경을 바꾸기 전(입력~승인)까지만 이전 단계로 돌아갈 수 있다. 승인 이후는 되돌림이 아니라 롤백 정책을 따른다.
@@ -395,6 +396,10 @@ export default function FlowApp() {
   const pastAnalysis = lastPhase !== null && lastPhase !== 'analysis'
   const reviewActive = mode === 'sse' && !!migrationState.migrationId && !pastAnalysis && !['done', 'failed', 'cancelled'].includes(migrationState.status)
   const review = useReviewGate(reviewActive, migrationState.analysis.done)
+  // 매핑 구간(analysis.done 뒤 게이트가 아직): 분석 화면은 '기능 매핑 중' 한 줄로, 다른 화면(샌드박스 등)에서는 같은 자리에 뼈대 검토 화면을 띄운다.
+  const reviewMapping = showMappingSheet({ active: reviewActive, dismissed: review.dismissed, stage,
+    wait: analysisWait({ mode, done: migrationState.analysis.done, view: review.view, known: review.known, past: pastAnalysis }) })
+  const reviewShown = reviewMapping || (!!review.view && showReviewPanel({ mode, stage, view: review.view }))
 
   const presenterKeys = useRef({ stage, listen: () => {}, intent: () => {}, pick: (_: SetupTarget) => {} })
   presenterKeys.current = {
@@ -487,7 +492,7 @@ export default function FlowApp() {
       onComplete={() => sayVoice(voiceText(voiceLang, 'r.migration.done'), voiceLang !== lang ? voiceText(lang, 'r.migration.done') : undefined)}
       onRestart={() => jump('intro')} />}
     <StatusPanel stage={stage} onHome={() => jump('intro')} onSetup={() => jump('setup')} />
-    {review.view && showReviewPanel({ mode, stage, view: review.view }) && <ReviewGatePanel view={review.view} onView={review.setView} inline={stage === 'analysis'}
+    {reviewShown && <ReviewGatePanel view={review.view} mapping={reviewMapping} since={review.doneAt} onView={review.setView} inline={stage === 'analysis'}
       onHome={() => { review.dismiss(); jump('intro') }} onSetup={() => { review.dismiss(); jump('setup') }} />}
     <TransitionLayer />
     {backTo && !dissolving && <BackButton onBack={goBack} />}

@@ -119,3 +119,25 @@
   .review-sheet,.review-panel.approval-panel{animation:none}
   .review-seg button{transition:none}
 }
+
+/* 기능 매핑 중(뼈대): 같은 시트·같은 짜임에 줄만 회색 막대로. 단계는 일의 순서이고 어느 단계인지 꾸며 보이지 않는다. */
+.review-progress{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;margin-top:16px;padding:11px 14px;border-radius:14px;background:#efefef}
+.review-progress ol{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:0;padding:0;list-style:none}
+.review-progress li{display:flex;align-items:center;gap:7px;color:#3d3d3d;font-size:12.5px;font-weight:550}
+.review-progress li+li::before{content:'→';margin-right:3px;color:#a3a3a3;font-weight:400}
+.review-progress li i{flex:none;width:7px;height:7px;border:1.3px solid #5c5c5c;border-radius:50%;animation:review-step-pulse 1.8s ease-in-out infinite}
+.review-progress li:nth-child(2) i{animation-delay:.6s}
+.review-progress li:nth-child(3) i{animation-delay:1.2s}
+.review-elapsed{color:#6b6b6b;font-size:12px;font-variant-numeric:tabular-nums}
+@keyframes review-step-pulse{0%,100%{background:transparent}50%{background:#5c5c5c}}
+.review-skel{display:block;height:10px;border-radius:999px;background:linear-gradient(90deg,#ececec 0%,#f6f6f6 45%,#ececec 90%) 0 0/200% 100%;animation:review-shimmer 1.4s linear infinite}
+.review-skel.is-name{width:min(170px,70%);height:12px}
+.review-skel.is-sub{width:min(260px,90%);margin-top:6px;height:8px}
+.review-skel.is-chip{width:74px;height:20px}
+.review-skel.is-seg{width:168px;height:36px}
+.review-skel.is-out{width:96px}
+.review-sec.is-skeleton li{padding:12px 0 11px}
+.review-sec.is-skeleton .review-skel{background-image:linear-gradient(90deg,#e2e2e2 0%,#ececec 45%,#e2e2e2 90%)}
+@keyframes review-shimmer{from{background-position:100% 0}to{background-position:-100% 0}}
+@media(max-width:760px){.review-ledger.is-skeleton .review-skel.is-seg{grid-column:1/2}.review-skel.is-seg{width:150px}}
+@media(prefers-reduced-motion:reduce){.review-skel,.review-progress li i{animation:none}}

@@ -226,7 +226,7 @@ export default function AnalysisStage({ target, review = NO_REVIEW, onAdvance, o
   // 검토 패널은 FlowApp이 어느 화면에서든 띄운다.
   const finished = analysisFinished({ mode, done: analysisDone, streamsFull: infraStatus.percent === 100 && codeStatus.percent === 100, ...review })
   // analysis.done 뒤 매핑 중이거나 검토를 기다리는 구간(실제 모드만). 멈춘 것처럼 보이지 않게 진행 중인 한 줄과 문구로 보인다.
-  const wait = analysisWait({ mode, done: analysisDone, finished, view: review.view })
+  const wait = analysisWait({ mode, done: analysisDone, view: review.view, known: review.known, past: review.pastAnalysis })
   useEffect(() => { if (finished) onComplete?.() }, [finished, onComplete])
   useVoiceActions({ next: finished && ready && !proceed && (() => setProceed(true)) })
   // 피드: 스캔이 오면 스캔 요약, 아니면 예전 항목. 근거는 Evidence.kind로 같은 칩을 쓴다.
@@ -329,7 +329,7 @@ export default function AnalysisStage({ target, review = NO_REVIEW, onAdvance, o
       </aside>
     </div>
     <div className="analysis-next-area">
-      <span data-particle-target="text">{finished ? t('analysis.footer.done') : wait === 'review' ? t('analysis.footer.review') : wait === 'mapping' ? t('analysis.footer.mapping') : t('analysis.footer.run')}</span>
+      <span data-particle-target="text">{wait === 'review' ? t('analysis.footer.review') : wait === 'mapping' ? t('analysis.footer.mapping') : finished ? t('analysis.footer.done') : t('analysis.footer.run')}</span>
       <button type="button" disabled={!finished || !ready || proceed} onClick={() => setProceed(true)}>{t('analysis.next')} <span aria-hidden="true">→</span></button>
     </div>
     {leaving && handoff && <div className="analysis-handoff" aria-hidden="true">

@@ -151,6 +151,13 @@ const phaseRunners = {
   async analysis(record) {
     const items = timelineFor('analysis', context(record))
     await play(record, items)
+    // 실제 플랫폼처럼 analysis.done 뒤 매핑(MOCK_REVIEW_DELAY_MS)을 거쳐 검토 게이트에서 멈추고, 승인되어야 샌드박스로 간다.
+    // 막히면 다음 단계로 가지 않는다.
+    if (REVIEW_GATE) {
+      const review = reviewOf(record)
+      if (review.phase === 'ANALYZING') review.startedAt = Date.now()
+      while (reviewOf(record).phase !== 'APPROVED') await new Promise(resolve => setTimeout(resolve, 200))
+    }
   },
   async build(record) {
     // 데모(?review=1): 처음 빌드는 3번 실패하고 사람 검토를 기다린다. POST …/sandbox/retry 뒤에는 이전 빌드를 재사용해 성공한다.
@@ -300,7 +307,7 @@ function openStream(req, res, record) {
 // ---- 분석 검토 게이트(플랫폼 GET|POST /migrations/{id}/analysis/review를 흉내 낸다) ----
 // MOCK_REVIEW_GATE=1 일 때만 켠다(꺼져 있으면 404: 검토 API가 없는 서버와 같다). 시작 3초 뒤 필수 기능 확정을 기다린다.
 const REVIEW_GATE = process.env.MOCK_REVIEW_GATE === '1'
-// 게이트가 열리기까지의 지연(ms, 매핑 구간). MOCK_REVIEW_DELAY_MS로 늘릴 수 있다.
+// 게이트가 열리기까지의 지연(ms, analysis.done부터의 매핑 구간, MOCK_SPEED로 나눈다). 실제 데모 서버는 약 10초: MOCK_REVIEW_DELAY_MS=10000.
 const REVIEW_DELAY_MS = Math.max(0, Number(process.env.MOCK_REVIEW_DELAY_MS) || 3000)
 // 실제 플랫폼 ReviewGate.view() 모양: capability는 카탈로그 id, usage·loses·required_reason은 영어 자유 문장.
 // 등급을 고루 섞어 등급 × 필수 결과(진행·승인·차단)를 모두 볼 수 있게 한다.
@@ -320,7 +327,7 @@ const reviewSecurity = () => [
 const reviews = new Map()
 function reviewOf(record) {
   let review = reviews.get(record.id)
-  if (!review) { review = { startedAt: Date.now(), phase: 'ANALYZING', rows: reviewRows(), security: reviewSecurity(), approvals: {}, rejections: [] }; reviews.set(record.id, review) }
+  if (!review) { review = { startedAt: Infinity, phase: 'ANALYZING', rows: reviewRows(), security: reviewSecurity(), approvals: {}, rejections: [] }; reviews.set(record.id, review) }
   if (review.phase === 'ANALYZING' && Date.now() - review.startedAt > REVIEW_DELAY_MS / SPEED) review.phase = 'WAITING_CONFIRMATION'
   return review
 }

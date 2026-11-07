@@ -22,11 +22,14 @@ export function useReviewGate(active: boolean, analysisDone: boolean) {
   const [view, setView] = useState<ReviewView | null>(null)
   const [known, setKnown] = useState(false)
   const [dismissed, setDismissed] = useState(false)
+  // analysis.done이 온 시각(매핑 구간의 걸린 시간을 센다). 받은 시각만 쓴다.
+  const [doneAt, setDoneAt] = useState<number | null>(null)
   const migrationId = state.migrationId
   const latest = useRef<ReviewView | null>(null)
   latest.current = view
   // 다른 이전을 시작하면 지난 검토 값은 버린다.
-  useEffect(() => { setView(null); setKnown(false); setDismissed(false) }, [migrationId])
+  useEffect(() => { setView(null); setKnown(false); setDismissed(false); setDoneAt(null) }, [migrationId])
+  useEffect(() => { setDoneAt(analysisDone ? current => current ?? Date.now() : null) }, [analysisDone, migrationId])
   useEffect(() => {
     if (!active || mode !== 'sse' || dismissed) return
     let alive = true
@@ -46,13 +49,18 @@ export function useReviewGate(active: boolean, analysisDone: boolean) {
     return () => { alive = false; window.clearTimeout(timer) }
   }, [provider, mode, active, analysisDone, migrationId, dismissed])
   const dismiss = useCallback(() => { setDismissed(true); setView(null) }, [])
-  return { view: dismissed ? null : view, known, setView, dismiss }
+  return { view: dismissed ? null : view, known, setView, dismiss, dismissed, doneAt }
 }
 
 const GRADE_TONE: Record<string, string> = { DIRECT: 'is-direct', API_DIFF: 'is-direct', PARTIAL: 'is-partial', NONE: 'is-none' }
 
 type Props = {
-  view: ReviewView
+  /** null이면 아직 게이트가 서지 않았다(매핑 중이면 mapping과 함께 뼈대를 보인다). */
+  view: ReviewView | null
+  /** 기능 매핑 중: 같은 시트에 뼈대 검토 화면을 보인다. 게이트가 서면 같은 시트 안에서 실제 항목으로 바뀐다. */
+  mapping?: boolean
+  /** analysis.done을 받은 시각(걸린 시간 표시) */
+  since?: number | null
   onView: (view: ReviewView | null) => void
   /** 분석 화면 위에서는 분석을 옅게 남긴 시트로, 다른 화면에서는 같은 모양으로 더 짙게 띄운다. */
   inline?: boolean
@@ -65,7 +73,10 @@ type Props = {
  * ① 필수 기능 확정 ② 이전하면 잃는 것·보안이 낮아지는 항목의 승인·거절. 서버가 준 항목을 그대로 보여 주고,
  * 서버가 요구하는 모양(모든 행에 답하기)으로 보낸다. 행마다 지금 선택의 결과(등급 × 필수)를 미리 보여 준다.
  */
-export default function ReviewGatePanel({ view, onView, inline = false, onHome, onSetup }: Props) {
+const EMPTY_VIEW: ReviewView = { phase: 'ANALYZING', analysis_ref: null, pending: null, items: [], security: [], blocked: [] }
+
+export default function ReviewGatePanel({ view: given, mapping = false, since = null, onView, inline = false, onHome, onSetup }: Props) {
+  const view = given ?? EMPTY_VIEW
   const t = useT()
   const tOr = useTOr()
   const titleId = useId()
@@ -104,11 +115,12 @@ export default function ReviewGatePanel({ view, onView, inline = false, onHome, 
     const security = view.security.find(entry => entry.id === id)
     return security ? criterionName(security.criterion) : id
   }
-  const sheet = (body: ReactNode, aside: boolean) =>
+  // 뼈대·실제 항목·막힘이 모두 같은 시트(같은 DOM)를 쓴다: 게이트가 서도 다시 마운트되거나 등장 연출이 다시 돌지 않는다.
+  const sheet = (body: ReactNode, aside: boolean | ReactNode, loading = false) =>
     <div className={'review-sheet' + (inline ? ' is-inline' : ' is-float')} role="dialog" aria-modal="true" aria-labelledby={titleId}>
-      <section className={'approval-panel review-panel' + (aside ? ' has-aside' : '') + (blocked ? ' is-blocked' : '')}>
+      <section className={'approval-panel review-panel' + (aside ? ' has-aside' : '') + (blocked ? ' is-blocked' : '') + (loading ? ' is-loading' : '')} aria-busy={loading || undefined}>
         {body}
-        {aside && <SecurityTable rows={securityRows(view)} step={blocked ? 'blocked' : pending === 'approve_losses' ? 'approve' : 'confirm'} />}
+        {aside === true ? <SecurityTable rows={securityRows(view)} step={blocked ? 'blocked' : pending === 'approve_losses' ? 'approve' : 'confirm'} /> : aside || null}
       </section>
     </div>
 
@@ -125,7 +137,10 @@ export default function ReviewGatePanel({ view, onView, inline = false, onHome, 
     </div>
   </div>, view.security.length > 0)
 
-  if (!reviewWaiting(view)) return null
+  if (!reviewWaiting(view)) {
+    if (!mapping) return null
+    return sheet(<MappingBody titleId={titleId} since={since} />, <MappingAside />, true)
+  }
   const stepNo = pending === 'approve_losses' ? 2 : 1
   const stepHead = <>
     <small className="approval-step review-step">
@@ -318,5 +333,64 @@ function SecurityTable({ rows, step }: { rows: ReviewSecurity[]; step: 'confirm'
             {securityMeta(item, tOr, t).map(line => <p key={line}>{line}</p>)}
           </li>)}
         </ul>}
+  </aside>
+}
+
+/** 뼈대 줄 수: 받은 값이 없으므로 고정값. 보안 기준은 플랫폼 CRITERIA 4개로 정해져 있다. */
+const SKELETON_ROWS = 4
+const SKELETON_CRITERIA = 4
+const MAPPING_STEPS = ['mapping', 'evidence', 'ready'] as const
+
+/** 기능 매핑 중의 검토 화면. 가짜 결과는 보이지 않는다: 줄은 뼈대, 단계는 일의 순서, 시간은 analysis.done부터 센다. */
+function MappingBody({ titleId, since }: { titleId: string; since: number | null }) {
+  const t = useT()
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+  const seconds = since ? Math.max(0, Math.floor((now - since) / 1000)) : 0
+  return <div className="review-main">
+    <small className="approval-step review-step">
+      <span className="review-dots" aria-hidden="true"><i /><i /></span>
+      {t('reviewGate.loading.step')}
+    </small>
+    <h2 id={titleId} aria-level={1}>{t('reviewGate.loading.title')}</h2>
+    <p className="approval-lead">{t('reviewGate.loading.lead')}</p>
+    <div className="review-progress" role="status">
+      <ol aria-label={t('reviewGate.loading.stepsAria')}>
+        {MAPPING_STEPS.map(step => <li key={step}><i aria-hidden="true" />{t(('reviewGate.loading.' + step) as MsgKey)}</li>)}
+      </ol>
+      <span className="review-elapsed" aria-hidden="true">{t('reviewGate.loading.elapsed', { s: seconds })}</span>
+    </div>
+    <ul className="review-ledger is-skeleton" aria-hidden="true">
+      <li className="review-head">
+        <span>{t('reviewGate.col.feature')}</span><span>{t('reviewGate.col.grade')}</span><span>{t('reviewGate.col.choice')}</span><span>{t('reviewGate.col.outcome')}</span>
+      </li>
+      {Array.from({ length: SKELETON_ROWS }, (_, index) => <li key={index} className="review-row">
+        <div className="review-name"><b className="review-skel is-name" /><b className="review-skel is-sub" /></div>
+        <div className="review-badge"><b className="review-skel is-chip" /></div>
+        <b className="review-skel is-seg" />
+        <b className="review-skel is-out" />
+      </li>)}
+    </ul>
+    <div className="approval-actions review-actions">
+      <small>{t('reviewGate.loading.note')}</small>
+      <button type="button" className="flow-primary" disabled>{t('reviewGate.confirm.send')} <span aria-hidden="true">→</span></button>
+    </div>
+  </div>
+}
+
+function MappingAside() {
+  const t = useT()
+  return <aside className="review-aside" aria-label={t('reviewGate.security.title')}>
+    <strong className="review-aside-title">{t('reviewGate.security.title')}</strong>
+    <p className="review-aside-lead">{t('reviewGate.loading.security')}</p>
+    <ul className="review-sec is-skeleton" aria-hidden="true">
+      {Array.from({ length: SKELETON_CRITERIA }, (_, index) => <li key={index}>
+        <div className="review-sec-line"><b className="review-skel is-name" /><b className="review-skel is-chip" /></div>
+        <b className="review-skel is-sub" />
+      </li>)}
+    </ul>
   </aside>
 }
