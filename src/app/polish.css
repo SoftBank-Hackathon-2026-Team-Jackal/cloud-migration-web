@@ -14,6 +14,16 @@
 .jv{top:10px;right:196px;transform:none;flex-direction:column}
 .jv-pill{order:0}.jv-panel{order:1}.jv>.voice-hints{order:2}
 .jv-panel{max-height:min(430px,calc(100dvh - 140px))}
+/* 크기 조절: 창이 오른쪽 위에 붙어 있으니 왼쪽 아래 모서리를 끈다. 크기를 정하면 대화 기록이 남는 높이를 채운다. */
+.jv-panel{position:relative}
+.jv-panel.is-sized{max-width:calc(100vw - 28px);max-height:calc(100dvh - 120px)}
+.jv-panel.is-sized .jv-log{flex:1 1 auto;min-height:0}
+.jv-panel.is-sized .jv-msg{font-size:14px}
+.jv-panel.is-resizing{user-select:none;transition:none}
+.jv-grip{position:absolute;left:0;bottom:0;width:18px;height:18px;cursor:nesw-resize;touch-action:none;z-index:1;border-bottom-left-radius:18px;
+  background:linear-gradient(45deg,transparent 0 30%,#bdbdbd 30% 36%,transparent 36% 50%,#bdbdbd 50% 56%,transparent 56%) no-repeat;opacity:.55;transition:opacity .2s}
+.jv-grip:hover,.jv-grip:focus-visible,.jv-panel.is-resizing .jv-grip{opacity:1}
+.jv-grip:focus-visible{outline:2px solid #444;outline-offset:-2px}
 /* 말 안내는 평소에는 접어 두고, 호출했거나 위젯에 마우스를 올렸을 때만 보인다 */
 .jv>.voice-hints{display:none}
 .jv:hover>.voice-hints,.jv:focus-within>.voice-hints,.jv.is-awake>.voice-hints{display:flex}
@@ -31,6 +41,8 @@
   .analysis-next-area{margin-bottom:0;padding-bottom:calc(10px + var(--chrome-b))}
   .analysis-next-area>span{flex:1;min-width:0}
   .migration-input,.jv-form input{font-size:16px}
+  .jv-grip,.jv-expand{display:none}
+  .jv-panel.is-sized{width:auto!important;height:auto!important}
   .flow-stage{padding-bottom:calc(22px + var(--chrome-b))}
   .traffic-gate{grid-template-columns:minmax(0,1fr) auto}
   .traffic-gate small{grid-column:1/-1;text-align:start}

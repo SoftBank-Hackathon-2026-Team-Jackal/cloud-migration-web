@@ -33,7 +33,8 @@ import { PulseRow, RunningJackal, usePulse } from './PulseWidget'
 import FaultBadge from './tools/FaultBadge'
 import { AGENT_STEP_KEYS, THOUGHT_KEYS } from '../lib/agent/steps'
 import type { StatusStep, Thought } from '../lib/agent/platform'
-import { FoldIcon, MicIcon, SpeakerIcon } from './JackalIcons'
+import { ExpandIcon, FoldIcon, MicIcon, SpeakerIcon } from './JackalIcons'
+import { useChatSize } from './useChatSize'
 import { isRecommendRequest, isStartCommand, targetFromUtterance } from '../lib/agent/intent'
 import { useStageVoice } from '../lib/voice/useStageVoice'
 import { voiceText, type VoiceKey } from '../lib/voice/messages'
@@ -201,6 +202,8 @@ export default function FlowApp() {
   const [chat, setChat] = useState<ChatMessage[]>([])
   const pendingWhy = useRef<Pick<ChatMessage, 'reasoning' | 'skills'> | null>(null)
   const [chatOpen, setChatOpen] = useState(true)
+  const panelRef = useRef<HTMLElement | null>(null)
+  const chatSize = useChatSize(panelRef)
   const pulse = usePulse() // 서버 맥박: Jackal 버튼(달리는 자칼)과 패널 머리글 아래 한 줄로 보인다
   const [unread, setUnread] = useState(0)
   const chatId = useRef(0)
@@ -537,7 +540,7 @@ export default function FlowApp() {
     {exited && <StageRail stage={stage} />}
     {demoPanel && <DemoControls stage={stage} target={target} onJump={jump} onTarget={setTarget} />}
     <aside className={'jv is-' + jvStatus + (voice.awake ? ' is-awake' : '') + (chatOpen ? ' is-open' : '') + (stage === 'intro' ? ' is-intro' : '')} aria-label={t('agent.title')}>
-      {chatOpen && <section className="jv-panel" aria-label={t('agent.title')}>
+      {chatOpen && <section ref={panelRef} className={'jv-panel' + (chatSize.size ? ' is-sized' : '') + (chatSize.dragging ? ' is-resizing' : '')} style={chatSize.style} aria-label={t('agent.title')}>
         <header className="jv-head">
           <span className="jv-dot" aria-hidden="true" />
           <strong>{t('agent.title')}</strong>
@@ -549,6 +552,8 @@ export default function FlowApp() {
               aria-label={t('agent.voice')} title={t('agent.voice') + ' · ' + t(voice.soundEnabled ? 'agent.on' : 'agent.off')}><SpeakerIcon off={!voice.soundEnabled} /></button>
             <button type="button" className="jv-toggle jv-cc" onClick={toggleCaptions} aria-pressed={captionsOn}
               aria-label={t('agent.captions')} title={t('agent.captions') + ' · ' + t(captionsOn ? 'agent.on' : 'agent.off')}>CC</button>
+            <button type="button" className="jv-toggle jv-expand" onClick={chatSize.toggleLarge} aria-pressed={chatSize.large}
+              aria-label={t(chatSize.large ? 'agent.shrink' : 'agent.expand')} title={t(chatSize.large ? 'agent.shrink' : 'agent.expand')}><ExpandIcon shrink={chatSize.large} /></button>
             <button type="button" className="jv-fold" onClick={() => setChatOpen(false)} aria-label={t('agent.fold')} title={t('agent.fold')}><FoldIcon /></button>
           </div>
         </header>
@@ -598,6 +603,7 @@ export default function FlowApp() {
           <input value={question} onChange={event => setQuestion(event.target.value)} placeholder={t(stage === 'intro' ? 'open.intentPh' : 'agent.placeholder')} aria-label={t(stage === 'intro' ? 'open.intentLabel' : 'agent.label')} maxLength={200} />
           <button type="submit" disabled={asking || !question.trim()}>{t('agent.send')}</button>
         </form>}
+        <div className="jv-grip" role="separator" aria-orientation="vertical" tabIndex={0} aria-label={t('agent.resize')} title={t('agent.resize')} {...chatSize.grip} />
       </section>}
       <button type="button" className={'jv-pill' + (pulse?.className ?? '')} style={pulse?.style} aria-expanded={chatOpen}
         title={(chatOpen ? t('agent.fold') : t('agent.open')) + (pulse ? ' · ' + pulse.detail : '')} onClick={() => setChatOpen(open => !open)}>
