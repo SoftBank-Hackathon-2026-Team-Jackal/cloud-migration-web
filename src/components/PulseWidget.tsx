@@ -8,7 +8,7 @@ const POLL_MS = 3000
 const GIVE_UP_AFTER = 3 // 연속 실패가 이 횟수를 넘으면 위젯을 숨긴다(꾸민 값을 보이지 않는다)
 
 /** 달리는 자칼. 직접 그린 단순한 실루엣이고, 다리와 몸의 움직임 속도가 `--run`(초)으로 정해진다. */
-function RunningJackal() {
+export function RunningJackal() {
   return <svg className="pulse-jackal" viewBox="0 0 44 26" aria-hidden="true" focusable="false">
     <g className="pj-body">
       <path d="M8 11q1-3 6-3h12q3 0 4 2l1 5q-1 3-5 3H14q-5 0-6-4Z" />
@@ -35,12 +35,13 @@ function ServerBox({ label, side }: { label: string; side: Side | null }) {
   </span>
 }
 
+export type PulseView = { pulse: Pulse; run: number; level: string; detail: string; errors: string; className: string; style: CSSProperties }
+
 /**
- * 화면 위쪽의 서버 맥박: 달리는 자칼(원본·이전 서버 중 더 바쁜 쪽의 CPU가 높을수록 빠르다) ·
- * 원본 서버 → 이전 서버의 CPU와 메모리 · 최근 5분 오류 수.
- * 각 서버가 보낸 실제 값만 보여 주고, 값을 받지 못한 쪽은 —로 둔다. 맥박을 아예 못 받으면 위젯 전체가 숨는다.
+ * 서버 맥박(원본·이전 서버의 CPU·메모리, 최근 5분 오류 수)을 3초마다 읽는다. Jackal 버튼과 패널이 함께 쓴다.
+ * 각 서버가 보낸 실제 값만 보여 주고, 값을 받지 못한 쪽은 —로 둔다. 맥박을 연속으로 못 받으면 null(감춘다).
  */
-export default function PulseWidget() {
+export function usePulse(): PulseView | null {
   const { t } = useI18n()
   const [pulse, setPulse] = useState<Pulse | null>(null)
 
@@ -76,12 +77,20 @@ export default function PulseWidget() {
     tCpu: pct(pulse.target?.cpu_percent), tMem: pct(pulse.target?.mem_percent),
     errors, minutes: Math.round(pulse.window_seconds / 60),
   })
-  const style = { '--run': run + 's' } as CSSProperties
-  return <div className={'pulse is-' + level + (run === 0 ? ' is-idle' : '')} style={style} role="status" aria-label={detail} title={detail}>
-    <RunningJackal />
-    <ServerBox label={t('pulse.source' as MsgKey)} side={pulse.source} />
+  return {
+    pulse, run, level, detail, errors,
+    className: ' has-pulse is-' + level + (run === 0 ? ' is-idle' : ''),
+    style: { '--run': run + 's' } as CSSProperties,
+  }
+}
+
+/** Jackal 패널 머리글 아래의 맥박 한 줄: 원본 → 이전 서버의 CPU·메모리와 최근 오류 수. */
+export function PulseRow({ view }: { view: PulseView }) {
+  const { t } = useI18n()
+  return <div className={'pulse-row' + view.className} style={view.style} role="status" aria-label={view.detail} title={view.detail}>
+    <ServerBox label={t('pulse.source' as MsgKey)} side={view.pulse.source} />
     <span className="pulse-arrow" aria-hidden="true">→</span>
-    <ServerBox label={t('pulse.target' as MsgKey)} side={pulse.target} />
-    <span className="pulse-err" aria-hidden="true"><small>{t('pulse.err' as MsgKey)}</small>{errors}</span>
+    <ServerBox label={t('pulse.target' as MsgKey)} side={view.pulse.target} />
+    <span className="pulse-err" aria-hidden="true"><small>{t('pulse.err' as MsgKey)}</small>{view.errors}</span>
   </div>
 }
