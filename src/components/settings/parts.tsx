@@ -44,7 +44,7 @@ export function ErrorNote({ error, detail, title, onRetry }: { error: ApiErrorCo
   const message = (detail && tOr('cx.code.' + detail, '')) || t(('cx.err.' + error) as MsgKey)
   return <div className="cx-error" role="alert" data-error={error}>
     <div>
-      <strong>{title ?? t(('cx.errTitle.' + error) as MsgKey)}</strong>
+      <strong>{title ?? ((detail && tOr('cx.codeTitle.' + detail, '')) || t(('cx.errTitle.' + error) as MsgKey))}</strong>
       <span>{message}</span>
       {detail && <code>{detail}</code>}
     </div>
