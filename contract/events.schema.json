@@ -3370,6 +3370,7 @@
       "properties": {
         "phase": {
           "enum": [
+            "tunnel",
             "preflight",
             "blocked",
             "schema",

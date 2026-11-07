@@ -16,7 +16,7 @@ import { useVoiceActions } from '../lib/voice/actions'
  * 모든 값은 data.preflight · data.phase · data.lsn · data.table · data.readiness 이벤트에서 온다 [가정].
  * 그 이벤트가 없는 서버(data.progress만 보내는 경우)도 단계와 지연을 예전 값으로 읽는다.
  */
-type View = 'preflight' | 'blocked' | 'schema' | 'copy' | 'catchup' | 'synced' | 'ready'
+type View = 'tunnel' | 'preflight' | 'blocked' | 'schema' | 'copy' | 'catchup' | 'synced' | 'ready'
 
 const CHECK_ORDER: PreflightCheckName[] = ['cidr_overlap', 'route', 'db_path', 'large_transfer']
 const LEGACY_PHASE: Record<string, DataPhase> = { connect: 'preflight', dump: 'copy', cdc: 'catchup', ready: 'streaming' }
@@ -39,6 +39,8 @@ function viewOf(data: Data): View {
   const phase = phaseOf(data)
   if (phase === 'streaming') return isReady(data) ? 'ready' : 'synced'
   if (phase === 'schema' || phase === 'copy' || phase === 'catchup') return phase
+  // 원본 쪽 복제 통로(WireGuard·NLB)를 여는 중: 사전 검사 결과(data.preflight)가 오면 사전 검사 뷰로 이어진다. 화면 배치는 사전 검사 뷰와 같다.
+  if (phase === 'tunnel' && !data.preflight) return 'tunnel'
   return 'preflight'
 }
 
@@ -100,13 +102,14 @@ function DataBody({ ready, target, onNext }: { ready: boolean; target: Target; o
   // 단계 띠의 지금 위치
   const checksDone = preflight ? preflight.checks.filter(check => check.status !== 'PENDING' && check.status !== 'RUNNING').length : 0
   const position = blocked ? STRIP_GATE.preflight
+    : view === 'tunnel' ? 0
     : view === 'preflight' ? (checksDone / 4) * STRIP_GATE.preflight
     : view === 'schema' ? STRIP_GATE.preflight + 1.5
     : view === 'copy' ? 15 + copy * 13
     : view === 'catchup' ? 28 + Math.max(0, Math.min(1, 1 - (lag ?? SCOPE_MAX_MS) / 3400)) * 15
     : view === 'synced' ? 45 : STRIP_GATE.synced
   const gates: [GateState, GateState, GateState] = [blocked ? 'fail' : verdict === 'PASS' || phase === 'copy' || phase === 'catchup' || phase === 'streaming' ? 'pass' : 'wait', gate1 ? 'pass' : 'wait', 'wait']
-  const stripNote = blocked ? t('dmig.strip.blocked') : gate1 ? t('dmig.strip.ready') : view === 'preflight' ? t('dmig.strip.preflight') : t('dmig.strip.wait')
+  const stripNote = blocked ? t('dmig.strip.blocked') : gate1 ? t('dmig.strip.ready') : view === 'tunnel' ? t('dmig.strip.tunnel') : view === 'preflight' ? t('dmig.strip.preflight') : t('dmig.strip.wait')
 
   return <div className={'dm' + (blocked ? ' is-blocked' : '')}>
     <div className="dm-main">
@@ -168,6 +171,11 @@ function DataBody({ ready, target, onNext }: { ready: boolean; target: Target; o
 const pad = (value: number) => String(value).padStart(2, '0')
 const clock = (date: Date) => `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 
+/** 경로 검사 실패 코드: 플랫폼(cmp_providers network_preflight) NO_ROUTE·UNEXPECTED_PATH·ROUTE_UNVERIFIED, 목업 ROUTE_NOT_TUNNEL */
+const ROUTE_CODES: ReadonlySet<string> = new Set(['NO_ROUTE', 'UNEXPECTED_PATH', 'ROUTE_UNVERIFIED', 'ROUTE_NOT_TUNNEL'])
+/** 앞 검사가 실패해 실행하지 않은 검사(플랫폼은 SKIPPED 대신 UNKNOWN + 이 코드로 보낸다): 건너뜀으로 보인다. */
+const NOT_RUN_CODES: ReadonlySet<string> = new Set(['NOT_RUN_AFTER_STATIC_FAILURE', 'NOT_RUN'])
+
 const STATUS_CLASS: Record<string, string> = { PASS: 'pass', FAIL: 'fail', UNKNOWN: 'unk', RUNNING: 'run', SKIPPED: 'skip', PENDING: '' }
 
 function Preflight({ target, data }: { target: Target; data: Data }) {
@@ -178,12 +186,13 @@ function Preflight({ target, data }: { target: Target; data: Data }) {
   const verdict = preflight?.status ?? null
   const done = verdict && verdict !== 'RUNNING'
   const checks = CHECK_ORDER.map(name => preflight?.checks.find(check => check.name === name) ?? { name, status: 'PENDING', code: null, evidence: '' } as PreflightCheck)
+    .map(check => check.status === 'UNKNOWN' && check.code && NOT_RUN_CODES.has(check.code) ? { ...check, status: 'SKIPPED' as const } : check)
   const time = preflight?.checked_at ? clock(new Date(preflight.checked_at)) : ''
   const fingerprint = preflight?.input_fingerprint ? preflight.input_fingerprint.replace(/^sha256:/, '').slice(0, 8) : null
-  const failed = preflight?.checks.find(check => check.status === 'FAIL' || check.status === 'UNKNOWN')
+  const failed = preflight?.checks.find(check => check.status === 'FAIL' || (check.status === 'UNKNOWN' && !(check.code && NOT_RUN_CODES.has(check.code))))
   const gateText = !done ? t('dmig.pf.gate.wait')
     : verdict === 'PASS' ? t('dmig.pf.gate.open')
-    : (failed?.code === 'ROUTE_NOT_TUNNEL' ? t('dmig.pf.gate.route') : verdict === 'UNKNOWN' ? t('dmig.pf.gate.unknown') : t('dmig.pf.gate.fail')) + ' ' + t('dmig.pf.gate.noReuse')
+    : (failed && ROUTE_CODES.has(failed.code ?? '') ? t('dmig.pf.gate.route') : verdict === 'UNKNOWN' ? t('dmig.pf.gate.unknown') : t('dmig.pf.gate.fail')) + ' ' + t('dmig.pf.gate.noReuse')
 
   const statusLabel = (check: PreflightCheck) => check.status === 'PENDING' ? t('dmig.pf.st.wait')
     : check.status === 'RUNNING' ? (check.name === 'large_transfer' ? t('dmig.pf.st.sending') : t('dmig.pf.st.run'))

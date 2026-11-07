@@ -20,6 +20,7 @@ import { ConnectionToast, StatusPanel } from './MigrationStatus'
 import { ArriveMorph, DISSOLVE_MS, TransitionLayer } from './ScreenFx'
 import { translateIn, useI18n, type Lang, type MsgKey, type Params, type Translate } from '../lib/i18n'
 import { useMigration } from '../lib/migration/MigrationProvider'
+import { cutoverEntry, dataNextStage } from '../lib/migration/flow'
 import { requiresSource } from '../lib/migration/config'
 import { captureScreen, fx, recentHandoff, registerTransition } from '../lib/particleHandoff'
 import { isStage, STAGE_ORDER, type Stage } from '../lib/stages'
@@ -480,9 +481,9 @@ export default function FlowApp() {
     {stage === 'approval' && <ApprovalStage key={round} target={target} onApprove={next('provisioning')} onCancel={() => jump('intro')} onRevise={() => go('planning')} />}
     {stage === 'approval' && <ArriveMorph key={'approval' + round} />}
     {stage === 'provisioning' && <ProvisioningStage key={round + target} target={target} onComplete={reportProvisioningComplete} onNext={next('data')} />}
-    {stage === 'data' && <DataMigrationStage key={round} target={target} onNext={next('traffic')} />}
+    {stage === 'data' && <DataMigrationStage key={round} target={target} onNext={() => go(dataNextStage(migrationState))} />}
     {stage === 'traffic' && <TrafficShiftStage key={round + target} target={target} onNext={next('cutover')} />}
-    {stage === 'cutover' && <CutoverStage key={round + target} target={target}
+    {stage === 'cutover' && <CutoverStage key={round + target} target={target} onTraffic={next('traffic')}
       onComplete={() => sayVoice(voiceText(voiceLang, 'r.migration.done'), voiceLang !== lang ? voiceText(lang, 'r.migration.done') : undefined)}
       onRestart={() => jump('intro')} />}
     <StatusPanel stage={stage} onHome={() => jump('intro')} onSetup={() => jump('setup')} />
@@ -493,7 +494,7 @@ export default function FlowApp() {
     <div className={'flow-toast' + (notice ? ' is-on' : '')} role="status" aria-hidden={!notice}>{t('nav.noBack')}</div>
     <ConnectionToast />
     <LangSwitch />
-    {exited && <StageRail stage={stage} />}
+    {exited && <StageRail stage={stage} dbFirst={migrationState.cutover.dbFirst} complete={stage === 'cutover' && cutoverEntry(migrationState) === 'report'} />}
     {demoPanel && <DemoControls stage={stage} target={target} onJump={jump} onTarget={setTarget} />}
     <aside className={'jv is-' + jvStatus + (voice.awake ? ' is-awake' : '') + (chatOpen ? ' is-open' : '') + (stage === 'intro' ? ' is-intro' : '')} aria-label={t('agent.title')}>
       {chatOpen && <section className="jv-panel" aria-label={t('agent.title')}>

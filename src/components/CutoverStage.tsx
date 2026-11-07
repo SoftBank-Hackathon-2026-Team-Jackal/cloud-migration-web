@@ -12,22 +12,27 @@ import { runTransition } from '../lib/particleHandoff'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
 import type { MigrationState } from '../lib/migration/reducer'
 import type { CutoverPlanData, CutoverStepData, CutoverStepPlan } from '../lib/migration/events'
+import { cutoverAfter, cutoverEntry, cutoverRunView, type CutoverRunView } from '../lib/migration/flow'
 import { useVoiceActions } from '../lib/voice/actions'
 import type { Target } from '../lib/stages'
 import { useT, useTOr, type MsgKey } from '../lib/i18n'
 
 type Phase = 'approve' | 'running' | 'done'
-type RunView = 'wait' | 'pause' | 'verify' | 'done' | 'refused' | 'mismatch'
+type RunView = CutoverRunView
 
 /** 받은 쓰기 중단 구간(몇 ms)을 화면에서 느리게 다시 보여 주는 시간. 표현용 값이며 데이터가 아니다. */
 const REPLAY_MS = 3600
 /** 계획이 오기 전 구성도의 빈 자리(이름 없이 그린다). */
 const EMPTY_TOPOLOGY: CutoverTopology = { app: '—', pooler: '—', source_db: '—', target_db: '—', source_where: '—', target_where: '—', writes_per_sec: 0 }
 
-export default function CutoverStage({ target, onRestart, onComplete }: { target: Target; onRestart: () => void; onComplete: () => void }) {
+/**
+ * onTraffic: DB 전환을 트래픽보다 먼저 한 경우(플랫폼 실제 순서) 전환 통과 뒤 "다음"이 가는 곳.
+ * 트래픽을 마치고 다시 들어오면 바로 완료 리포트를 보인다(flow.ts cutoverEntry).
+ */
+export default function CutoverStage({ target, onRestart, onComplete, onTraffic }: { target: Target; onRestart: () => void; onComplete: () => void; onTraffic: () => void }) {
   const t = useT()
   const { state } = useMigration()
-  const [phase, setPhase] = useState<Phase>('approve')
+  const [phase, setPhase] = useState<Phase>(() => cutoverEntry(state) === 'report' ? 'done' : 'approve')
   // 본문이 알려 주는 지금 상태(쓰기 중단 구간 재생이 끝나야 결과 제목으로 바뀐다).
   const [run, setRun] = useState<RunView>('wait')
   // 다시 시도할 때 승인 순간의 시도 번호. 새 시도(cutover.ready의 attempt)가 오기 전까지 지난 결과는 숨긴다.
@@ -39,30 +44,21 @@ export default function CutoverStage({ target, onRestart, onComplete }: { target
     ? t('cutover.approve.lead', { pooler: plan?.topology.pooler ?? 'PgBouncer', target: plan?.topology.target_db ?? t('cut.d.target', { where: '' }) })
     : t(('cut.sub.' + run) as MsgKey)
   return <StageShell kicker={kicker} title={title} subtitle={subtitle} className="cx-stage" hideHeader={phase === 'done'}>
-    {ready => <CutoverBody ready={ready} target={target} phase={phase} setPhase={setPhase} onRestart={onRestart} onComplete={onComplete} stale={stale} onApproved={() => setStale(state.cutover.attempt)} onView={setRun} />}
+    {ready => <CutoverBody ready={ready} target={target} phase={phase} setPhase={setPhase} onRestart={onRestart} onComplete={onComplete} onTraffic={onTraffic} stale={stale} onApproved={() => setStale(state.cutover.attempt)} onView={setRun} />}
   </StageShell>
 }
 
-/** 지금 화면 상태(제목·문구용). replayDone은 쓰기 중단 구간 재생이 끝났는지(헤더는 결과가 오면 끝난 것으로 본다). */
-function runViewOf(cutover: MigrationState['cutover'], replaying: boolean): RunView {
-  if (cutover.steps.length === 0) return 'wait'
-  if (!cutover.outcome || replaying) return 'pause'
-  if (cutover.outcome.result === 'refused') return 'refused'
-  // fast는 PAUSE 안에서 체크섬을 보지 않으므로 변조(tamper)는 전환 뒤 검증에서 불일치로 드러난다.
-  if (cutover.tables.some(table => table.checksum === 'mismatch') || cutover.results.some(result => result.ok === false)) return 'mismatch'
-  const tablesOk = cutover.tables.length > 0 && cutover.tables.every(table => table.checksum === 'match')
-  const handoverDone = cutover.handover.length > 0 && cutover.handover.every(item => item.state === 'done')
-  return tablesOk && handoverDone ? 'done' : 'verify'
-}
+type BodyProps = { ready: boolean; target: Target; phase: Phase; setPhase: (phase: Phase) => void; onRestart: () => void; onComplete: () => void; onTraffic: () => void; stale: number; onApproved: () => void; onView: (view: RunView) => void }
 
-type BodyProps = { ready: boolean; target: Target; phase: Phase; setPhase: (phase: Phase) => void; onRestart: () => void; onComplete: () => void; stale: number; onApproved: () => void; onView: (view: RunView) => void }
-
-function CutoverBody({ ready, target, phase, setPhase, onRestart, onComplete, stale, onApproved, onView }: BodyProps) {
+function CutoverBody({ ready, target, phase, setPhase, onRestart, onComplete, onTraffic, stale, onApproved, onView }: BodyProps) {
+  const { state } = useMigration()
   // 두 번째 승인(approveCutover) 전후의 전환 계획·단계·검증 이벤트를 읽는다.
   useStageFeed('verification', ready, target)
   if (phase === 'approve') return <><CutoverApproval onApprove={() => { onApproved(); setPhase('running') }} /><ArriveMorph key="cut-approve" /></>
   if (phase === 'done') return <><MigrationReport target={target} onRestart={onRestart} /><ArriveMorph key="cut-done" /></>
-  return <><CutoverRun stale={stale} onView={onView} onRetry={() => setPhase('approve')} onNext={() => runTransition(() => { setPhase('done'); onComplete() })} /><ArriveMorph key="cut-run" /></>
+  // DB 전환을 먼저 했으면(실제 순서) 통과 뒤 트래픽으로, 아니면 완료 리포트로.
+  const next = cutoverAfter(state) === 'traffic' ? onTraffic : () => runTransition(() => { setPhase('done'); onComplete() })
+  return <><CutoverRun stale={stale} onView={onView} onRetry={() => setPhase('approve')} onNext={next} /><ArriveMorph key="cut-run" /></>
 }
 
 /* ===================== 승인 2/2 ===================== */
@@ -210,7 +206,7 @@ function CutoverRun({ stale, onView, onRetry, onNext }: { stale: number; onView:
   const traceMs = timed ? Math.max(0, ...spans.map(span => span.to)) : 0
   // 결과가 오면 받은 단계 시간을 느리게 다시 보여 준다(시간이 없으면 바로 끝).
   const { progress, finished, speed } = useReplay(traceMs, outcome ? cutover.attempt + '-' + outcome.result : null, REPLAY_MS)
-  const view = runViewOf(cutover, !!outcome && !finished)
+  const view = cutoverRunView(cutover, !!outcome && !finished)
   const stage: 'wait' | 'pause' | 'after' = view === 'wait' ? 'wait' : view === 'pause' ? 'pause' : 'after'
   const refused = view === 'refused'
   const method = cutover.steps.find(step => step.method)?.method ?? plan?.method
@@ -226,8 +222,13 @@ function CutoverRun({ stale, onView, onRetry, onNext }: { stale: number; onView:
   const shownMs = stage === 'after' ? outcome?.pause_ms ?? null : stage === 'pause' && timed ? progress : null
   const dest = refused || stage !== 'after' ? topology.source_db : topology.target_db
 
-  const finishedOk = view === 'done' && state.status === 'done'
-  useVoiceActions({ next: finishedOk && onNext, retry: refused && onRetry })
+  // 완료(이전 끝) 또는 DB 전환을 먼저 해 트래픽이 남은 경우 "다음"을 연다.
+  const toTraffic = cutoverAfter(state) === 'traffic'
+  const finishedOk = view === 'done' && (state.status === 'done' || toTraffic)
+  // 2차 승인 요청이 거절됐다(409 CUTOVER_NOT_READY·404·503): 이전은 계속 돈다. 전환이 시작되기 전이면 이 화면 안에서 알리고 다시 승인하게 한다.
+  const approveError = view === 'wait' ? state.requestErrors.cutover : undefined
+  const approveErrorText = useApproveErrorText()
+  useVoiceActions({ next: finishedOk && onNext, retry: (refused || !!approveError) && onRetry })
   useEffect(() => { onView(view) }, [view, onView])
   return <div className="cx-run">
     <ReadyGauge cutover={cutover} passed={stage !== 'wait'} />
@@ -265,13 +266,20 @@ function CutoverRun({ stale, onView, onRetry, onNext }: { stale: number; onView:
     <div className="cx-foot">
       <MigrationLanes stage="cutover" />
       <div className="flow-footer cx-go">
-        <small>{refused ? t('cut.foot.refused') : view === 'mismatch' ? t('cut.foot.mismatch') : finishedOk ? t('cut.foot.done') : stage === 'after' ? t('cutover.foot.verify') : t('cutover.foot.running')}</small>
-        {refused
+        <small role={approveError ? 'alert' : undefined}>{approveError ? approveErrorText(approveError.detail) : refused ? t('cut.foot.refused') : view === 'mismatch' ? t('cut.foot.mismatch') : finishedOk ? t(toTraffic ? 'cut.foot.toTraffic' : 'cut.foot.done') : stage === 'after' ? t('cutover.foot.verify') : t('cutover.foot.running')}</small>
+        {refused || approveError
           ? <button type="button" className="flow-primary" onClick={onRetry}>{t('cut.retry')} <span aria-hidden="true">→</span></button>
-          : <button type="button" className="flow-primary" disabled={!finishedOk} onClick={onNext}>{t('cutover.next')} <span aria-hidden="true">→</span></button>}
+          : <button type="button" className="flow-primary" disabled={!finishedOk} onClick={onNext}>{t(toTraffic ? 'cut.toTraffic' : 'cutover.next')} <span aria-hidden="true">→</span></button>}
       </div>
     </div>
   </div>
+}
+
+/** 2차 승인 요청 오류 문구: 아는 코드(CUTOVER_NOT_READY · HTTP_404 · HTTP_503 · NETWORK)는 그 문구, 모르면 코드와 함께 일반 문구. */
+function useApproveErrorText() {
+  const t = useT()
+  const tOr = useTOr()
+  return (detail?: string) => tOr('cut.err.' + (detail ?? 'unknown'), t('cut.err.generic', { code: detail ?? '—' }))
 }
 
 function ReadyGauge({ cutover, passed }: { cutover: MigrationState['cutover']; passed: boolean }) {
@@ -305,7 +313,8 @@ function VerifyLedger({ cutover, show, refused }: { cutover: MigrationState['cut
     // 사유 코드가 오면 그 문구, 없으면 일반 거부 문구
     ? { cls: 'is-neg', text: reason ? t('cut.v.refused', { reason: tOr('cut.reason.' + reason, reason) }) : t('cut.v.refusedGeneric') }
     : mismatch ? { cls: 'is-neg', text: t('cut.v.bad', { n: tables.filter(table => table.checksum === 'mismatch').length }) }
-    : matched && results.length > 0 ? { cls: 'is-pass', text: t('cut.v.pass', { n: tables.length }) }
+    // 플랫폼은 합계(cutover.result) 없이 표만 보낸다: 전환이 통과했고 표가 모두 일치하면 통과.
+    : matched && (results.length > 0 || cutover.outcome?.result === 'switched') ? { cls: 'is-pass', text: t('cut.v.pass', { n: tables.length }) }
     : { cls: '', text: t('cut.v.wait') }
   const fmt = (value: number | null) => (value === null ? '' : value.toLocaleString())
   return <section className="cx-card cx-verify" aria-label={t('cut.v.head')}>

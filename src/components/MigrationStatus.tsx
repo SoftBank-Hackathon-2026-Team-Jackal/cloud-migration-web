@@ -78,7 +78,7 @@ export function StatusPanel({ stage, onHome, onSetup }: { stage: Stage; onHome: 
     <div className="approval-panel">
       <small className="approval-step">{t('fail.step')}</small>
       <h2>{t('fail.title')}</h2>
-      <p className="approval-lead">{(detail && tOr('cx.code.' + detail, '')) || failure.message || t('fail.lead')}</p>
+      <p className="approval-lead">{(detail && tOr('cx.code.' + detail, '')) || (failure.code && tOr('cx.code.' + failure.code, '')) || failure.message || t('fail.lead')}</p>
       <p className="approval-lead">{t('fail.noRetry')}{failure.code ? ' (' + t('fail.code', { code: detail || failure.code }) + ')' : ''}</p>
       <div className="approval-actions">
         <button type="button" className="flow-primary" onClick={onHome}>{t('fail.home')} <span aria-hidden="true">→</span></button>

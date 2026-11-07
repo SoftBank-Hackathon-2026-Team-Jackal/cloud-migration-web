@@ -153,7 +153,7 @@ export default function ReplicationDiagram({ target, network, verdict, route, ph
       <line x1="290" y1={ty - 30} x2="710" y2={ty - 30} stroke="#cfcfcf" />
       <line x1="290" y1={ty + 30} x2="710" y2={ty + 30} stroke="#cfcfcf" />
       <g clipPath={`url(#${clipId})`}>
-        {phase !== 'preflight' && phase !== 'blocked' && phase !== 'schema' && phase !== null
+        {phase !== 'tunnel' && phase !== 'preflight' && phase !== 'blocked' && phase !== 'schema' && phase !== null
           && <rect className="dm-copy" x={X0} y={ty - 21} width={SPAN * Math.max(0, Math.min(1, copy))} height="42" fill="url(#dm-hatch)" />}
         {streaming && <>
           <g clipPath={`url(#${clipId}-pend)`}><g className="dm-ticks">{Array.from({ length: 22 }, (_, index) => <rect key={index} x={X0 + index * 22 + 2} y={ty - 8} width="7" height="16" rx="1" fill="#b5b5b5" />)}</g></g>
