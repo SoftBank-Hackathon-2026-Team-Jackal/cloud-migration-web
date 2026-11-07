@@ -81,7 +81,7 @@ docker run -d --name jackal-web -p 3000:3000 --env-file .env -v jackal-models:/m
 
 설정 화면의 "GitHub 저장소"는 주소 입력 대신 **GitHub 로그인 → 공개 저장소 검색 → 선택**입니다. 고르면 서버가 그 저장소를 id로 다시 조회해 공개 저장소인지 확인하고, 기본 브랜치의 지금 커밋 SHA를 고정합니다. 시작 요청에는 `source: { kind: "GITHUB_PUBLIC", repository_id, full_name, commit_sha }`만 실립니다.
 
-- [Auth.js](https://authjs.dev) + GitHub OAuth App, DB·사용자 테이블 없이 **암호화된 JWT 쿠키 세션**만 씁니다. 요청 권한은 `read:user`와 `read:org`(팀 조직의 저장소를 목록에 보이기 위한 조직 멤버십 읽기)뿐이며, `repo` 권한은 요청하지 않습니다. 로그인할 때마다 GitHub 계정 선택 화면이 뜹니다.
+- [Auth.js](https://authjs.dev) + GitHub OAuth App, DB·사용자 테이블 없이 **암호화된 JWT 쿠키 세션**만 씁니다. 요청 권한은 `read:user`와 `read:org`(팀 조직의 저장소를 목록에 보이기 위한 조직 멤버십 읽기)뿐이며, `repo` 권한은 요청하지 않습니다.
 - GitHub 액세스 토큰은 서버 쪽 JWT 안에만 있습니다. 브라우저가 받는 세션(`/api/auth/session`)과 `/api/github/*` 응답에는 토큰이 없습니다. 브라우저에서 플랫폼 API로 토큰이나 소스 코드를 보내지 않습니다.
 - 서버 API: `GET /api/github/repos?page=&per_page=&q=` (GitHub `GET /user/repos`를 페이지 단위로 호출, 공개 저장소만, `repository_id·full_name·default_branch·description·html_url·updated_at`만 돌려줌. 검색어가 있으면 최근 갱신 순 500개 안에서 이름·설명으로 거름), `POST /api/github/source {repository_id}` (기본 브랜치 커밋 SHA 고정).
 - 오류: 로그인 안 함·설정 없음·토큰 만료(GitHub 401 → 다시 로그인 안내)·GitHub 한도 초과·그 밖의 GitHub 오류를 화면에서 구분해 보여 줍니다.
