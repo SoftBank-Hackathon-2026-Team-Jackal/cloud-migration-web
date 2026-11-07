@@ -709,7 +709,8 @@
                   "manual",
                   "inject",
                   "drained",
-                  "restart"
+                  "restart",
+                  "idleProbe"
                 ]
               },
               "params": {

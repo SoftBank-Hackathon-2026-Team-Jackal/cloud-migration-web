@@ -80,6 +80,23 @@ const PREFLIGHT_PASS: Record<string, VoiceKey> = {
 const labelOf = (prefix: string, key: string, fallback?: string) => (prefix + key) in VOICE_MESSAGES.ko ? prefix + key : fallback || 'code:' + key
 
 /**
+ * 롤백 보고: 플랫폼이 판정 근거(kind)를 보냈으면 그 이유를 말하고, 없으면 예전처럼 "기준 초과"라고만 말한다.
+ * p99는 밀리초, 실패는 건수, 요청 부족은 본 요청 수를 말한다.
+ */
+function trafficRollbackReport(
+  notes: Array<{ key: string; params?: Record<string, string | number> }> | undefined,
+  make: (key: VoiceKey, kind: ReportKind, params?: VoiceParams) => Report,
+): Report {
+  const params = notes?.find(note => note.key === 'gateFail')?.params
+  switch (params?.kind) {
+    case 'p99': return make('r.traffic.rollbackP99', 'failure', { p: Number(params.p99_ms ?? 0) })
+    case 'failed': return make('r.traffic.rollbackFailed', 'failure', { n: Number(params.failed ?? 0) })
+    case 'requests': return make('r.traffic.rollbackRequests', 'failure', { n: Number(params.requests ?? 0) })
+    default: return make('r.traffic.rollback', 'failure')
+  }
+}
+
+/**
  * 이벤트를 보고로 바꾼다. 상태를 조금 기억한다(한 번만 말할 것, 스캔에서 찾은 것, 계획 요약, 승인 전 경고).
  * 지금 화면의 단계와 다른 phase의 이벤트(예: 승인 화면이 다시 받는 계획 이벤트)는 실패만 말한다.
  */
@@ -312,9 +329,12 @@ export class ReportEngine {
         const previous = this.trafficPhase
         this.trafficPhase = state
         if (state === 'rolledback') {
-          if (previous !== 'rolledback') out.push(make('r.traffic.rollback', 'failure'))
+          if (previous !== 'rolledback') out.push(trafficRollbackReport(event.data.notes, make))
           return out
         }
+        // 사용자 트래픽이 없어 합성 요청으로 확인했으면 단계 안에서 한 번만 알린다.
+        const idle = event.data.notes?.find(note => note.key === 'idleProbe')
+        if (idle && this.first(phase, 'idleProbe')) out.push(make('r.traffic.idle', 'milestone', { n: Number(idle.params?.requests ?? 0) }, { series: 'idle:' + phase }))
         if (previous === 'rolledback') { this.trafficStep = -1; this.gatesPassed.clear(); this.once.delete(phase + ':done') }
         for (const result of event.data.results ?? []) {
           if (result.verdict === 'pass' && !this.gatesPassed.has(result.step) && result.step < 100) {

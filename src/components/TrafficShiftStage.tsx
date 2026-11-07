@@ -9,12 +9,12 @@ import type { Target } from '../lib/stages'
 import { orderKey, useI18n, useT, type MsgKey } from '../lib/i18n'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
 import { useVoiceActions } from '../lib/voice/actions'
-import { DEFAULT_ACTIVITY, policyOf, stageOf, stepCards, verdictOf, type CardState, type Stage } from '../lib/migration/trafficModel'
+import { DEFAULT_ACTIVITY, logDetailKey, policyOf, stageOf, stepCards, verdictOf, type CardState, type Stage } from '../lib/migration/trafficModel'
 
 type Tone = 'ok' | 'warn' | 'fail' | 'pass'
 // 실행 기록의 종류별 색. 문구는 traffic.log.<key> / traffic.log.<key>Detail
 // pass(금색)는 통과 순간(100% 도달·원본 정리 가능)에만 쓴다.
-const LOG_TONE: Record<string, Tone> = { gateFail: 'fail', rollback: 'fail', prepareFail: 'fail', manual: 'warn', inject: 'warn', reached: 'pass', drained: 'pass' }
+const LOG_TONE: Record<string, Tone> = { gateFail: 'fail', idleProbe: 'ok', rollback: 'fail', prepareFail: 'fail', manual: 'warn', inject: 'warn', reached: 'pass', drained: 'pass' }
 // 화면 국면별 제목 키 꼬리(traffic.heading.<key>)
 const HEADING: Record<Stage, string> = { prepare: 'prepare', blocked: 'blocked', applying: 'shifting', observing: 'shifting', gate: 'shifting', complete: 'done', drained: 'done', rolledback: 'rolledback' }
 
@@ -133,7 +133,7 @@ function TrafficBody({ ready, target, onNext }: { ready: boolean; target: Target
                   <span>
                     {entry.activity && <code>{entry.activity}</code>}
                     <strong>{t(('traffic.log.' + entry.key) as MsgKey, entry.params)}</strong>
-                    <em>{t(('traffic.log.' + entry.key + 'Detail') as MsgKey, entry.params)}</em>
+                    <em>{t(logDetailKey(entry.key, entry.params) as MsgKey, entry.params)}</em>
                   </span>
                 </div>)}
           </div>
