@@ -6,7 +6,7 @@
  * 이벤트 보고가 채팅 기록에 남는지, 목소리가 서버 TTS(/api/tts)로만 나오는지(브라우저 합성 0회)도 본다.
  *
  *   BASE_URL=http://127.0.0.1:3000 node tests/e2e/voice.mjs
- *   TTS_EXPECT=server(기본: 모델 필요) | fallback(모델 없이: /api/tts 503 → 녹음 파일·브라우저 합성)
+ *   TTS_EXPECT=server(기본: 모델 필요) | fallback(모델 없이: /api/tts 503 → 녹음 파일, 나머지는 글자만. 브라우저 합성은 어느 쪽이든 쓰지 않는다)
  * playwright 필요(`npm i --no-save playwright` 또는 NODE_PATH). PW_CHANNEL=chrome이면 설치된 Chrome을 쓴다.
  */
 import { createRequire } from 'node:module'
@@ -177,10 +177,10 @@ try {
   console.log(`\n  TTS 응답 ${tts.length}개(200: ${ok.length}), 캐시 ${JSON.stringify(ok.reduce((acc, item) => ({ ...acc, [item.cache]: (acc[item.cache] ?? 0) + 1 }), {}))}, 브라우저 합성 ${synth}회`)
   if (EXPECT === 'server') {
     check(ok.length >= 10, '목소리가 서버 TTS로 나온다(200 응답 10개 이상)')
-    check(synth === 0, '브라우저 음성 합성을 쓰지 않았다(한 목소리)' + (synth ? ': ' + JSON.stringify(await page.evaluate(() => window.__synthTexts)) : ''))
   } else {
     check(tts.every(item => item.status === 503), '모델이 없으면 /api/tts가 503')
   }
+  check(synth === 0, '브라우저 음성 합성을 쓰지 않았다(한 목소리)' + (synth ? ': ' + JSON.stringify(await page.evaluate(() => window.__synthTexts)) : ''))
 } catch (error) {
   problems.push('흐름 중단: ' + (error instanceof Error ? error.message.split('\n')[0] : String(error)))
   await page.screenshot({ path: process.env.SHOT || 'e2e-voice-failure.png' }).catch(() => {})

@@ -2,7 +2,7 @@
  * 자칼의 목소리: Supertonic 3(로컬 ONNX)으로 문장을 합성해 WAV로 돌려준다. 외부 TTS 서비스를 부르지 않는다.
  *   GET  /api/tts?text=…&lang=ko|en|ja&voice=M1   (브라우저 캐시가 그대로 쓰도록 같은 문장은 같은 주소)
  *   POST /api/tts {text, lang, voice}
- * 모델이 없으면(SUPERTONIC_DIR에 모델 없음, TTS_DISABLED=1) 503을 돌려주고 화면은 브라우저 음성 합성으로 읽는다.
+ * 모델이 없으면(SUPERTONIC_DIR에 모델 없음, TTS_DISABLED=1) 503을 돌려주고 화면은 녹음 파일이 있는 문장만 소리 내고 나머지는 글자로만 보인다.
  * 응답 헤더 x-tts-cache(memory|disk|miss)·x-tts-ms로 지연을 잴 수 있다.
  */
 import { parseTtsRequest, synthesizeCached, ttsAvailable, warmUp } from '../../../lib/tts/service'
