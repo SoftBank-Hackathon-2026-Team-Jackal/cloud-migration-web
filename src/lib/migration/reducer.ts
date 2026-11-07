@@ -11,6 +11,7 @@ import type {
 } from './events'
 import { isBackendPreview, normalizeEvidence } from './events.ts'
 import { adaptBackendPreview } from './previewAdapter.ts'
+import { markTime, type StepTime } from './sandboxProgress.ts'
 
 export const LAG_HISTORY_POINTS = 48
 /** 복제 지연 오실로스코프가 그리는 표본 수(data.lsn, 250ms마다 → 약 40초) */
@@ -34,9 +35,9 @@ export type MigrationState = {
   /** findings: 예전 방식(항목마다 한 건) · scans: 스캔 Activity가 끝날 때마다 한 건(백엔드 방식, 개수 묶음) */
   analysis: { findings: AnalysisFindingData[]; scans: AnalysisScanData[]; done: boolean }
   /** attempt: 지금 몇 번째 시도인지(build.check·build.result에서). review: 사람 검토 대기 */
-  build: { checks: Record<string, BuildCheckData>; lastCheck: BuildCheckData | null; fixes: BuildFixData[]; attempt: number | null; result: BuildResultData | null; review: BuildReviewData | null }
-  /** 샌드박스 검증 루프: steps[트랙 순번][단계], attempts는 판정이 끝난 트랙들 */
-  sandbox: { env: SandboxEnvData | null; steps: Record<number, Partial<Record<SandboxStep, SandboxStepData['state']>>>; tests: SandboxTestsData | null; attempts: SandboxAttemptData[]; done: SandboxDoneData | null }
+  build: { checks: Record<string, BuildCheckData>; lastCheck: BuildCheckData | null; fixes: BuildFixData[]; attempt: number | null; result: BuildResultData | null; review: BuildReviewData | null; buildAt: StepTime | null }
+  /** 샌드박스 검증 루프: steps[트랙 순번][단계], at: 단계별 시작·끝 시각(이벤트 at), attempts는 판정이 끝난 트랙들 */
+  sandbox: { env: SandboxEnvData | null; steps: Record<number, Partial<Record<SandboxStep, SandboxStepData['state']>>>; at: Record<number, Partial<Record<SandboxStep, StepTime>>>; tests: SandboxTestsData | null; attempts: SandboxAttemptData[]; done: SandboxDoneData | null }
   /** preview: 계획 미리보기(만들 리소스·재매핑·보안 규칙·검증). 없으면 화면은 매핑 항목만 보인다. */
   /** backend: 백엔드 Preview 원본. 오면 preview는 이 값과 매핑·계획 완료 값으로 다시 만든다(previewAdapter). */
   plan: { steps: PlanStepData[]; ready: boolean; meta: PlanReadyData | null; preview: PlanPreviewData | null; backend: BackendPreviewData | null }
@@ -71,8 +72,8 @@ export const initialState: MigrationState = {
   lastSeq: 0,
   lastPhase: null,
   analysis: { findings: [], scans: [], done: false },
-  build: { checks: {}, lastCheck: null, fixes: [], attempt: null, result: null, review: null },
-  sandbox: { env: null, steps: {}, tests: null, attempts: [], done: null },
+  build: { checks: {}, lastCheck: null, fixes: [], attempt: null, result: null, review: null, buildAt: null },
+  sandbox: { env: null, steps: {}, at: {}, tests: null, attempts: [], done: null },
   plan: { steps: [], ready: false, meta: null, preview: null, backend: null },
   approval: { required: false, excluded: [], rollbackPolicy: '', pendingDecisions: [], cutoverRequired: false, decision: null },
   provision: { resources: [], checks: [] },
@@ -179,7 +180,7 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
     case 'analysis.done':
       return { ...next, analysis: { ...next.analysis, done: true } }
     case 'build.check':
-      return { ...next, build: { ...next.build, checks: { ...next.build.checks, [event.data.id]: event.data }, lastCheck: event.data, attempt: event.data.attempt ?? next.build.attempt } }
+      return { ...next, build: { ...next.build, checks: { ...next.build.checks, [event.data.id]: event.data }, lastCheck: event.data, attempt: event.data.attempt ?? next.build.attempt, buildAt: event.data.id === 'build' ? markTime(next.build.buildAt ?? undefined, event.data.state, event.at) : next.build.buildAt } }
     case 'build.result':
       // 새 시도의 결과가 오면 사람 검토 대기는 끝난 것이다(수정 후 재시도).
       return { ...next, build: { ...next.build, result: event.data, attempt: event.data.attempt, review: null } }
@@ -191,7 +192,7 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
       const { run, attempt, step, state } = event.data
       // 사람 검토 뒤 다시 돌기 시작하면 지난 끝(NEEDS_REVIEW)과 검토 대기를 지운다.
       const resumed = next.sandbox.done?.status === 'NEEDS_REVIEW'
-      return { ...next, build: { ...next.build, attempt, ...(resumed ? { review: null } : {}) }, sandbox: { ...next.sandbox, ...(resumed ? { done: null } : {}), steps: { ...next.sandbox.steps, [run]: { ...next.sandbox.steps[run], [step]: state } } } }
+      return { ...next, build: { ...next.build, attempt, ...(resumed ? { review: null } : {}) }, sandbox: { ...next.sandbox, ...(resumed ? { done: null } : {}), steps: { ...next.sandbox.steps, [run]: { ...next.sandbox.steps[run], [step]: state } }, at: { ...next.sandbox.at, [run]: { ...next.sandbox.at[run], [step]: markTime(next.sandbox.at[run]?.[step], state, event.at) } } } }
     }
     case 'sandbox.tests':
       return { ...next, sandbox: { ...next.sandbox, tests: event.data } }
