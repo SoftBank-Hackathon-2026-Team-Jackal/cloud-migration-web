@@ -3,7 +3,7 @@
  * 화면에 있던 단계 기계를 그대로 옮긴 것이며, 브라우저의 MockProvider와 목업 SSE 서버가 함께 쓴다.
  * 바뀔 때마다 traffic.snapshot의 data 모양으로 상태를 내보낸다. 런타임 import 없음(Node가 그대로 읽는다).
  */
-import type { TrafficNote, TrafficPhase, TrafficSnapshotData, TrafficStepResult } from './events'
+import type { TrafficAlertData, TrafficHealthJudgement, TrafficNote, TrafficPhase, TrafficSnapshotData, TrafficStepResult } from './events'
 
 export const TRAFFIC_STEPS = [10, 50, 100] as const
 /** 지금 단계의 위치. 목록에 없는 값이면 그 값을 넘지 않는 가장 큰 단계로 본다. */
@@ -25,6 +25,16 @@ const OBSERVE_TICK = 0.5
 /** [가정] 데모 지표: 전체 요청량과 원본의 p99(ms). 대상 p99는 원본 × p99 비율이다. */
 const DEMO_RPS = 127
 const DEMO_ORIGIN_P99_MS = 41
+/** 안정화 구간(플랫폼 stability.py와 같은 기준): 대상 오류율 5% 초과 또는 p99가 원본 × MAX_P99_RATIO 초과면 알린다. */
+const ALERT_ERROR_RATE = 0.05
+const STABILIZE_TICK = 1
+
+export type TrafficSimOptions = {
+  /** 100% 뒤 안정화 구간 길이(초). 0이면 예전처럼 바로 완료다. */
+  stabilizeSeconds?: number
+  /** 안정화 구간에서 기준을 넘기 시작하거나 회복할 때 한 번씩 부른다(traffic.alert). */
+  emitAlert?: (data: TrafficAlertData) => void
+}
 
 export class TrafficSim {
   private emitSnapshot: (data: TrafficSnapshotData) => void
@@ -41,6 +51,10 @@ export class TrafficSim {
   private decision: TrafficSnapshotData['decision']
   private running = false
   private results: TrafficStepResult[] = []
+  private stabilizeLeft = 0
+  private health: TrafficHealthJudgement | null = null
+  private breached = false
+  private options: TrafficSimOptions
 
   /** 전환 단계(대상 비율 %). 서버가 정한 단계(예: [50, 100])를 줄 수 있고, 없으면 10 · 50 · 100이다. */
   private steps: number[]
@@ -48,7 +62,8 @@ export class TrafficSim {
   /** 시계 배속(시험용). 1이면 실제 시간 그대로다. 화면에 보이는 관찰 시간 값은 바꾸지 않는다. */
   private speed = 1
 
-  constructor(emit: (data: TrafficSnapshotData) => void, steps: readonly number[] = TRAFFIC_STEPS, speed = 1) {
+  constructor(emit: (data: TrafficSnapshotData) => void, steps: readonly number[] = TRAFFIC_STEPS, speed = 1, options: TrafficSimOptions = {}) {
+    this.options = options
     this.speed = speed >= 1 ? speed : 1
     this.emitSnapshot = emit
     this.steps = steps.length > 0 ? [...steps] : [...TRAFFIC_STEPS]
@@ -75,19 +90,35 @@ export class TrafficSim {
   /** 수동 롤백: 가중치를 0으로 되돌린다. 이미 롤백된 상태에서는 아무 일도 하지 않는다. */
   rollback() {
     if (!this.running || this.phase === 'rolledback') return
+    const stabilizing = this.phase === 'stabilizing'
     this.clearTimers()
     this.injected = false
     this.weightNew = 0
     this.phase = 'rolledback'
     this.decision = 'rollback'
+    this.health = null
     this.emit([{ key: 'manual', activity: 'traffic_rollback', params: { origin: 100, target: 0 } }])
+    // 안정화 구간(DB 전환 뒤)에서 되돌리면 DB 쓰기 주체도 원본으로 되돌린다(플랫폼: data 워크플로에 rollback Signal).
+    if (stabilizing) this.after(1500, () => this.emit([{ key: 'dbRollback', activity: 'traffic_rollback' }]))
+  }
+
+  /** 안정화 구간을 끝내고 확정한다(사람이 누름). */
+  finalize() {
+    if (!this.running || this.phase !== 'stabilizing') return
+    this.clearTimers()
+    this.complete([{ key: 'finalized', activity: 'traffic_stabilize' }])
   }
 
   /** 데모 전용: 새 환경에서 오류가 나게 한다(관찰 창 안의 지표가 기준을 넘어 롤백된다). */
   inject() {
-    if (!this.running || (this.phase !== 'observing' && this.phase !== 'applying')) return
+    if (!this.running || (this.phase !== 'observing' && this.phase !== 'applying' && this.phase !== 'stabilizing')) return
     this.injected = true
     this.emit([{ key: 'inject' }])
+  }
+
+  /** 데모 전용: 넣은 장애를 끈다(안정화 구간에서 회복을 보이려고). */
+  clearFault() {
+    this.injected = false
   }
 
   /** 롤백된 뒤 처음부터 다시 시도한다. */
@@ -110,6 +141,9 @@ export class TrafficSim {
     this.phase = 'applying'
     this.decision = undefined
     this.results = []
+    this.stabilizeLeft = 0
+    this.health = null
+    this.breached = false
   }
 
   private clearTimers() {
@@ -145,6 +179,10 @@ export class TrafficSim {
     }
     if (this.decision) data.decision = this.decision
     if (notes && notes.length > 0) data.notes = notes
+    if (this.phase === 'stabilizing' && this.health) {
+      data.health = { ...this.health, breach: this.health.breach.map(item => ({ ...item })) }
+      data.stabilize_left_seconds = this.stabilizeLeft
+    }
     this.decision = undefined
     this.emitSnapshot(data)
   }
@@ -225,11 +263,16 @@ export class TrafficSim {
     this.results.push({ step: percent, verdict: 'pass', failed_requests: this.failed, p99_ratio: this.p99, observed_seconds: observed })
     const pass: TrafficNote = { key: 'gatePass', activity: 'gate', params: { pct: percent, failed: this.failed, ratio: this.p99.toFixed(2) } }
     if (this.stepIndex === this.steps.length - 1) {
-      this.residual = { requests: 38, streams: 14 }
-      this.phase = 'complete'
-      this.decision = 'done'
-      this.emit([pass, { key: 'reached', activity: 'gate', params: { pct: percent } }])
-      this.drain()
+      const reached: TrafficNote = { key: 'reached', activity: 'gate', params: { pct: percent } }
+      if ((this.options.stabilizeSeconds ?? 0) > 0) {
+        this.phase = 'stabilizing'
+        this.stabilizeLeft = this.options.stabilizeSeconds ?? 0
+        this.health = this.judgeHealth()
+        this.emit([pass, reached])
+        this.stabilize()
+      } else {
+        this.complete([pass, reached])
+      }
     } else {
       this.stepIndex += 1
       this.phase = 'applying'
@@ -237,6 +280,48 @@ export class TrafficSim {
       this.emit([pass])
       this.beginApplying()
     }
+  }
+
+  private complete(notes: TrafficNote[]) {
+    this.residual = { requests: 38, streams: 14 }
+    this.phase = 'complete'
+    this.decision = 'done'
+    this.health = null
+    this.emit(notes)
+    this.drain()
+  }
+
+  /** 안정화 구간 한 창의 대상 판정(데모 값). 장애를 넣으면 오류율 50% · p99 1000ms. */
+  private judgeHealth(): TrafficHealthJudgement {
+    const requests = DEMO_RPS * STABILIZE_TICK
+    const failed = this.injected ? Math.round(requests * 0.5) : 0
+    const errorRate = Number((failed / requests).toFixed(4))
+    const p99 = this.injected ? 1000 : DEMO_ORIGIN_P99_MS + Math.round(Math.abs(Math.sin(Date.now() / 900)) * 6)
+    const limit = Math.round(DEMO_ORIGIN_P99_MS * MAX_P99_RATIO)
+    const breach: TrafficHealthJudgement['breach'] = []
+    if (errorRate > ALERT_ERROR_RATE) breach.push({ code: 'ERROR_RATE', value: errorRate, limit: ALERT_ERROR_RATE })
+    if (p99 > limit) breach.push({ code: 'P99', value: p99, limit })
+    return { requests, failed, error_rate: errorRate, p99_ms: p99, baseline_p99_ms: DEMO_ORIGIN_P99_MS, p99_limit_ms: limit, alert_error_rate: ALERT_ERROR_RATE, judged: true, breach }
+  }
+
+  // 3-1. 안정화 구간: 창마다 대상을 판정하고, 기준을 넘기 시작하거나 회복할 때 한 번씩 알린다. 자동으로 되돌리지 않는다.
+  private stabilize() {
+    const timer = setInterval(() => {
+      this.health = this.judgeHealth()
+      const breached = this.health.breach.length > 0
+      if (breached !== this.breached) {
+        this.breached = breached
+        this.options.emitAlert?.({ ...this.health, state: breached ? 'breach' : 'recovered', phase: 'stabilizing' })
+      }
+      this.stabilizeLeft = Math.max(0, this.stabilizeLeft - STABILIZE_TICK)
+      if (this.stabilizeLeft <= 0 && !breached) {
+        clearInterval(timer)
+        this.complete([{ key: 'finalized', activity: 'traffic_stabilize' }])
+        return
+      }
+      this.emit()
+    }, STABILIZE_TICK * 1000 / this.speed)
+    this.intervals.push(timer)
   }
 
   // 4. 100% 이후: 옛 환경에 남은 요청·열린 연결이 줄어드는지 확인

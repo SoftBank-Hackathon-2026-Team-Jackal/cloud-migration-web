@@ -266,6 +266,7 @@ export class SseProvider implements MigrationProvider {
   /** [가정] 트래픽 롤백·재시도 경로는 정해지지 않았다. */
   rollbackTraffic() { if (this.can('traffic.rollback')) void this.post('/traffic/rollback', undefined, { phase: 'traffic' }) }
   retryTraffic() { if (this.can('traffic.retry')) void this.post('/traffic/retry', undefined, { phase: 'traffic' }) }
+  finalizeTraffic() { if (this.can('traffic.finalize')) void this.post('/traffic/finalize', undefined, { phase: 'traffic' }) }
   injectFailure() { /* 데모 전용: SSE 모드에서는 쓰지 않는다. */ }
 
   /** [가정] GET /migrations/{id}/report: 백엔드에 아직 없다(capabilities의 report가 없으면 부르지 않는다). */

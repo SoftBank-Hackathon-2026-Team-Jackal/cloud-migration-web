@@ -82,3 +82,13 @@ export function mockSpeed(): number {
   const value = Number(new URLSearchParams(window.location.search).get('speed'))
   return Number.isFinite(value) && value >= 1 ? Math.min(value, 20) : 1
 }
+
+/**
+ * 시연용 ?stabilize=N(초, 1~600): 목업에서 100% 전환 뒤 확정 전 안정화 구간을 N초 둔다(기본 0 = 없음, 바로 완료).
+ * 실제 모드는 플랫폼 정책(stabilize_seconds)을 따른다. 안정화 구간에서 "장애 주입"을 누르면 Jackal이 먼저 알리고 롤백할지 묻는다.
+ */
+export function stabilizeDemoSeconds(): number {
+  if (typeof window === 'undefined') return 0
+  const value = Number(new URLSearchParams(window.location.search).get('stabilize'))
+  return Number.isInteger(value) && value >= 1 && value <= 600 ? value : 0
+}

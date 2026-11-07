@@ -419,14 +419,15 @@ export type HandoverItem = 'dns' | 'origin' | 'access'
 /** 목업 전용(플랫폼은 cutover.handover를 내지 않는다). held: 전환이 거부돼 인계를 보류했다. detail은 근거(예: 도메인·TTL, 보존 시간). */
 export type HandoverData = { item: HandoverItem; state: 'running' | 'done' | 'held'; detail?: string }
 
-export type TrafficPhase = 'applying' | 'observing' | 'gate' | 'complete' | 'rolledback'
+/** stabilizing: 100% 전환 뒤 최종 확정 전 안정화 구간(정책 stabilize_seconds > 0일 때만). 사람이 확정하거나 롤백한다. */
+export type TrafficPhase = 'applying' | 'observing' | 'gate' | 'stabilizing' | 'complete' | 'rolledback'
 /** 트래픽 피드에 남길 기록. key로 화면이 자기 문구를 고른다. restart는 피드를 비우라는 뜻이다. */
 /**
  * 트래픽 피드에 남길 기록. key로 화면이 자기 문구를 고른다. restart는 피드를 비우라는 뜻이다.
  * 플랫폼(cmp_traffic snapshot.py)이 보내는 key: apply·observe·gatePass·gateFail·rollback·reached·manual·restart 등. prepare·inject·drained는 화면·목업이 쓴다.
  * activity가 없으면 화면이 key로 기본 이름을 고른다(trafficModel.ts).
  */
-export type TrafficNoteKey = 'prepare' | 'apply' | 'observe' | 'gatePass' | 'gateFail' | 'rollback' | 'reached' | 'manual' | 'inject' | 'drained' | 'restart'
+export type TrafficNoteKey = 'prepare' | 'apply' | 'observe' | 'gatePass' | 'gateFail' | 'rollback' | 'reached' | 'manual' | 'inject' | 'drained' | 'restart' | 'finalized' | 'dbRollback'
 export type TrafficNote = { key: TrafficNoteKey; params?: Record<string, string | number>; activity?: string }
 
 /*
@@ -484,7 +485,31 @@ export type TrafficSnapshotData = {
   results?: TrafficStepResult[]
   /** 이 구간에도 계속되는 논리 복제의 지연. 목업 전용 */
   replication?: { lag_ms: number | null }
+  /** 안정화 구간의 대상 건강 상태(관찰 창 하나) [확정: 플랫폼 stability.py] */
+  health?: TrafficHealthJudgement
+  /** 안정화 구간에서 남은 시간(초) */
+  stabilize_left_seconds?: number
 }
+
+/** 안정화 구간 판정에서 기준을 넘은 항목. ERROR_RATE는 0~1 비율, P99는 ms. */
+export type TrafficHealthBreach = { code: 'ERROR_RATE' | 'P99'; value: number; limit: number }
+/**
+ * 안정화 구간의 대상 건강 판정 [확정: 플랫폼 packages/traffic/src/cmp_traffic/stability.py].
+ * 요청이 너무 적으면 judged=false(판정하지 않음). p99 한도는 전환 전 원본 p99 × 정책 max_p99_ratio다.
+ */
+export type TrafficHealthJudgement = {
+  requests: number
+  failed: number
+  error_rate: number | null
+  p99_ms: number | null
+  baseline_p99_ms: number
+  p99_limit_ms: number
+  alert_error_rate: number
+  judged: boolean
+  breach: TrafficHealthBreach[]
+}
+/** traffic.alert: 안정화 구간에서 대상이 기준을 넘기 시작했거나(breach) 회복했다(recovered). 상태가 바뀔 때만 한 번 온다. */
+export type TrafficAlertData = TrafficHealthJudgement & { state: 'breach' | 'recovered'; phase: 'stabilizing' }
 
 /* ==== DB 전환 상세 (cutover.plan · cutover.ready · cutover.step 확장 · cutover.outcome · cutover.verify) ====
  * [확정: 플랫폼 packages/data/src/cmp_data/cutover_events.py · apps/worker/src/cmp_worker/activities/data_cutover.py, phase는 verification].
@@ -612,6 +637,7 @@ export type MigrationEvent =
   | Base<'traffic.ready', TrafficReadyData>
   | Base<'traffic.snapshot', TrafficSnapshotData>
   | Base<'traffic.prepare', TrafficPrepareData>
+  | Base<'traffic.alert', TrafficAlertData>
   | Base<'cutover.step', CutoverStepData>
   | Base<'cutover.result', CutoverResultData>
   | Base<'cutover.handover', HandoverData>

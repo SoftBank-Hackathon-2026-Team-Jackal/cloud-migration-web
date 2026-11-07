@@ -25,6 +25,9 @@ const PHASE_OF: Record<string, BackendPhase> = {
 /** 호출어 없이 받는 명령의 최대 길이(정규화한 글자 수): 발표 중의 긴 설명이 명령으로 잡히지 않게 */
 const BARE_COMMAND_MAX = 14
 const CONFIRM_MS = 12000
+/** 안정화 구간 이상 알림("롤백할까요?") 뒤에 "응"만으로 롤백을 승인할 수 있는 시간 */
+const ALERT_CONFIRM_MS = 30000
+const ROLLBACK_ASKS = new Set(['r.traffic.alertError', 'r.traffic.alertP99'])
 /** "지금 어디야"를 모델로 답할 때 기다리는 최대 시간(그 뒤에는 고정 문장) */
 const STATUS_MODEL_MS = 5000
 /** 자칼이 되묻거나 말을 시킨 뒤, 호출어 없이 짧은 대답("응", "승인해")을 받는 시간 */
@@ -98,6 +101,11 @@ export function useStageVoice({ stage, lang, captionLang, speaking, lastLine, sp
       const report = queue.current.next(performance.now(), live.current.speaking)
       if (!report) return
       if (report.key === 'r.approval.ask' || report.key === 'r.cutover.ask') factsRead.current = true
+      // Jackal이 먼저 "롤백할까요?"라고 물었으면 롤백을 확인 대기로 둔다: "응"이면 바로 롤백, "아니"면 취소.
+      if (ROLLBACK_ASKS.has(report.key)) {
+        pending.current = { command: 'rollback', until: performance.now() + ALERT_CONFIRM_MS }
+        setConfirming('rollback')
+      }
       const { lang: spoken, captionLang: shown } = live.current
       speakLine(renderReport(report, spoken), shown !== spoken ? renderReport(report, shown) : undefined)
     }, 250)
