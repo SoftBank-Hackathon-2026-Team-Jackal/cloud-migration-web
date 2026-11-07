@@ -2,9 +2,11 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { temporalStatusOf, type TemporalStatus } from '../lib/temporalStatus'
+import { readMigration } from '../lib/migration/session'
 
 /**
  * 오른쪽 패널(항상 켜짐): Temporal UI를 iframe으로 띄운다. 시연용 장애 주입은 왼쪽 ToolsPanel이 맡는다.
+ * 보여 줄 이전: 이 탭이 진행 중인 이전 → 없으면 실행 중인 이전 → 없으면 워크플로 목록.
  * 열림·닫힘은 localStorage에 남겨, 페이지를 새로 불러와도(로그인 리다이렉트, /settings 이동) 닫아 둔 패널이 다시 열리지 않는다.
  * Temporal UI는 next.config.ts의 fallback rewrite로 같은 origin에서 열린다. 새 이전 건이 시작되면 그 워크플로로 옮겨 간다.
  * 왼쪽 가장자리를 끌어 폭을 바꾸고(더블클릭하면 기본 폭), 폭은 localStorage에 남긴다.
@@ -48,11 +50,14 @@ export default function TemporalSidebar() {
     let alive = true
     const tick = async () => {
       try {
-        const wf = new URLSearchParams(location.search).get('wf')
+        // 이 탭이 진행 중인 이전(?migration= 또는 sessionStorage)을 따라간다. 없으면 서버가 실행 중인 이전을 고른다.
+        let storage: Storage | null = null
+        try { storage = sessionStorage } catch { /* 저장소를 못 쓰면 주소만 */ }
+        const wf = new URLSearchParams(location.search).get('wf') ?? readMigration({ location, history, storage })?.id ?? null
         const res = await fetch('/api/temporal' + (wf ? `?wf=${encodeURIComponent(wf)}` : ''), { cache: 'no-store' })
         const json = await res.json()
         if (!alive) return
-        if (json.root) setRoot(json.root)
+        setRoot(json.root ?? null)
         setStatus(json.error ? 'error' : temporalStatusOf(json.workflows ?? []))
       } catch { if (alive) setStatus('error') }
     }

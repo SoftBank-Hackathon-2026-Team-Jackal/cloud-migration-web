@@ -138,7 +138,7 @@ function ProvisioningBody({ ready, target, onNext, onComplete }: { ready: boolea
       <div className="analysis-discovery-title">
         <span className="analysis-live-dot" />
         <h2>{t('prov.statusTitle')}</h2>
-        <small>DEMO</small>
+        {mode === 'mock' && <small>DEMO</small>}
       </div>
       <div ref={listRef} className="prov-status-list" tabIndex={0}>
         {resources.length === 0 && <p className="prov-empty">{t('prov.logEmpty')}</p>}

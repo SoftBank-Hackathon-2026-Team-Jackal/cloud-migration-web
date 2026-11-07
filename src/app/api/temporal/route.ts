@@ -62,9 +62,10 @@ export async function GET(request: Request) {
     let root = new URL(request.url).searchParams.get('wf')
     if (root && !/^[\w.:-]+$/.test(root)) return Response.json({ error: 'invalid wf' }, { status: 400 })
     if (!root) {
-      const [latest] = await list('WorkflowType="MigrationWorkflow"')
-      if (!latest) return Response.json({ root: null, workflows: [], events: [] })
-      root = latest.execution.workflowId
+      // 이 탭에 진행 중인 이전이 없으면 지금 실행 중인 이전을 보인다. 끝난 지난 실행은 고르지 않는다(목록을 보인다).
+      const [running] = await list('WorkflowType="MigrationWorkflow" AND ExecutionStatus="Running"')
+      if (!running) return Response.json({ root: null, workflows: [], events: [] })
+      root = running.execution.workflowId
     }
     const members = await list(`RootWorkflowId="${root}"`)
     const workflows = members
