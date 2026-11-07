@@ -329,7 +329,7 @@ export default function AnalysisStage({ target, review = NO_REVIEW, onAdvance, o
       </aside>
     </div>
     <div className="analysis-next-area">
-      <span data-particle-target="text">{finished ? t('analysis.footer.done') : wait === 'review' ? t('analysis.footer.review') : wait === 'mapping' ? t('analysis.footer.mapping') : t('analysis.footer.run')}</span>
+      <span data-particle-target="text">{wait === 'review' ? t('analysis.footer.review') : wait === 'mapping' ? t('analysis.footer.mapping') : finished ? t('analysis.footer.done') : t('analysis.footer.run')}</span>
       <button type="button" disabled={!finished || !ready || proceed} onClick={() => setProceed(true)}>{t('analysis.next')} <span aria-hidden="true">→</span></button>
     </div>
     {leaving && handoff && <div className="analysis-handoff" aria-hidden="true">

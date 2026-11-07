@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { analysisWait } from '../../src/lib/migration/analysisWait.ts'
+import { analysisWait, showMappingSheet } from '../../src/lib/migration/analysisWait.ts'
 import type { ReviewView } from '../../src/lib/migration/review.ts'
 import { ko } from '../../src/lib/i18n/ko.ts'
 import { en } from '../../src/lib/i18n/en.ts'
@@ -42,4 +42,21 @@ test('막힘 등 다른 상태는 대기 표시를 하지 않는다', () => {
 test('대기 문구는 세 언어 모두 있다', () => {
   const keys = ['analysis.wait.label', 'analysis.wait.mapping', 'analysis.wait.mappingDetail', 'analysis.wait.review', 'analysis.wait.reviewDetail', 'analysis.footer.mapping', 'analysis.footer.review']
   for (const dict of [ko, en, ja] as Record<string, string>[]) for (const key of keys) assert.ok(dict[key], key)
+})
+
+test('뼈대 검토 화면: 매핑 구간에 분석·첫 화면 밖에서만, 막힘에서 나갔으면 띄우지 않는다', () => {
+  const base = { active: true, dismissed: false, stage: 'rehearsal', wait: 'mapping' as const }
+  assert.equal(showMappingSheet(base), true)
+  assert.equal(showMappingSheet({ ...base, stage: 'analysis' }), false, '분석 화면은 한 줄로')
+  assert.equal(showMappingSheet({ ...base, stage: 'intro' }), false)
+  assert.equal(showMappingSheet({ ...base, dismissed: true }), false)
+  assert.equal(showMappingSheet({ ...base, active: false }), false, '이전이 끝났거나 분석을 지났다')
+  assert.equal(showMappingSheet({ ...base, wait: 'review' }), false, '게이트가 서면 실제 검토 화면')
+  assert.equal(showMappingSheet({ ...base, wait: null }), false, '404: 검토할 것이 없으면 닫는다')
+})
+
+test('뼈대 검토 화면 문구가 세 언어에 있다', () => {
+  const keys = ['step', 'title', 'lead', 'stepsAria', 'mapping', 'evidence', 'ready', 'elapsed', 'note', 'security'].map(key => 'reviewGate.loading.' + key)
+  for (const dict of [ko, en, ja] as Record<string, string>[]) for (const key of keys) assert.ok(dict[key], key)
+  assert.ok(ko['reviewGate.loading.title'].includes('매핑'))
 })

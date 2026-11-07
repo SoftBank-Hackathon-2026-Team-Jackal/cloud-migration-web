@@ -23,3 +23,11 @@ export function analysisWait({ mode, done, view, known, past }: {
   if (!view) return known ? null : 'mapping'
   return view.phase === 'ANALYZING' ? 'mapping' : null
 }
+
+/**
+ * 매핑 중 뼈대 검토 화면을 띄울지. 분석 화면은 '기능 매핑 중' 한 줄로 보이고, 첫 화면에는 띄우지 않는다.
+ * 그 밖의 화면(샌드박스 등)에서 매핑 구간이면 검토 화면 자리에 뼈대를 띄운다. 막힘 화면에서 나갔으면(dismissed) 띄우지 않는다.
+ */
+export function showMappingSheet({ active, dismissed, stage, wait }: { active: boolean; dismissed: boolean; stage: string; wait: AnalysisWait }): boolean {
+  return active && !dismissed && stage !== 'intro' && stage !== 'analysis' && wait === 'mapping'
+}
