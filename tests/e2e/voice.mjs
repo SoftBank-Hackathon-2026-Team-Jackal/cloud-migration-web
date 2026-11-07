@@ -137,8 +137,24 @@ try {
   await say('다음')
   await page.locator('.dm').waitFor()
   await waitHint('다음')
-  await waitChat(/복제 지연 0\. 트래픽 이전으로 갈까요\?/, '복제 지연 0 → 트래픽 이전을 묻는다')
+  await waitChat(/복제 지연 0\. DB 전환으로 갈까요\?/, '복제 지연 0 → DB 전환을 묻는다(백엔드 순서)')
   await say('다음')
+
+  // DB 전환: "다음"은 승인이 아니다 → 사실 읽기 → "승인할게"
+  await page.locator('.cx-approve').waitFor()
+  check(true, '"다음" → DB 전환')
+  await waitChat(/진행하려면 '승인'이라고 해 주세요/, 'DB 전환 승인 방법을 알려 준다')
+  await say('다음')
+  await page.waitForTimeout(1500)
+  check(await page.locator('.cx-approve').count() === 1, '"다음"으로는 DB 전환을 승인하지 않는다')
+  await say('승인할게')
+  await page.waitForFunction(() => document.querySelectorAll('.cutover-tile').length >= 3)
+  check(true, '"승인할게" → DB 전환·검증')
+  // 전환 결과를 다시 보여 주는 동안은 "다음"이 아직 없다: "트래픽 전환으로" 버튼이 켜진 뒤에 말한다.
+  await page.waitForSelector('.cx-run .flow-primary:not([disabled])')
+  // 이 단계에서는 자칼이 되묻지 않으므로 호출어와 함께 말한다(되물은 뒤 15초가 지나면 짧은 말만으로는 명령이 아니다).
+  await waitHint('다음')
+  await say('헤이 자칼, 다음')
   await page.locator('.traffic-layout').waitFor()
   check(true, '"다음" → 트래픽')
 
@@ -151,23 +167,8 @@ try {
   await waitChat(/요청 취소/, '"아니" → 취소')
   check(!(await chat()).includes('게이트 실패'), '되묻기를 거절하면 장애를 넣지 않는다')
   await waitHint('다음')
-  await waitChat(/트래픽 이전 완료\. DB 전환으로 갈까요\?/, '트래픽 완료 → DB 전환을 묻는다')
+  await waitChat(/트래픽 이전 완료\. 완료 리포트로 갈까요\?/, '트래픽 완료 → 완료 리포트를 묻는다')
   await say('다음')
-
-  // DB 전환: "다음"은 승인이 아니다 → 사실 읽기 → "승인할게"
-  await page.locator('.cx-approve').waitFor()
-  await waitChat(/진행하려면 '승인'이라고 해 주세요/, 'DB 전환 승인 방법을 알려 준다')
-  await say('다음')
-  await page.waitForTimeout(1500)
-  check(await page.locator('.cx-approve').count() === 1, '"다음"으로는 DB 전환을 승인하지 않는다')
-  await say('승인할게')
-  await page.waitForFunction(() => document.querySelectorAll('.cutover-tile').length >= 3)
-  check(true, '"승인할게" → DB 전환·검증')
-  // 전환 결과를 다시 보여 주는 동안은 "다음"이 아직 없다: 마지막 버튼이 켜진 뒤에 말한다.
-  await page.waitForSelector('.cx-run .flow-primary:not([disabled])')
-  // 이 단계에서는 자칼이 되묻지 않으므로 호출어와 함께 말한다(되물은 뒤 15초가 지나면 짧은 말만으로는 명령이 아니다).
-  await waitHint('다음')
-  await say('헤이 자칼, 다음')
   await page.waitForSelector('.report-panel').then(() => check(true, '"다음" → 리포트'), () => check(false, '"다음" → 리포트'))
   await page.waitForTimeout(2500)
 

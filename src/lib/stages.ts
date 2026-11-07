@@ -7,16 +7,26 @@ export type Stage =
   | 'approval'
   | 'provisioning'
   | 'data'
-  | 'traffic'
   | 'cutover'
+  | 'traffic'
+  /** 완료 리포트(트래픽 전환 뒤) */
+  | 'report'
 
 export type Target = 'gcp' | 'onprem'
 
+/**
+ * 화면 순서. 백엔드 Workflow 순서와 같다(실제·목업 모두):
+ * 분석 → 빌드(샌드박스) → 계획 → 승인 → 구축 → 데이터 복제 → DB 전환 → 트래픽 전환 → 완료 리포트.
+ * DB 전환(cutover.*)은 데이터 복제 안에서 일어나고, 트래픽은 DB 전환이 끝나야 시작한다.
+ */
 export const STAGE_ORDER: Stage[] = [
-  'intro', 'setup', 'analysis', 'rehearsal', 'planning', 'approval', 'provisioning', 'data', 'traffic', 'cutover',
+  'intro', 'setup', 'analysis', 'rehearsal', 'planning', 'approval', 'provisioning', 'data', 'cutover', 'traffic', 'report',
 ]
 
-/** 상단 진행 표시줄에 보일 단계 (intro·setup은 제외). 순서와 backendPhase는 백엔드 워크플로우(analysis → build → planning → awaiting_approval → …)와 같다. */
+/**
+ * 상단 진행 표시줄에 보일 단계(intro·setup·report 제외). 완료 리포트(report)에서는 모두 끝난 것으로 보인다.
+ * backendPhase는 그 단계 이벤트가 오는 백엔드 phase다(DB 전환 이벤트는 verification phase로 온다).
+ */
 export const RAIL: Array<{ stage: Stage; backendPhase: string }> = [
   { stage: 'analysis', backendPhase: 'analysis' },
   { stage: 'rehearsal', backendPhase: 'build' },
@@ -24,18 +34,9 @@ export const RAIL: Array<{ stage: Stage; backendPhase: string }> = [
   { stage: 'approval', backendPhase: 'awaiting_approval' },
   { stage: 'provisioning', backendPhase: 'provisioning' },
   { stage: 'data', backendPhase: 'data_copy' },
-  { stage: 'traffic', backendPhase: 'traffic' },
   { stage: 'cutover', backendPhase: 'verification' },
+  { stage: 'traffic', backendPhase: 'traffic' },
 ]
-
-/**
- * 플랫폼 실제 순서(데이터 → DB 전환 → 트래픽)의 진행 표시. DB 전환 계획이 트래픽보다 먼저 오면(state.cutover.dbFirst) 쓴다.
- * 완료 리포트는 전환 화면 안에 있으므로, 트래픽 뒤 리포트를 보일 때는 모든 단계를 끝난 것으로 표시한다(StageRail complete).
- */
-export const DB_FIRST_ORDER: Stage[] = [
-  'intro', 'setup', 'analysis', 'rehearsal', 'planning', 'approval', 'provisioning', 'data', 'cutover', 'traffic',
-]
-export const DB_FIRST_RAIL: typeof RAIL = DB_FIRST_ORDER.flatMap(stage => RAIL.filter(item => item.stage === stage))
 
 export function isStage(value: string | null): value is Stage {
   return value !== null && (STAGE_ORDER as string[]).includes(value)

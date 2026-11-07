@@ -94,18 +94,21 @@ try {
   check((await text()).length > 0, '구축·준비 검사 완료 → 데이터 복제')
 
   await press('.flow-footer .flow-primary')
-  note('데이터 복제 준비')
+  note('데이터 복제 준비 → DB 전환(백엔드 순서)')
 
-  await press('.flow-footer .flow-primary')
-  note('트래픽 100% 이전, 잔여 요청 0')
-
+  await page.locator('.cx-decide[data-gate=ready]').waitFor()
   await page.locator('.approval-check input').check()
   await press('.approval-actions .flow-primary')
   note('두 번째 승인(DB 전환)')
-  // 전환 → 쓰기 중단 구간 재생 → 테이블 검증·합계 → 인계가 끝나면 리포트 버튼이 켜진다(합계 개수는 서버가 정한다).
+  // 전환 → 쓰기 중단 구간 재생 → 테이블 검증·합계 → 인계가 끝나면 "트래픽 전환으로"가 켜진다(합계 개수는 서버가 정한다).
   await page.waitForFunction(() => document.querySelectorAll('.cutover-tile').length >= 3)
   await page.waitForSelector('.flow-footer .flow-primary:not([disabled])')
   await press('.flow-footer .flow-primary')
+
+  await page.locator('.traffic-layout').waitFor()
+  await page.waitForSelector('.traffic-actions .flow-primary:not([disabled])', { timeout: 120000 })
+  await press('.traffic-actions .flow-primary')
+  note('트래픽 100% 이전, 잔여 요청 0 → 완료 리포트')
 
   await page.waitForSelector('.report-panel')
   await page.waitForTimeout(3000)

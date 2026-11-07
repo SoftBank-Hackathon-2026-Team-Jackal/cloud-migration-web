@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { initialState, reducer, type Action, type MigrationState } from '../../src/lib/migration/reducer.ts'
 import { SseProvider } from '../../src/lib/migration/sseProvider.ts'
-import { cutoverAfter, cutoverEntry, cutoverRunView, dataNextStage, reportPauseMs } from '../../src/lib/migration/flow.ts'
+import { cutoverEntry, cutoverRunView, dataNextStage, reportPauseMs, resumeStage } from '../../src/lib/migration/flow.ts'
 import { startRequestFor, type CutoverOutcomeData, type DraftEvent, type MigrationEvent } from '../../src/lib/migration/events.ts'
 
 let seq = 0
@@ -117,10 +117,10 @@ test('리포트 읽기 실패는 이전을 실패로 바꾸지 않는다(완료 
 
 // ---- 2. 단계 순서: 데이터 → DB 전환 → 트래픽 → 완료 ----
 
-test('순서: 데이터 단계 중 2차 승인 요청(gate=cutover)이 오면 데이터 "다음"은 전환 화면으로 간다', () => {
+test('순서: 데이터 "다음"은 승인 요청 전에도 DB 전환 화면이다(트래픽으로 건너뛰지 않는다)', () => {
   seq = 0
   let state = running()
-  assert.equal(dataNextStage(state), 'traffic', '목업·옛 순서: 승인 요청이 없으면 트래픽')
+  assert.equal(dataNextStage(state), 'cutover')
   state = run(state,
     { type: 'cutover.plan', phase: 'verification', status: 'waiting', data: PLAN } as DraftEvent,
     { type: 'approval.required', phase: 'verification', status: 'waiting', data: { excluded: [], rollback_policy: 'reverse_replication', gate: 'cutover' } } as DraftEvent)
@@ -128,26 +128,16 @@ test('순서: 데이터 단계 중 2차 승인 요청(gate=cutover)이 오면 �
   assert.equal(dataNextStage(state), 'cutover')
 })
 
-test('순서: 전환이 통과했고 트래픽이 아직이면 전환 화면 "다음"은 트래픽, 트래픽 뒤에는 완료 리포트', () => {
+test('순서: 전환이 통과했으면 다시 들어와도 전환 결과, 데이터 다음은 트래픽, 트래픽 뒤에는 완료 리포트', () => {
   seq = 0
   let state = run(running(),
     { type: 'cutover.plan', phase: 'verification', status: 'waiting', data: PLAN } as DraftEvent,
     { type: 'cutover.step', phase: 'verification', status: 'running', data: { n: 1, state: 'done', id: 'pause', method: 'fast', of: 1, result: 'ok', window: 'pause' } } as DraftEvent,
     { type: 'cutover.outcome', phase: 'verification', status: 'running', data: SWITCHED } as DraftEvent)
-  assert.equal(cutoverAfter(state), 'traffic')
-  assert.equal(cutoverEntry(state), 'run', '전환 뒤 트래픽 전이면 다시 들어와도 전환 결과(승인 화면 아님)')
+  assert.equal(cutoverEntry(state), 'run', '전환 뒤 다시 들어와도 전환 결과(승인 화면 아님)')
   assert.equal(dataNextStage(state), 'traffic', '이미 전환했으면 데이터 다음은 트래픽')
   state = run(state, { type: 'traffic.snapshot', phase: 'traffic', status: 'running', data: { phase: 'complete', weights: { origin: 0, target: 100 }, step: 100, residual: { requests_per_sec: 0, streams: 0 }, notes: [], results: [] } } as unknown as DraftEvent)
-  assert.equal(cutoverEntry(state), 'report')
-  assert.equal(cutoverAfter(state), 'report')
-})
-
-test('순서(목업): 트래픽 뒤에 전환하면 전환 "다음"은 완료 리포트', () => {
-  seq = 0
-  const state = run(running(),
-    { type: 'traffic.snapshot', phase: 'traffic', status: 'running', data: { stage: 'drained', weight: 100, steps: [], notes: [], results: [] } } as unknown as DraftEvent,
-    { type: 'cutover.outcome', phase: 'verification', status: 'running', data: SWITCHED } as DraftEvent)
-  assert.equal(cutoverAfter(state), 'report')
+  assert.equal(resumeStage(state), 'report')
 })
 
 // ---- 3. handover가 비면 완료 ----

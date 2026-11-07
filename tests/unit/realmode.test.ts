@@ -11,7 +11,8 @@ import { initialState, reducer, type Action } from '../../src/lib/migration/redu
 import { SseProvider, STALL_MS, approvalScope } from '../../src/lib/migration/sseProvider.ts'
 import { startRequestFor, type PlanReadyData } from '../../src/lib/migration/events.ts'
 import { analysisFinished, reviewSettled, showReviewPanel, type ReviewView } from '../../src/lib/migration/review.ts'
-import { clearMigration, readMigration, saveMigration, stageForPhase, SESSION_KEY, type SessionEnv } from '../../src/lib/migration/session.ts'
+import { clearMigration, readMigration, saveMigration, SESSION_KEY, type SessionEnv } from '../../src/lib/migration/session.ts'
+import { resumeStage } from '../../src/lib/migration/flow.ts'
 
 // ---- ① 검토 게이트 시점 ----
 
@@ -262,7 +263,7 @@ test('④ attach: 처음부터(Last-Event-ID 없이) 연결해 snapshot으로 �
     assert.equal(state.migrationId, 'm-1')
     assert.equal(state.analysis.done, true)
     assert.equal(state.lastPhase, 'planning')
-    assert.equal(stageForPhase(state.lastPhase), 'planning')
+    assert.equal(resumeStage(state), 'planning')
   } finally { h.restore() }
 })
 
@@ -276,12 +277,6 @@ test('④ attach: 서버가 모르는 이전(404)이면 migration_not_found를 �
   } finally { h.restore() }
 })
 
-test('④ phase → 화면 대응', () => {
-  assert.equal(stageForPhase(null), 'analysis')
-  assert.equal(stageForPhase('analysis'), 'analysis')
-  assert.equal(stageForPhase('build'), 'rehearsal')
-  assert.equal(stageForPhase('awaiting_approval'), 'approval')
-  assert.equal(stageForPhase('provisioning'), 'provisioning')
-  assert.equal(stageForPhase('data_copy'), 'data')
-  assert.equal(stageForPhase('verification'), 'cutover')
+test('④ 다시 붙을 때 화면은 마지막 이벤트 type으로 고른다(phase 아님, flow-order.test.ts에 자세히)', () => {
+  assert.equal(resumeStage(initialState), 'analysis')
 })
