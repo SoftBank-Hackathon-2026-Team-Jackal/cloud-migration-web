@@ -24,7 +24,7 @@ export type BackendPhase =
 /** 프론트 단계 → 백엔드 phase 대응(stages.ts의 RAIL과 같다). 값이 없는 단계(intro·setup)는 데이터 계층이 다루지 않는다. */
 export const PHASE_OF_STAGE = {
   analysis: 'analysis', rehearsal: 'build', planning: 'planning', approval: 'awaiting_approval',
-  provisioning: 'provisioning', data: 'data_copy', traffic: 'traffic', cutover: 'verification',
+  provisioning: 'provisioning', data: 'data_copy', cutover: 'verification', traffic: 'traffic',
 } as const satisfies Record<string, BackendPhase>
 
 export type EventStatus = 'running' | 'done' | 'failed' | 'waiting'
