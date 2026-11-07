@@ -120,6 +120,19 @@ export function agentState(agent: Pick<AgentView, 'revoked' | 'last_seen_at'>, n
   return nowSeconds - agent.last_seen_at <= ONLINE_WINDOW_SECONDS ? 'online' : 'offline'
 }
 
+/** 이전 대상으로 고를 수 있는 Agent: 폐기된 것을 빼고 온라인 → 오프라인 → 설치 대기 순(같은 상태끼리는 받은 순서). */
+export function selectableAgents(agents: AgentView[], nowSeconds: number): AgentView[] {
+  const rank = { online: 0, offline: 1, pending: 2, revoked: 3 } as const
+  return agents.filter(agent => !agent.revoked).map((agent, index) => ({ agent, index }))
+    .sort((a, b) => rank[agentState(a.agent, nowSeconds)] - rank[agentState(b.agent, nowSeconds)] || a.index - b.index)
+    .map(item => item.agent)
+}
+
+/** 사용자가 고른 Agent가 목록에 있으면 그것, 없으면(안 골랐거나 사라짐) 맨 앞 Agent. */
+export function chooseAgent(agents: AgentView[], wanted: string | null): AgentView | null {
+  return (wanted ? agents.find(agent => agent.agent_id === wanted) : undefined) ?? agents[0] ?? null
+}
+
 /** Kubernetes 이름 규칙(백엔드 KubernetesName과 같다): 소문자·숫자·'-', 63자 이하, 영숫자로 시작·끝 */
 export const AGENT_ID_PATTERN = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/
 export function isAgentId(value: unknown): value is string {
