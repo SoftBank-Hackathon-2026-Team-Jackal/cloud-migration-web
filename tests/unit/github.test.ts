@@ -233,3 +233,7 @@ test('GitHub 로그인은 매번 계정 선택 화면을 띄운다', () => {
   assert.equal(GITHUB_AUTH_PARAMS.prompt, 'select_account')
   assert.equal(GITHUB_AUTH_PARAMS.scope, GITHUB_SCOPE)
 })
+
+test('GitHub 로그인은 조직 저장소를 보려고 read:org만 더 요청한다', () => {
+  assert.deepEqual(GITHUB_SCOPE.split(' ').sort(), ['read:org', 'read:user'])
+})
