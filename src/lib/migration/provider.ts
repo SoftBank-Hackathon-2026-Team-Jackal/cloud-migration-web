@@ -37,6 +37,11 @@ export interface MigrationProvider {
   rollbackTraffic(): void
   /** 롤백된 트래픽 이전을 처음부터 다시 시도한다. */
   retryTraffic(): void
+  /**
+   * 수동 단계 대기 중(awaitNext)에 다음 단계로 넘긴다(POST /traffic/advance). 응답이 올 때까지 기다린다.
+   * 409 TRAFFIC_ACTION_NOT_ALLOWED(이미 넘어감)는 조용히 넘기고, 다른 오류는 롤백·재시도와 같이 처리한다.
+   */
+  advanceTraffic(): Promise<void>
   /** 안정화 구간을 끝내고 이전을 확정한다(POST /traffic/finalize). */
   finalizeTraffic(): void
   /** 데모 전용 장애 주입. 목업에서만 동작한다. */

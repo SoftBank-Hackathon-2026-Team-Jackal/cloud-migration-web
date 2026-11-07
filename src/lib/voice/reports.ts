@@ -340,12 +340,22 @@ export class ReportEngine {
           if (previous !== 'stabilizing' && this.first(phase, 'stabilizing')) out.push(make('r.traffic.stabilizing', 'milestone'))
           return out
         }
+        // 수동 단계 대기(awaitNext): 단계 안에서 한 번만 "다음 단계로 넘어갈까요?"라고 묻는다. 그 단계의 통과 보고는 이 질문이 대신한다.
+        const wait = notes.find(note => note.key === 'awaitNext')
+        if (wait) {
+          const pct = Number(wait.params?.pct ?? step)
+          if (!this.gatesPassed.has(pct)) {
+            this.gatesPassed.add(pct)
+            if (this.first(phase, 'awaitNext:' + pct)) out.push(make('r.traffic.awaitNext', 'decision', { p: pct }, { series: 'gate:' + phase }))
+          }
+        }
         // 사용자 트래픽이 없어 합성 요청으로 확인했으면 단계 안에서 한 번만 알린다.
         const idle = event.data.notes?.find(note => note.key === 'idleProbe')
         if (idle && this.first(phase, 'idleProbe')) out.push(make('r.traffic.idle', 'milestone', { n: Number(idle.params?.requests ?? 0) }, { series: 'idle:' + phase }))
         if (previous === 'rolledback') {
           this.trafficStep = -1; this.gatesPassed.clear()
           for (const key of ['done', 'stabilizing', 'dbRollback']) this.once.delete(phase + ':' + key)
+          for (const key of [...this.once]) if (key.startsWith(phase + ':awaitNext:')) this.once.delete(key)
         }
         for (const result of event.data.results ?? []) {
           if (result.verdict === 'pass' && !this.gatesPassed.has(result.step) && result.step < 100) {

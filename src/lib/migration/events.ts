@@ -427,7 +427,7 @@ export type TrafficPhase = 'applying' | 'observing' | 'gate' | 'stabilizing' | '
  * 플랫폼(cmp_traffic snapshot.py)이 보내는 key: apply·observe·gatePass·gateFail·rollback·reached·manual·restart·idleProbe 등. gateFail의 params에는 판정 근거(kind=p99|failed|requests와 수치), idleProbe는 사용자 트래픽이 없어 합성 요청으로 확인한 결과(requests·failed·p99_ms)가 온다. prepare·inject·drained는 화면·목업이 쓴다.
  * activity가 없으면 화면이 key로 기본 이름을 고른다(trafficModel.ts).
  */
-export type TrafficNoteKey = 'prepare' | 'apply' | 'observe' | 'gatePass' | 'gateFail' | 'rollback' | 'reached' | 'manual' | 'inject' | 'drained' | 'restart' | 'finalized' | 'dbRollback' | 'idleProbe'
+export type TrafficNoteKey = 'prepare' | 'apply' | 'observe' | 'gatePass' | 'gateFail' | 'rollback' | 'reached' | 'manual' | 'inject' | 'drained' | 'restart' | 'finalized' | 'dbRollback' | 'idleProbe' | 'awaitNext'
 export type TrafficNote = { key: TrafficNoteKey; params?: Record<string, string | number>; activity?: string }
 
 /*
