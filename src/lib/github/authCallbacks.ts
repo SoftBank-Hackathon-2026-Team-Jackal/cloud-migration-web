@@ -4,8 +4,12 @@
  * - 브라우저가 받는 세션(/api/auth/session)에는 토큰을 절대 넣지 않는다: 이름·아바타·로그인 이름·만료 시각만.
  */
 
-/** Auth.js가 GitHub OAuth App에 요청하는 권한. repo 권한은 요청하지 않는다(공개 저장소만 읽는다). */
-export const GITHUB_SCOPE = 'read:user'
+/**
+ * Auth.js가 GitHub OAuth App에 요청하는 권한. repo 권한은 요청하지 않는다(공개 저장소만 읽는다).
+ * read:org는 조직 멤버십을 읽는 읽기 전용 권한이다. 없으면 /user/repos가 조직 멤버로서 접근하는 저장소를 빼서
+ * 팀 조직의 공개 저장소가 목록에 나오지 않는다.
+ */
+export const GITHUB_SCOPE = 'read:user read:org'
 
 /**
  * GitHub 로그인 화면에 넘기는 값. prompt=select_account는 GitHub 계정 선택 화면을 매번 띄운다.
