@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { signIn } from 'next-auth/react'
 import ParticleField from './ParticleField'
 import ParticlePrompt from './ParticlePrompt'
 import MigrationSetup from './MigrationSetup'
@@ -23,6 +24,7 @@ import { translateIn, useI18n, type Lang, type MsgKey, type Params, type Transla
 import { useMigration } from '../lib/migration/MigrationProvider'
 import { dataNextStage, resumeStage } from '../lib/migration/flow'
 import { requiresSource } from '../lib/migration/config'
+import { quickLoginReturn, shouldQuickLogin, type GithubStatus } from '../lib/github/quickLogin'
 import { captureScreen, fx, recentHandoff, registerTransition } from '../lib/particleHandoff'
 import { isStage, STAGE_ORDER, type Stage } from '../lib/stages'
 import { pathOf, type Target as SetupTarget } from '../lib/migration/events'
@@ -273,6 +275,17 @@ export default function FlowApp() {
 
   // 첫 화면 대화: 호출 → 의도 → (대상이 모호하면 되묻기) → 되짚기 → 설정 화면
   const [askingTarget, setAskingTarget] = useState(false)
+  // 실제 모드에서 GitHub 로그인 상태를 미리 본다: 로그인 전이면 대상을 고르자마자 되짚는 말 없이 로그인 창으로 보낸다.
+  const githubStatus = useRef<GithubStatus | null>(null)
+  useEffect(() => {
+    if (!needsSource || stage !== 'intro') return
+    const controller = new AbortController()
+    fetch('/api/github/status', { signal: controller.signal, cache: 'no-store' })
+      .then(response => response.ok ? response.json() as Promise<GithubStatus> : null)
+      .then(body => { githubStatus.current = body })
+      .catch(() => {})
+    return () => controller.abort()
+  }, [needsSource, stage])
   function wake() {
     if (stage !== 'intro') return
     // 이미 시작한 뒤에 다시 부르면 조용히 넘기지 않고 다시 듣고 있다고 답한다(음성 호출 시험에서 무응답으로 확인).
@@ -301,6 +314,11 @@ export default function FlowApp() {
     setAskingTarget(false)
     setShowPrompt(false)
     setTarget(chosen)
+    if (shouldQuickLogin(needsSource, githubStatus.current, window.location.hostname)) {
+      voice.stopSpeech()
+      void signIn('github', { redirectTo: quickLoginReturn(chosen) })
+      return
+    }
     const { text, caption } = introLine('open.jackal.confirm', tr => ({
       source: tr('open.source', { region: tr('region.ap-northeast-2') }),
       target: tr(chosen === 'onprem' ? 'open.target.onprem' : 'open.target.gcp'),
