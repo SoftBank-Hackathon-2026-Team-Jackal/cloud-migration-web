@@ -16,7 +16,8 @@
 /* ── 사전 검사 장부 ─────────────────────────────── */
 .dm-pf{display:flex;flex-direction:column;padding:12px 16px;overflow:hidden}
 .dm-pf-note{margin:3px 0 8px;color:var(--dm-muted);font-size:11px;line-height:1.45}
-.dm-checks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+/* 검사 줄이 많으면 목록만 스크롤하고, 아래 판정·시작 판정 박스는 카드 바닥에 고정한다 */
+.dm-checks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
 .dm-ck{display:grid;grid-template-columns:16px minmax(0,1fr) auto;gap:10px;align-items:start;padding:clamp(5px,1.3vh,22px) 0;border-top:1px solid var(--dm-rule)}
 .dm-dot{position:relative;width:14px;height:14px;margin-top:2px;border:1.5px solid #cfcfcf;border-radius:50%}
 .dm-ck.is-run .dm-dot{border-color:var(--dm-ink);border-right-color:transparent;animation:dm-spin .8s linear infinite}
@@ -41,7 +42,7 @@
 .dm-chain i.is-bad{background:var(--dm-neg-bg);color:var(--dm-neg-ink)}
 .dm-xfer{display:block;height:4px;overflow:hidden;border-radius:2px;background:#eee}
 .dm-xfer i{display:block;height:100%;background:#111;transition:width .25s linear}
-.dm-verdict{margin-top:auto;padding-top:10px;border-top:1px solid var(--dm-ink);display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:center}
+.dm-verdict{flex:none;margin-top:auto;padding-top:10px;border-top:1px solid var(--dm-ink);display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:center}
 .dm-verdict-big{font-size:19px;font-weight:700;letter-spacing:-.02em;color:var(--dm-ink)}
 .dm-fp{grid-column:1/-1;color:var(--dm-muted);font-size:11px;line-height:1.4;font-variant-numeric:tabular-nums}
 .dm-gate{grid-column:1/-1;margin:4px 0 0;padding:8px 10px;border-radius:8px;background:#f3f3f3;color:#3d3d3d;font-size:12px;line-height:1.45}
@@ -150,7 +151,6 @@
   /* 사전 검사 줄마다 붙는 증거 문구(마우스를 올리면 title로 보인다)와 지문 줄은 접어 스크롤 없이 한 화면에 들어오게 한다 */
   .dm-pf .dm-ev,.dm-pf .dm-fp{display:none}
   .dm-pf-note{display:none}
-  .dm-pf{overflow-y:auto;scrollbar-width:thin}
   .dm-fp{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .dm-gate{padding:6px 10px}
   .dm-verdict-big{font-size:17px}
