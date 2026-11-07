@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useT } from '../lib/i18n'
 import type { PlanNodeKind, PlanPreviewData, PlanStepData } from '../lib/migration/events'
 import { diagramSteps } from '../lib/migration/planModel'
+import { fitText } from '../lib/svgText'
 
 /*
  * 계획 구성도: 원본(AWS)과 대상 구성을 나란히 그리고, 같은 역할의 노드를 가로선(매핑)으로 잇는다.
@@ -23,10 +24,7 @@ type Text2 = { name: string; sub: string }
 /** "ALB (Ingress) · VPC" → 이름 "ALB (Ingress)", 보조 "VPC". 너무 긴 글자는 줄인다(구성도 칸이 좁다). */
 function split(text: string): Text2 {
   const [name, ...rest] = text.split(' · ')
-  return { name: clip(name, 26), sub: clip(rest.join(' · '), 32) }
-}
-function clip(text: string, max: number) {
-  return text.length > max ? text.slice(0, max - 1) + '…' : text
+  return { name: fitText(name, 26), sub: fitText(rest.join(' · '), 32) }
 }
 
 /** 칩 너비: 한글·영문 폭 차이를 대충 반영한다(SVG라 글자 폭을 미리 잴 수 없다). */

@@ -19,7 +19,7 @@ function clock(seconds: number) {
 type Report = {
   generatedAt: string
   language: string
-  demo: true
+  demo: boolean
   title: string
   summary: string
   stages: Array<{ id: string; label: string; note: string; duration: string }>
@@ -29,31 +29,35 @@ type Report = {
   demoNote: string
 }
 
-/** pause: 전환 결과(cutover.outcome.pause_ms)로 만든 실제 쓰기 중단 시간. 없으면 기본 문구를 쓴다. */
-function buildReport(t: Translate, target: Target, language: string, data: ReportData, pause?: string): Report {
+/**
+ * pause: 전환 결과(cutover.outcome.pause_ms)로 만든 실제 쓰기 중단 시간. 없으면 기본 문구를 쓴다.
+ * mock: 목업 데모일 때만 문구에 박힌 예시 숫자(128,400행·6/6 등)와 측정 예시를 쓴다. 실제 모드에는 그 값을 줄 곳이
+ * 없으므로 지어낸 숫자 대신 숫자 없는 문구를 쓰고, 값이 있는 것(쓰기 중단·AI 수정 개수)만 결과에 둔다.
+ */
+function buildReport(t: Translate, target: Target, language: string, data: ReportData, pause: string | undefined, mock: boolean): Report {
   const targetName = t(('target.' + target) as MsgKey)
   const stages = data.stages.map(stage => ({
     id: stage.id,
     label: t(('rail.' + stage.id) as MsgKey),
-    note: t(('report.stage.' + stage.id) as MsgKey, { target: targetName, n: data.ai_fixes }),
+    note: t(((mock ? 'report.stage.' : 'report.stage.real.') + stage.id) as MsgKey, { target: targetName, n: data.ai_fixes }),
     duration: clock(stage.seconds),
   }))
   return {
     generatedAt: new Date().toISOString(),
     language,
-    demo: true,
+    demo: mock,
     title: t('report.title'),
     summary: t('cutover.done.lead', { target: targetName, pause: pause ?? t('report.res.pauseVal') }),
     stages,
     total: clock(data.stages.reduce((sum, stage) => sum + stage.seconds, 0)),
-    results: RESULTS.map(id => ({ label: t(('report.res.' + id) as MsgKey), value: id === 'pause' && pause ? pause : t(('report.res.' + id + 'Val') as MsgKey, { n: data.ai_fixes }) })),
+    results: (mock ? RESULTS : RESULTS.filter(id => id === 'pause' || id === 'ai')).map(id => ({ label: t(('report.res.' + id) as MsgKey), value: id === 'pause' && pause ? pause : t(('report.res.' + id + 'Val') as MsgKey, { n: data.ai_fixes }) })),
     notes: [
       { label: t('cutover.done.traffic'), value: t(target === 'onprem' ? 'cutover.done.trafficOnprem' : 'cutover.done.trafficGcp') },
       { label: t('cutover.done.rollback'), value: t('cutover.done.rollbackVal') + ' (' + t('tag.proposal') + ')' },
       { label: t('cutover.done.old'), value: t('cutover.done.oldVal') },
       { label: t('approval.excluded'), value: t('approval.ex1') + ' · ' + t('approval.ex2') },
     ],
-    demoNote: t('report.demoNote'),
+    demoNote: mock ? t('report.demoNote') : '',
   }
 }
 
@@ -63,7 +67,7 @@ function toMarkdown(report: Report) {
     '',
     report.summary,
     '',
-    '> ' + report.demoNote,
+    ...(report.demoNote ? ['> ' + report.demoNote] : []),
     '',
     '## ' + report.stages.length + ' / ' + report.total,
     '',
@@ -100,13 +104,13 @@ function download(name: string, text: string, type: string) {
 export default function MigrationReport({ target, onRestart }: { target: Target; onRestart: () => void }) {
   const { t, lang } = useI18n()
   // 단계별 소요 시간과 AI 수정 개수는 리포트 데이터(GET /migrations/{id}/report)에서 온다.
-  const { state, provider, can } = useMigration()
+  const { state, provider, can, mode } = useMigration()
   // 실제 모드: 리포트 API(report)가 아직 없으면 타임라인 대신 짧은 안내만 보인다(capabilities.ts).
   const hasReport = can('report')
   useEffect(() => { provider.loadReport() }, [provider])
   // 리포트 API의 cutover_outcome이 먼저, 없으면 받은 cutover.outcome(flow.ts reportPauseMs).
   const pauseMs = reportPauseMs(state)
-  const report = buildReport(t, target, lang, state.report ?? { stages: [], ai_fixes: 0 }, pauseMs === null ? undefined : (pauseMs < 10 ? pauseMs.toFixed(1) : String(Math.round(pauseMs))) + ' ms')
+  const report = buildReport(t, target, lang, state.report ?? { stages: [], ai_fixes: 0 }, pauseMs === null ? undefined : (pauseMs < 10 ? pauseMs.toFixed(1) : String(Math.round(pauseMs))) + ' ms', mode === 'mock')
   const [tab, setTab] = useState<'report' | 'monitor'>('report')
   const stamp = 'migration-report-' + target
   return <div className="flow-center">
@@ -117,7 +121,7 @@ export default function MigrationReport({ target, onRestart }: { target: Target;
           <h2 aria-level={1}>{t('cutover.done.title')}</h2>
           <p className="approval-lead">{report.summary}</p>
         </div>
-        <small className="flow-pill">DEMO</small>
+        {mode === 'mock' && <small className="flow-pill">DEMO</small>}
       </header>
 
       <div className="report-tabs">

@@ -37,7 +37,7 @@ function deliveryOf(submitted: boolean, decision: ApprovalDecisionData | null, p
 export default function ApprovalStage({ target, onApprove, onCancel, onRevise }: Props) {
   const t = useT()
   const tOr = useTOr()
-  const { state, provider } = useMigration()
+  const { state, provider, mode } = useMigration()
   // 승인 요청(approval.required)을 받는 화면. 승인·취소는 데이터 계층을 거쳐 서버로 간다.
   useStageFeed('awaiting_approval', true, target)
   const [checked, setChecked] = useState(false)
@@ -155,7 +155,7 @@ export default function ApprovalStage({ target, onApprove, onCancel, onRevise }:
   return <section className="flow-stage approval-stage is-ready" aria-label={t('approval.aria')}>
     <div className="approval-panel approval-wide">
       <div className="approval-main">
-        <small className="approval-step">{t('approval.step')} <span>DEMO</span></small>
+        <small className="approval-step">{t('approval.step')} {mode === 'mock' && <span>DEMO</span>}</small>
         <h2 aria-level={1}>{t('approval.title')}</h2>
         <p className="approval-lead">{t('approval.lead')}</p>
         <dl className="approval-rows">

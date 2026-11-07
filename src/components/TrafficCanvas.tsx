@@ -239,9 +239,9 @@ export default function TrafficCanvas({ target, stage, snapshot, prepare, lagMs 
         <text x={g.targetApp.x + 14} y={g.targetApp.y + g.targetApp.h - 11} className="tp-mono tp-t12" fill={failing ? NEG : '#6b6b6b'} fontWeight={failing ? 700 : 400}>{t('traffic.path.failed', { n: backends?.target.failed_requests ?? 0 })}</text>
       </g>
 
-      {/* 데이터 경로: 이 단계의 쓰기는 모두 원본 DB로 */}
+      {/* 데이터 경로: 도식(data_path)이 있는 목업은 이 단계의 쓰기가 원본 DB로 간다. 실제 모드는 DB를 먼저 전환하므로 단정하지 않는다. */}
       <line x1="16" y1={g.topH} x2={W - 16} y2={g.topH} stroke="#ececec" />
-      <text x="16" y={g.dataTop + 20} className="tp-t12 tp-muted">{t('traffic.path.dataTitle')}</text>
+      <text x="16" y={g.dataTop + 20} className="tp-t12 tp-muted">{t(dataPath ? 'traffic.path.dataTitle' : 'traffic.path.dataTitleOnly')}</text>
       {dataPath && <g data-node="data">
         {/* 원본 앱의 쓰기: 오른쪽 가장자리를 따라 내려와 풀러로(띠와 겹치지 않게) */}
         <path d={`M${g.originApp.x + g.originApp.w} ${g.yOrigin} H${g.rail - 8} Q${g.rail} ${g.yOrigin} ${g.rail} ${g.yOrigin + 8} V${g.rowY - 8} Q${g.rail} ${g.rowY} ${g.rail - 8} ${g.rowY} H${g.pooler.x + g.pooler.w + 2}`} fill="none" stroke="#a8a8a8" strokeWidth="1.3" markerEnd="url(#tp-arrow-grey)" />
