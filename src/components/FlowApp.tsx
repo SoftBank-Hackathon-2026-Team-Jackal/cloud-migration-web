@@ -119,6 +119,10 @@ export default function FlowApp() {
   const [notice, setNotice] = useState(false)
   const noticeTimer = useRef(0)
   const voiceStarting = useRef(false)
+  const voicedNav = useRef(false) // 말이 시작한 화면 이동인가(사용자가 눌러 넘어가면 소리를 끊는다)
+  const voicedNavTimer = useRef(0)
+  const speakingNow = useRef(false)
+  const entryLine = useRef<{ stage: Stage; text: string; caption?: string } | null>(null) // 앞의 말이 끝나면 읽을 새 화면 안내
   const previousStage = useRef<Stage>('intro')
 
   useEffect(() => {
@@ -243,14 +247,16 @@ export default function FlowApp() {
   // 단계 보고·명령 응답: 고른 음성 언어로 읽고, 화면 언어와 다르면 화면 언어 문구를 자막으로 같이 보낸다.
   const sayVoice = (text: string, caption?: string) => voice.speak(text, { lang: voiceLang, caption })
   /**
-   * 말이 끝나면 다음 화면으로 넘어간다. 다른 말이 끼어들어 끊기거나 음성 합성이 끝 신호를 주지 않아도
-   * 화면이 멈추지 않도록 상한 시간 뒤에는 넘어간다(한 번만).
+   * 말은 말대로, 화면은 화면대로: 말을 시작하면서 화면은 바로 다음으로 넘어간다(말이 끝나기를 기다리지 않는다).
+   * 말이 시작한 이동이라 소리는 끊지 않고, 새 화면의 안내는 이 말이 끝난 뒤에 이어 읽는다.
+   * 사용자가 화면에서 눌러 넘어가면 소리를 끊는다(단계가 바뀔 때 아래 효과가 처리한다).
    */
   const sayThen = (text: string, next: () => void, options?: { lang?: Lang; caption?: string }) => {
-    let done = false
-    const proceed = () => { if (!done) { done = true; window.clearTimeout(timer); next() } }
-    const timer = window.setTimeout(proceed, 2500 + text.length * 120)
-    voice.speak(text, { ripple: true, onEnd: proceed, lang: options?.lang ?? lang, caption: options?.caption })
+    voicedNav.current = true
+    window.clearTimeout(voicedNavTimer.current)
+    voicedNavTimer.current = window.setTimeout(() => { voicedNav.current = false }, 5000) // 이동이 일어나지 않아도 표시를 남기지 않는다
+    voice.speak(text, { ripple: true, lang: options?.lang ?? lang, caption: options?.caption })
+    next()
   }
   // 첫 화면 대화 문구: 고른 말하는 언어로 읽고, 화면 언어와 다르면 화면 언어 문구를 자막으로 같이 보낸다.
   const introLine = (key: MsgKey, build?: (tr: Translate) => Params) => {
@@ -344,6 +350,13 @@ export default function FlowApp() {
   useEffect(() => {
     const previous = previousStage.current
     previousStage.current = stage
+    // 사용자가 눌러서 단계가 바뀌면 나오던 말을 끊고 이어 읽을 안내도 버린다. 말이 시작한 이동이면 그대로 둔다.
+    const byVoice = voicedNav.current
+    if (previous !== stage) {
+      voicedNav.current = false
+      entryLine.current = null
+      if (!byVoice) voice.stopSpeech()
+    }
     if (previous === 'intro' && stage !== 'intro') setChatOpen(false)
     if (stage === 'intro' || previous === stage) return
     // 저장소 없이 단계를 연 SSE 화면은 시작되지 않았으므로 "시작했다"는 안내를 읽지 않는다.
@@ -351,8 +364,20 @@ export default function FlowApp() {
     // 설정 화면에서 "원본 분석부터 시작할게요."라고 말하고 넘어왔으면 분석 안내를 겹쳐 읽지 않는다.
     if (stage === 'analysis' && kickoff.current) { kickoff.current = false; return }
     const message = REPORT[stage]
-    if (message) voice.speak(voiceText(voiceLang, message), { lang: voiceLang, caption: voiceLang !== captionLang ? voiceText(captionLang, message) : undefined })
+    if (!message) return
+    const text = voiceText(voiceLang, message)
+    const caption = voiceLang !== captionLang ? voiceText(captionLang, message) : undefined
+    // 앞의 말이 아직 나오는 중이면(말이 시작한 이동) 끊지 않고 끝난 뒤에 읽는다.
+    if (byVoice && speakingNow.current) entryLine.current = { stage, text, caption }
+    else voice.speak(text, { lang: voiceLang, caption })
   }, [stage, voice.speak])
+  speakingNow.current = voice.speaking
+  useEffect(() => {
+    const line = entryLine.current
+    if (voice.speaking || !line) return
+    entryLine.current = null
+    if (line.stage === stage) voice.speak(line.text, { lang: voiceLang, caption: line.caption })
+  }, [voice.speaking, stage, voice.speak, voiceLang])
 
   // 구체의 '듣는 중' 모양: "네." 뒤부터 시작 명령을 받을 때까지(마이크가 없어도 유지). 발표자는 L 키로 켜고 끌 수 있다.
   const listenMode = useRef(false)
