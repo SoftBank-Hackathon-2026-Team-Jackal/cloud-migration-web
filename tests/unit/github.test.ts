@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { listPublicRepos, pinPublicSource, GithubError } from '../../src/lib/github/repos.ts'
 import { handleListRepos, handlePinSource, handleStatus, type HandlerDeps } from '../../src/lib/github/handlers.ts'
-import { GITHUB_SCOPE, jwtCallback, sessionCallback } from '../../src/lib/github/authCallbacks.ts'
+import { GITHUB_AUTH_PARAMS, GITHUB_SCOPE, jwtCallback, sessionCallback } from '../../src/lib/github/authCallbacks.ts'
 import { startRequestFor } from '../../src/lib/migration/events.ts'
 import { SseProvider, BACKEND_PENDING, SOURCE_REQUIRED } from '../../src/lib/migration/sseProvider.ts'
 import type { Action } from '../../src/lib/migration/reducer.ts'
@@ -227,4 +227,9 @@ test('SSE legacy(목업 서버 시험): 예전처럼 주소로 연 단계에서 
     await settle()
     assert.equal(posts[0]?.url, 'http://backend.test/migrations')
   } finally { restore() }
+})
+
+test('GitHub 로그인은 매번 계정 선택 화면을 띄운다', () => {
+  assert.equal(GITHUB_AUTH_PARAMS.prompt, 'select_account')
+  assert.equal(GITHUB_AUTH_PARAMS.scope, GITHUB_SCOPE)
 })

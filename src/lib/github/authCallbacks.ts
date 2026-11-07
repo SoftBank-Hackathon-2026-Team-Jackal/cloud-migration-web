@@ -7,6 +7,12 @@
 /** Auth.js가 GitHub OAuth App에 요청하는 권한. repo 권한은 요청하지 않는다(공개 저장소만 읽는다). */
 export const GITHUB_SCOPE = 'read:user'
 
+/**
+ * GitHub 로그인 화면에 넘기는 값. prompt=select_account는 GitHub 계정 선택 화면을 매번 띄운다.
+ * 없으면 github.com에 로그인된 계정으로 확인 없이 바로 돌아와서, Sign out 뒤에도 다른 계정을 고를 수 없다.
+ */
+export const GITHUB_AUTH_PARAMS = { scope: GITHUB_SCOPE, prompt: 'select_account' } as const
+
 export type GithubJwt = {
   accessToken?: string
   login?: string
