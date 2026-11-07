@@ -54,13 +54,13 @@ test('계획 표(실제 모드): 백엔드 name을 짧은 이름과 설명으로
 test('계획 표(실제 모드): 크기 칸에는 CPU·메모리·용량만, 이미지·포트·헬스는 보조 줄로', () => {
   assert.equal(shortImage(IMAGE), '714066696240…/cmp-platform-builds@sha256:818c75d7aaaa')
   assert.deepEqual(splitBackendSize(IMAGE + ' · CPU 250m · 메모리 256MiB · 포트 :8080 · 헬스 /healthz · 환경변수 5개(Secret 참조 5개)'), {
-    size: 'CPU 250m · 메모리 256MiB',
-    extra: ['714066696240…/cmp-platform-builds@sha256:818c75d7aaaa', '포트 :8080', '헬스 /healthz', '환경변수 5개(Secret 참조 5개)'],
+    size: 'CPU 250m', sizeSub: '메모리 256MiB',
+    extra: ['포트 :8080', '헬스 /healthz', '환경변수 5개(Secret 참조 5개)', '714066696240…/cmp-platform-builds@sha256:818c75d7aaaa'],
   })
-  assert.deepEqual(splitBackendSize('10 GiB · StorageClass local-path'), { size: '10 GiB', extra: ['StorageClass local-path'] })
-  assert.deepEqual(splitBackendSize('클러스터 내부 :8080'), { size: '', extra: ['클러스터 내부 :8080'] })
-  assert.deepEqual(splitBackendSize('CPU 250m × 2'), { size: 'CPU 250m × 2', extra: [] })
-  assert.deepEqual(splitBackendSize(''), { size: '', extra: [] })
+  assert.deepEqual(splitBackendSize('10 GiB · StorageClass local-path'), { size: '10 GiB', sizeSub: '', extra: ['StorageClass local-path'] })
+  assert.deepEqual(splitBackendSize('클러스터 내부 :8080'), { size: '', sizeSub: '', extra: ['클러스터 내부 :8080'] })
+  assert.deepEqual(splitBackendSize('CPU 250m · 메모리 512MiB × 2'), { size: 'CPU 250m × 2', sizeSub: '메모리 512MiB', extra: [] })
+  assert.deepEqual(splitBackendSize(''), { size: '', sizeSub: '', extra: [] })
 })
 
 test('계획 표(실제 모드): NetworkPolicy 문장을 보안 규칙 한 줄로', () => {
@@ -97,8 +97,8 @@ test('계획 표(실제 모드): NetworkPolicy는 한 줄로 묶고 규칙은 �
   const ingress = rows.find(row => row.resource.resource_type === 'INGRESS')!
   assert.deepEqual([ingress.title, ingress.sub, ingress.chip], [{ key: 'plan.type.INGRESS' }, ['외부 공개 없음; 클러스터 내부 Service만'], false])
   const app = rows.find(row => row.title === 'chat-app')!
-  assert.deepEqual([app.size, app.change], ['CPU 250m · 메모리 256MiB', 'PINNED'])
-  assert.equal(app.sub[0], '714066696240…/cmp-platform-builds@sha256:818c75d7aaaa')
+  assert.deepEqual([app.size, app.sizeSub, app.change], ['CPU 250m', '메모리 256MiB', 'PINNED'])
+  assert.deepEqual(app.sub, ['포트 :8080', '헬스 /healthz', '환경변수 5개(Secret 참조 5개)', '714066696240…/cmp-platform-builds@sha256:818c75d7aaaa'])
   const cluster = rows.find(row => row.resource.resource_type === 'CLUSTER' && !row.defaulted)!
   assert.equal(cluster.title, '기존 K3s b7394441…')
   const ns = rows.find(row => row.title === 'Namespace cmp-app')!

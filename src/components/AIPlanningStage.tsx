@@ -39,7 +39,7 @@ function Ledger({ preview, path, revealed, warnings, fixes, real }: { preview: P
   const real_ = fromBackend ? realLedger(preview.resources, own) : null
   const rows: LedgerRow[] = real_ ? real_.rows : preview.resources.map(resource => {
     const { name, detail } = own(resource)
-    return { id: resource.id, ids: [resource.id], resource, title: name, full: name, sub: [detail], size: resource.size || '', chip: true, change: resource.change, defaulted: !!resource.defaulted }
+    return { id: resource.id, ids: [resource.id], resource, title: name, full: name, sub: [detail], size: resource.size || '', sizeSub: resource.size_detail ?? '', chip: true, change: resource.change, defaulted: !!resource.defaulted }
   })
   const text = (value: LedgerText) => typeof value === 'string' ? value : tOr(value.key, '', value.params)
   // 보안 규칙: Preview(앱 Values)에 있으면 그것을, 없으면 실제 모드 NetworkPolicy 줄에서 만든 규칙을 보인다.
@@ -57,7 +57,7 @@ function Ledger({ preview, path, revealed, warnings, fixes, real }: { preview: P
           const name = text(row.title)
           const detail = row.sub.map(text).filter(Boolean).join(' · ')
           const size = row.size || '—'
-          const sizeDetail = row.resource.size_detail
+          const sizeDetail = row.sizeSub
           return <tr key={row.id} className={'plan-ledger-row plan-reveal' + (revealed > order ? ' is-visible' : '') + (row.change === 'KEEP_SOURCE' ? ' is-keep' : '')}>
             <th scope="row">
               <span className="plan-cell-main"><span className="plan-cell-text" title={row.full || name}>{name}</span>{warn && <WarnDot label={t('plan.warnAria', { text: issueText(tOr, warn) })} />}</span>
@@ -96,7 +96,8 @@ function Ledger({ preview, path, revealed, warnings, fixes, real }: { preview: P
         <summary><h3 id="plan-well-sec">{t('plan.well.security')}</h3></summary>
         <dl>{derivedRules.map((rule, ruleIndex) => <div key={ruleIndex} title={rule.full}>
           <dt>{rule.deny ? roleText(tOr, '*') : rule.to ? rule.from + ' → ' + rule.to : rule.from}</dt>
-          <dd>{rule.deny ? t('plan.rule.deny') : rule.ports}</dd>
+          {/* 프로토콜·포트(예: UDP/TCP 53)는 줄이지 않고, 길면 왼쪽 출발 → 도착 쪽이 말줄임된다 */}
+          <dd style={{ flexShrink: 0 }}>{rule.deny ? t('plan.rule.deny') : rule.ports}</dd>
         </div>)}</dl>
       </details>}
       <section className="plan-well" aria-labelledby="plan-well-val">

@@ -214,7 +214,9 @@ export type LedgerRow = {
   /** 제목 칸 툴팁(백엔드 원문) */
   full: string
   sub: LedgerText[]
+  /** 크기 칸 첫 줄(예: CPU 250m)과 둘째 줄(예: 메모리 256MiB) */
   size: string
+  sizeSub: string
   /** false면 변경 칩을 붙이지 않는다(예: 외부 공개 없음 안내 줄) */
   chip: boolean
   change: PlanResource['change']
@@ -247,20 +249,22 @@ const SIZE_PART = /^(?:(?:CPU|vCPU|메모리|Memory|メモリ)\s+\S+|\d+(?:\.\d+
  * size 문자열을 크기 칸(CPU·메모리·용량)과 나머지(보조 줄)로 나눈다. 이미지 주소는 짧게 줄여 보조 줄로 간다.
  * 어댑터가 붙인 "× 개수"는 크기 칸에 남긴다.
  */
-export function splitBackendSize(size: string): { size: string; extra: string[] } {
+export function splitBackendSize(size: string): { size: string; sizeSub: string; extra: string[] } {
   const raw = size.trim()
-  if (!raw || raw === '—') return { size: '', extra: [] }
+  if (!raw || raw === '—') return { size: '', sizeSub: '', extra: [] }
   const times = /\s×\s(\d+)$/.exec(raw)
   const body = times ? raw.slice(0, times.index) : raw
   const sizes: string[] = []
   const extra: string[] = []
+  const images: string[] = []
   for (const piece of body.split(' · ').map(part => part.trim()).filter(Boolean)) {
-    if (piece.includes('@sha256:')) extra.push(shortImage(piece))
+    if (piece.includes('@sha256:')) images.push(shortImage(piece))
     else if (SIZE_PART.test(piece)) sizes.push(piece)
     else extra.push(piece)
   }
+  // 크기 칸이 좁아 첫 값(CPU)만 첫 줄에, 나머지(메모리 등)는 둘째 줄에. 이미지 주소는 길어서 보조 줄 맨 뒤에 둔다.
   const count = times ? '× ' + times[1] : ''
-  return { size: [sizes.join(' · '), count].filter(Boolean).join(' '), extra }
+  return { size: [sizes[0] ?? '', count].filter(Boolean).join(' '), sizeSub: sizes.slice(1).join(' · '), extra: [...extra, ...images] }
 }
 
 const KIND_TOKEN = /(?:^|\s)(Namespace|Secret|Service|Deployment|StatefulSet|ConfigMap|PVC)\s+([a-z0-9][a-z0-9.\-/]*)/
@@ -330,7 +334,7 @@ export function realLedger(resources: PlanResource[], fallback: (resource: PlanR
         title: { key: 'plan.np.title', params: { n: policies.length } },
         full: policies.map(item => item.backend_name).join('\n'),
         sub: [{ key: deny ? 'plan.np.subDeny' : 'plan.np.sub', params: { n: allow } }],
-        size: '', chip: true, change: 'CREATE', defaulted: false,
+        size: '', sizeSub: '', chip: true, change: 'CREATE', defaulted: false,
       })
       continue
     }
@@ -338,14 +342,14 @@ export function realLedger(resources: PlanResource[], fallback: (resource: PlanR
     // 백엔드 이름이 없는 줄(매핑에서 만든 원본 유지 줄 등)은 화면 사전 문구를 그대로 쓴다
     if (!name) {
       const own = fallback(resource)
-      rows.push({ id: resource.id, ids: [resource.id], resource, title: own.name, full: own.name, sub: [own.detail], size: resource.size === '—' ? '' : resource.size, chip: true, change: resource.change, defaulted: !!resource.defaulted })
+      rows.push({ id: resource.id, ids: [resource.id], resource, title: own.name, full: own.name, sub: [own.detail], size: resource.size === '—' ? '' : resource.size, sizeSub: resource.size_detail ?? '', chip: true, change: resource.change, defaulted: !!resource.defaulted })
       continue
     }
-    const { size, extra } = splitBackendSize(resource.size ?? '')
+    const { size, sizeSub, extra } = splitBackendSize(resource.size ?? '')
     const typeLabel: LedgerText = { key: 'plan.type.' + (resource.resource_type ?? '') }
     // 진입이 없다는 안내(예: "외부 공개 없음; 클러스터 내부 Service만"): 진입 줄 하나로, 칩 없이
     if (resource.resource_type === 'INGRESS' && resource.change === 'EXISTING' && /없음|\bnone\b|no (?:public|external)/i.test(name)) {
-      rows.push({ id: resource.id, ids: [resource.id], resource, title: typeLabel, full: name, sub: [name, ...extra], size, chip: false, change: resource.change, defaulted: !!resource.defaulted })
+      rows.push({ id: resource.id, ids: [resource.id], resource, title: typeLabel, full: name, sub: [name, ...extra], size, sizeSub, chip: false, change: resource.change, defaulted: !!resource.defaulted })
       continue
     }
     const parsed = splitBackendName(name)
@@ -354,7 +358,7 @@ export function realLedger(resources: PlanResource[], fallback: (resource: PlanR
       id: resource.id, ids: [resource.id], resource,
       title: parsed.title, full: name,
       sub: sub.length > 0 ? sub : [typeLabel],
-      size, chip: true, change: resource.change, defaulted: !!resource.defaulted,
+      size, sizeSub, chip: true, change: resource.change, defaulted: !!resource.defaulted,
     })
   }
   return { rows, rules }
