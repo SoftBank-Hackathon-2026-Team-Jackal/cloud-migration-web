@@ -29,7 +29,7 @@ import { pathOf, type Target as SetupTarget } from '../lib/migration/events'
 import { useVoiceGuide } from '../lib/useVoiceGuide'
 import { buildAgentFacts } from '../lib/agent/context'
 import { askAgent } from '../lib/agent/ask'
-import PulseWidget from './PulseWidget'
+import { PulseRow, RunningJackal, usePulse } from './PulseWidget'
 import FaultBadge from './tools/FaultBadge'
 import { AGENT_STEP_KEYS, THOUGHT_KEYS } from '../lib/agent/steps'
 import type { StatusStep, Thought } from '../lib/agent/platform'
@@ -195,6 +195,7 @@ export default function FlowApp() {
   const [chat, setChat] = useState<ChatMessage[]>([])
   const pendingWhy = useRef<Pick<ChatMessage, 'reasoning' | 'skills'> | null>(null)
   const [chatOpen, setChatOpen] = useState(true)
+  const pulse = usePulse() // 서버 맥박: Jackal 버튼(달리는 자칼)과 패널 머리글 아래 한 줄로 보인다
   const [unread, setUnread] = useState(0)
   const chatId = useRef(0)
   const chatOpenRef = useRef(true)
@@ -525,7 +526,6 @@ export default function FlowApp() {
     <div className={'flow-toast' + (notice ? ' is-on' : '')} role="status" aria-hidden={!notice}>{t('nav.noBack')}</div>
     <ConnectionToast />
     <LangSwitch />
-    <PulseWidget />
     <FaultBadge />
     {exited && <StageRail stage={stage} />}
     {demoPanel && <DemoControls stage={stage} target={target} onJump={jump} onTarget={setTarget} />}
@@ -545,6 +545,7 @@ export default function FlowApp() {
             <button type="button" className="jv-fold" onClick={() => setChatOpen(false)} aria-label={t('agent.fold')} title={t('agent.fold')}><FoldIcon /></button>
           </div>
         </header>
+        {pulse && <PulseRow view={pulse} />}
         <div className="jv-lang" role="group" aria-label={t('agent.voiceLang')}>
           <span>{t('agent.voiceLang')}</span>
           {(['ko', 'en', 'ja'] as const).map(code => <button key={code} type="button" className={voiceLang === code ? 'is-active' : ''} aria-pressed={voiceLang === code} onClick={() => pickVoiceLang(code)}>{{ ko: '한국어', en: 'English', ja: '日本語' }[code]}</button>)}
@@ -587,8 +588,9 @@ export default function FlowApp() {
           <button type="submit" disabled={asking || !question.trim()}>{t('agent.send')}</button>
         </form>}
       </section>}
-      <button type="button" className="jv-pill" aria-expanded={chatOpen} title={chatOpen ? t('agent.fold') : t('agent.open')} onClick={() => setChatOpen(open => !open)}>
-        <span className="jv-dot" aria-hidden="true" />{voice.awake ? t('agent.status.listening') : t('agent.title')}{!chatOpen && unread > 0 && <b>{unread}</b>}
+      <button type="button" className={'jv-pill' + (pulse?.className ?? '')} style={pulse?.style} aria-expanded={chatOpen}
+        title={(chatOpen ? t('agent.fold') : t('agent.open')) + (pulse ? ' · ' + pulse.detail : '')} onClick={() => setChatOpen(open => !open)}>
+        {pulse ? <RunningJackal /> : <span className="jv-dot" aria-hidden="true" />}{voice.awake ? t('agent.status.listening') : t('agent.title')}{!chatOpen && unread > 0 && <b>{unread}</b>}
       </button>
       {stage !== 'intro' && !dissolving && <VoiceHints label={stageVoice.hintLabel} hints={stageVoice.hints} />}
     </aside>

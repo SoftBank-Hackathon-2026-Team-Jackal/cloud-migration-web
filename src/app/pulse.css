@@ -1,29 +1,33 @@
-/* 서버 맥박 위젯: 왼쪽 위(진행 표시는 가운데, 자칼·언어 전환은 오른쪽). 흑백에 오류·과부하일 때만 색이 붙는다. */
-.pulse{position:fixed;z-index:40;top:10px;left:14px;display:flex;align-items:center;gap:10px;height:34px;padding:0 14px 0 8px;border:1px solid rgba(255,255,255,.92);border-radius:999px;background:rgba(255,255,255,.88);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);box-shadow:0 8px 26px rgba(0,0,0,.1);color:#202020;font:600 12px/1 var(--font-sans-jp,inherit);font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:auto;--run:1.4s}
-.pulse small{margin-right:5px;color:#8a8a8a;font-size:10px;font-weight:600;letter-spacing:.02em}
+/* 서버 맥박: Jackal 버튼 안의 달리는 자칼(원본·이전 서버 중 더 바쁜 쪽의 CPU가 높을수록 빠르다)과
+   Jackal 패널 머리글 아래의 한 줄(원본 → 이전 서버 CPU·메모리, 최근 오류 수). 흑백에 오류·과부하일 때만 색이 붙는다. */
+.jv-pill.has-pulse{padding-left:8px;--run:1.4s}
+.jv-pill.is-warn{border-color:#d9a400}
+.jv-pill.is-bad{border-color:#c62828}
+
+.pulse-row{display:flex;align-items:center;gap:10px;padding:8px 16px;border-bottom:1px solid #eee;color:#202020;font:600 12px/1 var(--font-sans-jp,inherit);font-variant-numeric:tabular-nums;white-space:nowrap;--run:1.4s}
+.pulse-row small{margin-right:5px;color:#8a8a8a;font-size:10px;font-weight:600;letter-spacing:.02em}
 .pulse-box{display:inline-flex;align-items:center;min-width:0}
 .pulse-box b{min-width:30px;font-weight:650}
 .pulse-box i{display:block;width:28px;height:6px;margin-left:6px;border-radius:999px;background:#e4e4e4;overflow:hidden}
 .pulse-box em{display:block;height:100%;border-radius:999px;background:#202020;transition:width .6s ease}
 .pulse-box.is-unknown{color:#9a9a9a}
 .pulse-arrow{color:#9a9a9a;font-weight:500}
-.pulse-err{display:inline-flex;align-items:center;padding-left:6px;border-left:1px solid #e4e4e4}
-.pulse.is-warn{border-color:#d9a400}.pulse.is-warn .pulse-err{color:#9a6b00}
-.pulse.is-bad{border-color:#c62828}.pulse.is-bad .pulse-err{color:#c62828}.pulse.is-bad .pulse-box em{background:#c62828}.pulse.is-bad .pulse-box b{color:#c62828}
+.pulse-err{display:inline-flex;align-items:center;margin-left:auto;padding-left:8px;border-left:1px solid #e4e4e4}
+.pulse-row.is-warn .pulse-err{color:#9a6b00}
+.pulse-row.is-bad .pulse-err,.pulse-row.is-bad .pulse-box b{color:#c62828}.pulse-row.is-bad .pulse-box em{background:#c62828}
 
-.pulse-jackal{width:36px;height:21px;overflow:visible;fill:#202020;stroke:#202020;stroke-width:1;stroke-linejoin:round;stroke-linecap:round}
+.pulse-jackal{flex:none;width:30px;height:18px;overflow:visible;fill:#202020;stroke:#202020;stroke-width:1;stroke-linejoin:round;stroke-linecap:round}
 .pj-leg{stroke-width:1.9}
-.pulse.is-bad .pulse-jackal{fill:#c62828;stroke:#c62828}
+.is-bad .pulse-jackal{fill:#c62828;stroke:#c62828}
 .pj-body{animation:pj-bob var(--run) ease-in-out infinite}
 .pj-leg{transform-box:fill-box;transform-origin:50% 0}
 .pj-a{animation:pj-swing var(--run) ease-in-out infinite}
 .pj-b{animation:pj-swing var(--run) ease-in-out infinite;animation-delay:calc(var(--run) / -2)}
 @keyframes pj-swing{0%,100%{transform:rotate(-38deg)}50%{transform:rotate(38deg)}}
 @keyframes pj-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-1.2px)}}
-.pulse.is-idle .pj-body,.pulse.is-idle .pj-a,.pulse.is-idle .pj-b{animation:none}
-@media(prefers-reduced-motion:reduce){.pj-body,.pj-a,.pj-b{animation:none}}
-
-/* 진행 표시(가운데, 폭 약 480px)와 겹치지 않는 폭 아래에서는 두 번째 줄(왼쪽)로 내린다 */
-@media(max-width:1190px){.pulse{top:52px}}
-@media(max-width:760px){.pulse{top:10px;gap:8px;padding:0 10px 0 6px}.pulse small{display:none}}
+.is-idle .pj-body,.is-idle .pj-a,.is-idle .pj-b{animation:none}
+/* 음성 상태(말하는 중)는 점 대신 자칼이 깜박여 알린다 */
+.jv.is-speaking .jv-pill .pulse-jackal{animation:pj-blink 1s ease-in-out infinite}
+@keyframes pj-blink{50%{opacity:.5}}
+@media(prefers-reduced-motion:reduce){.pj-body,.pj-a,.pj-b,.jv.is-speaking .jv-pill .pulse-jackal{animation:none}}
 @media(max-width:560px){.pulse-box i{display:none}.pulse-box b{min-width:0}}
