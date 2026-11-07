@@ -12,7 +12,9 @@ import './traffic.css'
 import './cutover.css'
 import './setup.css'
 import './pulse.css'
+import './temporal-sidebar.css'
 import { I18nProvider } from '../lib/i18n'
+import TemporalSidebar from '../components/TemporalSidebar'
 
 export const metadata: Metadata = {
   title: 'Jackal Voice Migration Demo',
@@ -27,6 +29,6 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return <html lang="ko">
-    <body><I18nProvider>{children}</I18nProvider></body>
+    <body><I18nProvider>{children}</I18nProvider>{process.env.NEXT_PUBLIC_TEMPORAL_SIDEBAR === '1' && <TemporalSidebar />}</body>
   </html>
 }

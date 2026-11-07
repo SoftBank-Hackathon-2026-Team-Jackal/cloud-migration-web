@@ -251,3 +251,14 @@ test('TTS: 요청 검증·캐시 키·전처리', () => {
   assert.deepEqual(chunkText('하나. 둘.', 'ko'), ['하나. 둘.'])
   assert.equal(chunkText('가'.repeat(100) + '. ' + '나'.repeat(100) + '.', 'ko').length, 2)
 })
+
+test('보고(실제 순서): 전환 계획이 트래픽보다 먼저 오면 데이터 다음은 DB 전환, 트래픽 다음은 완료 리포트', () => {
+  const engine = new ReportEngine()
+  const plan = ev({ type: 'cutover.plan', phase: 'verification', status: 'waiting', data: {} } as never)
+  engine.fromEvent(plan, 'data', 0)
+  const ready = ev({ type: 'data.readiness', phase: 'data_copy', status: 'running', data: { ready: true } } as never)
+  assert.deepEqual(engine.fromEvent(ready, 'data', 0).map(report => renderReport(report, 'ko')), ['복제 지연 0. DB 전환으로 갈까요?'])
+  const complete = ev({ type: 'traffic.snapshot', phase: 'traffic', status: 'running', data: { phase: 'complete', step: 100, gate: {}, results: [] } } as never)
+  assert.deepEqual(engine.fromEvent(complete, 'traffic', 0).map(report => renderReport(report, 'ko')), ['트래픽 이전 완료. 완료 리포트로 갈까요?'])
+  assert.deepEqual(new ReportEngine().fromEvent(complete, 'traffic', 0).map(report => renderReport(report, 'en')), ['Traffic migration complete. Go to the DB switch?'], '옛 순서(목업)는 그대로')
+})
