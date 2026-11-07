@@ -4,6 +4,8 @@
  * - 승인은 "승인"·"승인해"·"승인할게"(en approve, ja 承認·承認して)처럼 승인 낱말이 있어야 한다. "좋아·진행해"는 승인이 아니다.
  * - 롤백·장애 주입·이전 취소처럼 되돌리기 어려운 동작은 되묻고, "확인"을 들어야 실행한다.
  * - 부정("승인 안 해", "don't approve")은 승인으로 받지 않는다.
+ * - 되묻는 중의 확인은 짧은 대답 하나("응", "네", "확인", "롤백해", yes, はい)만 받는다. "원인 확인해줘", "네트워크 문제야?"는 확인이 아니다.
+ * - 묻는 말("롤백할까?", "should we roll back?")은 승인·롤백·장애 주입·취소 명령이 아니다(에이전트에게 넘긴다).
  */
 import type { VoiceKey } from './messages.ts'
 
@@ -32,23 +34,51 @@ const PATTERNS: Array<[CommandId, RegExp]> = [
   ['resume', /(계속해|계속보고|다시보고|resume|continue|goon|keepgoing|続けて|再開)/],
   ['advance', /(좋아|진행해|진행하자|다음|넘어가|가자|시작하자|시작해|next|goahead|proceed|moveon|okay|^ok|letsgo|letsstart|次へ|進めて|次に|始めよう|オッケー)/],
 ]
-const CONFIRM = /(확인|^응|^네|^예|그래|맞아|해줘|해주세요|yes|confirm|sure|doit|はい|確認|お願い)/
+/** 되묻는 중의 확인: 말 전체가 짧은 긍정 낱말(최대 세 개)이어야 한다. 앞의 호출어는 뗀다. */
+const CONFIRM_WORD = [
+  '응', '어', '네', '넵', '예', '그래', '좋아', '확인', '맞아', '오케이', 'ㅇㅇ',
+  '해', '해줘', '해주세요', '하자', '그렇게해', '진행해', '롤백해', '롤백해줘', '롤백해주세요', '롤백하자', '되돌려', '되돌려줘',
+  'yes', 'yeah', 'yep', 'ok', 'okay', 'sure', 'confirm', 'confirmed', 'doit', 'goahead', 'rollback', 'rollitback',
+  'はい', 'うん', 'ええ', '確認', 'お願い', 'お願いします', 'ロールバックして',
+]
+const CONFIRM = new RegExp(`^(?:${CONFIRM_WORD.join('|')}){1,3}$`)
+const WAKE_PREFIX = /^(헤이(자칼|재칼|쟈칼)|heyjackal|ヘイジャッカル)/
 const DENY = /(아니|취소|됐어|하지마|^no|cancel|nevermind|いいえ|やめ|キャンセル)/
+
+/** 묻는 말이면 실행하지 않는 명령(되돌리기 어렵거나 승인인 것) */
+const NOT_FOR_QUESTIONS = new Set<CommandId>(['approve', 'rollback', 'inject', 'cancel'])
+// 한국어 의문 어미(정규화 뒤 끝)와 의문사. "롤백해요"처럼 물음표 없는 해요체는 명령으로 둔다.
+const KO_QUESTION_END = /(까|니|냐|나|야|지|죠|[할을]래|는가|나요|가요|어때|해도돼|해도되)$/
+const KO_QUESTION_WORD = /(왜|뭐|무엇|무슨|어떻게|어때|언제|얼마|어느|누가)/
+// 영어: 묻는 말로 시작하면 질문. "can you …", "do it"은 부탁·확인이라 넣지 않는다.
+const EN_QUESTION_START = /^(should|shall|is|are|was|were|what|why|how|when|where|who|which|(do|does|did)\s+(we|you|i|they))\b/
+const JA_QUESTION = /(か|かな|の|なぜ|どうして|何)$|^(なぜ|どうして)/
+
+/** 묻는 말인지(물음표, 한국어 의문 어미·의문사, 영어 의문문 첫머리, 일본어 か・の로 끝남). 정규화 전 원문으로 본다. */
+export function isQuestionUtterance(text: string): boolean {
+  const raw = text.trim().toLowerCase().replace(/^hey\s*jackal[\s,.!]*/, '')
+  if (/[?？]/.test(raw)) return true
+  if (EN_QUESTION_START.test(raw)) return true
+  const said = normalizeUtterance(text).replace(WAKE_PREFIX, '')
+  return KO_QUESTION_END.test(said) || KO_QUESTION_WORD.test(said) || JA_QUESTION.test(said)
+}
 
 /**
  * 말을 명령으로 맞춘다. 되묻는 중(confirming)이면 확인·거절을 먼저 본다.
- * 맞는 명령이 없으면 null(질문으로 넘긴다).
+ * 맞는 명령이 없거나, 묻는 말인데 실행 명령으로 맞으면 null(질문으로 넘긴다).
  */
 export function matchCommand(text: string, { confirming = false }: { confirming?: boolean } = {}): CommandId | null {
   const said = normalizeUtterance(text)
   if (!said) return null
+  const asking = isQuestionUtterance(text)
   if (confirming) {
     if (DENY.test(said)) return 'deny'
-    if (CONFIRM.test(said)) return 'confirm'
+    if (!asking && CONFIRM.test(said.replace(WAKE_PREFIX, ''))) return 'confirm'
   }
   for (const [id, pattern] of PATTERNS) {
     if (!pattern.test(said)) continue
     if (id === 'approve' && NEGATION.test(said)) return null
+    if (asking && NOT_FOR_QUESTIONS.has(id)) return null
     return id
   }
   return null
