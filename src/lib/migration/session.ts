@@ -4,8 +4,7 @@
  * - sessionStorage: 같은 탭에서 주소가 바뀌어도 남는다. 고른 대상(target)도 함께 둔다.
  * 브라우저 객체는 인자로 받는다(시험에서 가짜를 넣는다).
  */
-import type { BackendPhase, Target } from './events.ts'
-import type { Stage } from '../stages.ts'
+import type { Target } from './events.ts'
 
 export const MIGRATION_PARAM = 'migration'
 export const SESSION_KEY = 'jackal.migration'
@@ -69,14 +68,7 @@ export function clearMigration(env: SessionEnv) {
   try { env.storage?.removeItem(SESSION_KEY) } catch { /* 무시 */ }
 }
 
-/** 마지막 이벤트의 phase → 열 화면. 아직 이벤트가 없으면 분석 화면. */
-const STAGE_OF_PHASE: Record<BackendPhase, Stage> = {
-  analysis: 'analysis', build: 'rehearsal', planning: 'planning', awaiting_approval: 'approval',
-  provisioning: 'provisioning', data_copy: 'data', traffic: 'traffic', verification: 'cutover',
-}
-export function stageForPhase(phase: BackendPhase | null): Stage {
-  return phase ? STAGE_OF_PHASE[phase] ?? 'analysis' : 'analysis'
-}
+// 다시 붙었을 때 열 화면은 flow.ts resumeStage가 고른다(이벤트 phase가 아니라 type 기준, stageOf.ts).
 
 /** 브라우저의 진짜 객체(서버 렌더링 중이면 null) */
 export function browserSession(): SessionEnv | null {
