@@ -42,3 +42,19 @@ export const EXAMPLE_ENV = [
   'JWT_SECRET=example-not-a-real-secret',
   'SENTRY_DSN=',
 ].join('\n')
+
+/**
+ * 실제(sse) 모드의 "예시 .env 사용" 버튼이 넣는 파일: 시연 대상 저장소(SoftBank-Hackathon-2026-Team-Jackal/demo-app)가
+ * 코드에서 읽는 키와 같다. 목업 예시(EXAMPLE_ENV)를 실제 이전에 넣으면 앱이 읽는 키가 빠져 샌드박스가
+ * ENV_MISSING으로 멈췄다(2026-11-07). 값은 가짜이고 형식만 맞춘다(키 이름만 읽고, 파일은 플랫폼에 암호화해 둔다).
+ * DATABASE_URL은 플랫폼이 새 환경 DB 주소로 바꿔 넣는다. FAULT_TOKEN이 중계 서버 값과 다르면 장애 스위치만 동작하지 않는다.
+ */
+export const DEMO_APP_EXAMPLE_ENV = [
+  '# example values (fake) for SoftBank-Hackathon-2026-Team-Jackal/demo-app',
+  'DATABASE_URL=postgres://chat:example@db.internal:5432/chat?sslmode=disable',
+  'ENV_NAME=onprem-k3s',
+  'ADDR=:8080',
+  'POLL_INTERVAL_MS=150',
+  'DRAIN_DELAY=3s',
+  'FAULT_TOKEN=example-not-a-real-token',
+].join('\n')

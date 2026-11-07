@@ -4,7 +4,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { RECORDED_CLIPS } from '../../src/lib/voiceRecorded.ts'
 import { isRecommendRequest, isStartCommand, targetFromUtterance } from '../../src/lib/agent/intent.ts'
 import { classifyEnv, crossCheck, envCounts, parseEnvKeys } from '../../src/lib/setup/envFile.ts'
-import { DEMO_SCAN, EXAMPLE_ENV } from '../../src/lib/setup/demoRepo.ts'
+import { DEMO_APP_EXAMPLE_ENV, DEMO_SCAN, EXAMPLE_ENV } from '../../src/lib/setup/demoRepo.ts'
 import { detectStack, displayTree, runtimeFromDockerfile, scanPublicSource } from '../../src/lib/github/scan.ts'
 import { createMockAgents, createMockConnections, resetMock } from '../../src/lib/connections/mock.ts'
 import { agentState } from '../../src/lib/connections/types.ts'
@@ -166,4 +166,12 @@ test('녹음 목록은 public/voice의 mp3와 같고, 모두 voiceClips에 있�
 test('대상 선택을 자칼에게 맡기는 말(추천해 줘 등)을 알아본다', () => {
   for (const said of ['추천해 봐', '알아서 골라줘', '어디가 좋아?', 'Recommend one', 'You choose', 'おすすめは？', 'お任せします']) assert.equal(isRecommendRequest(said), true, said)
   for (const said of ['GCP로 옮겨 줘', '지금 어디야', '다음 넘어가자']) assert.equal(isRecommendRequest(said), false, said)
+})
+
+test('실제 모드 예시 .env는 demo-app이 읽는 키를 모두 값과 함께 담는다', () => {
+  const keys = parseEnvKeys(DEMO_APP_EXAMPLE_ENV)
+  // 빠지면 샌드박스가 ENV_MISSING, 값이 비면 PASS 키가 막힌다(2026-11-07 e2e)
+  const check = crossCheck(keys, ['DATABASE_URL', 'ENV_NAME', 'ADDR', 'POLL_INTERVAL_MS', 'DRAIN_DELAY', 'FAULT_TOKEN'])
+  assert.deepEqual(check.missing, [])
+  assert.deepEqual(keys.filter(key => key.empty).map(key => key.name), [])
 })

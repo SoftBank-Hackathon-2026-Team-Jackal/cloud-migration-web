@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useT, useTOr } from '../lib/i18n'
 import { classifyEnv, crossCheck, envCounts, parseEnvKeys, type EnvCheck, type EnvExceptions, type EnvKey, type EnvRow } from '../lib/setup/envFile'
-import { EXAMPLE_ENV } from '../lib/setup/demoRepo'
+import { DEMO_APP_EXAMPLE_ENV, EXAMPLE_ENV } from '../lib/setup/demoRepo'
+import { apiMode } from '../lib/migration/config'
 import type { EnvFileRef } from '../lib/connections/platform'
 
 /**
@@ -64,7 +65,8 @@ export default function EnvDrop({ expected, exceptions, value, onChange, example
     if (!file) return
     file.text().then(text => accept(file.name, text), () => setError(true))
   }
-  const useExample = () => accept('.env', EXAMPLE_ENV)
+  // 실제 모드는 시연 대상 저장소(demo-app)의 키, 목업 모드는 목업 저장소의 키
+  const useExample = () => accept('.env', apiMode() === 'sse' ? DEMO_APP_EXAMPLE_ENV : EXAMPLE_ENV)
   if (exampleRef) exampleRef.current = useExample
 
   const check: EnvCheck | null = value && expected.length ? crossCheck(value.keys, expected) : null
