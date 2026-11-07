@@ -28,8 +28,11 @@ export interface MigrationProvider {
   revisePlan(): void
   /** 사람 검토 뒤 샌드박스 재시도 */
   retrySandbox(): void
-  /** 두 번째 승인(DB 전환) */
-  approveCutover(): void
+  /**
+   * 두 번째 승인(DB 전환). 받아들여지면(202) true, 거절되면(409 CUTOVER_NOT_READY·404·503·네트워크) false.
+   * 거절은 이전 전체 실패가 아니라 전환 화면의 요청 오류(requestErrors.cutover)로 남는다.
+   */
+  approveCutover(): Promise<boolean>
   cancel(): void
   rollbackTraffic(): void
   /** 롤백된 트래픽 이전을 처음부터 다시 시도한다. */

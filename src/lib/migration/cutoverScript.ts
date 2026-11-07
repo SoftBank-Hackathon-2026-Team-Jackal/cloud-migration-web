@@ -177,7 +177,8 @@ export function cutoverRun(scenario: CutoverScenario, attempt: number, tables: A
   const stopped = refused || tampered
   results.forEach((result, index) => {
     const last = index === results.length - 1
-    push(totalsAt + index * 220, { type: 'cutover.result', phase, status: last ? (stopped ? 'waiting' : 'done') : 'running', data: result })
+    // 전환 뒤에는 트래픽 전환이 남았으므로 이전 전체를 끝내지 않는다(done을 보내지 않는다).
+    push(totalsAt + index * 220, { type: 'cutover.result', phase, status: last && stopped ? 'waiting' : 'running', data: result })
   })
 
   // 4) 인계: 통과일 때만 진행하고, 거부·불일치면 보류한다.
@@ -188,5 +189,7 @@ export function cutoverRun(scenario: CutoverScenario, attempt: number, tables: A
     push(handoverAt + index * 700, { type: 'cutover.handover', phase, status: 'running', data: { item, state: 'running' } })
     push(handoverAt + index * 700 + 600, { type: 'cutover.handover', phase, status: 'done', data: { item, state: 'done' } })
   })
+  // 5) 거부돼 원본으로 되돌렸으면 백엔드처럼 DB 전환 승인을 다시 요청한다(승인 버튼이 다시 열린다).
+  if (refused) push(handoverAt + 800, { type: 'approval.required', phase, status: 'waiting', data: { excluded: [], rollback_policy: 'reverse_replication', gate: 'cutover' } })
   return items
 }

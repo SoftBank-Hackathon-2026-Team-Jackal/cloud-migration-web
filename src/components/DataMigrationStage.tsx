@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import StageShell from './StageShell'
 import ReplicationDiagram from './ReplicationDiagram'
 import PhaseStrip, { STRIP_GATE, type GateState } from './PhaseStrip'
-import { orderKey, useI18n, type MsgKey } from '../lib/i18n'
+import { useI18n, type MsgKey } from '../lib/i18n'
 import type { Target } from '../lib/stages'
 import type { DataPhase, PreflightCheck, PreflightCheckName } from '../lib/migration/events'
 import type { MigrationState } from '../lib/migration/reducer'
@@ -48,9 +48,8 @@ export default function DataMigrationStage({ target, onNext }: { target: Target;
   const { t } = useI18n()
   const { state } = useMigration()
   const view = viewOf(state.data)
-  const dbFirst = state.cutover.dbFirst
-  return <StageShell kicker="DATA MIGRATION · POSTGRESQL" title={t(orderKey(('dmig.title.' + view) as MsgKey, dbFirst))}
-    subtitle={t(orderKey(('dmig.sub.' + view) as MsgKey, dbFirst))} className="dm-stage">
+  return <StageShell kicker="DATA MIGRATION · POSTGRESQL" title={t(('dmig.title.' + view) as MsgKey)}
+    subtitle={t(('dmig.sub.' + view) as MsgKey)} className="dm-stage">
     {ready => <DataBody ready={ready} target={target} onNext={onNext} />}
   </StageShell>
 }
@@ -110,7 +109,7 @@ function DataBody({ ready, target, onNext }: { ready: boolean; target: Target; o
     : view === 'catchup' ? 28 + Math.max(0, Math.min(1, 1 - (lag ?? SCOPE_MAX_MS) / 3400)) * 15
     : view === 'synced' ? 45 : STRIP_GATE.synced
   const gates: [GateState, GateState, GateState] = [blocked ? 'fail' : verdict === 'PASS' || phase === 'copy' || phase === 'catchup' || phase === 'streaming' ? 'pass' : 'wait', gate1 ? 'pass' : 'wait', 'wait']
-  const stripNote = blocked ? t('dmig.strip.blocked') : gate1 ? t(orderKey('dmig.strip.ready', state.cutover.dbFirst)) : view === 'tunnel' ? t('dmig.strip.tunnel') : view === 'preflight' ? t('dmig.strip.preflight') : t(orderKey('dmig.strip.wait', state.cutover.dbFirst))
+  const stripNote = blocked ? t('dmig.strip.blocked') : gate1 ? t('dmig.strip.ready') : view === 'tunnel' ? t('dmig.strip.tunnel') : view === 'preflight' ? t('dmig.strip.preflight') : t('dmig.strip.wait')
 
   return <div className={'dm' + (blocked ? ' is-blocked' : '')}>
     <div className="dm-main">
@@ -152,8 +151,8 @@ function DataBody({ ready, target, onNext }: { ready: boolean; target: Target; o
     </div>
 
     <div className="dm-strip">
-      <PhaseStrip position={position} gates={gates} blocked={blocked} dbFirst={state.cutover.dbFirst} note={stripNote}
-        action={<div className="flow-footer dm-go"><button type="button" className="flow-primary" disabled={!gate1} onClick={onNext}>{t(orderKey('data.go', state.cutover.dbFirst))} <span aria-hidden="true">→</span></button></div>} />
+      <PhaseStrip position={position} gates={gates} blocked={blocked} note={stripNote}
+        action={<div className="flow-footer dm-go"><button type="button" className="flow-primary" disabled={!gate1} onClick={onNext}>{t('data.go')} <span aria-hidden="true">→</span></button></div>} />
     </div>
   </div>
 

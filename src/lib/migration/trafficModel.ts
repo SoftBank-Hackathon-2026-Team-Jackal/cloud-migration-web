@@ -12,6 +12,7 @@ export const DEFAULT_ACTIVITY: Partial<Record<TrafficNoteKey | 'prepareFail' | '
   observe: 'traffic_observe',
   gatePass: 'gate',
   gateFail: 'gate',
+  idleProbe: 'traffic_probe',
   reached: 'gate',
   rollback: 'traffic_rollback',
   manual: 'traffic_rollback',
@@ -119,4 +120,15 @@ export function breachOf(snapshot: TrafficSnapshotData | null, alert: { state: s
   if (snapshot?.phase !== 'stabilizing') return false
   if (alert?.state === 'breach') return true
   return Boolean(snapshot.health?.judged && snapshot.health.breach.length > 0)
+}
+
+/**
+ * 기록 한 줄의 자세한 문구 키. 롤백(gateFail)은 플랫폼이 보낸 판정 근거(kind)에 따라 p99·실패·요청 부족 문구를 고르고,
+ * 근거가 없으면(목업·옛 서버) 예전 문구를 그대로 쓴다.
+ */
+export function logDetailKey(key: string, params: Record<string, string | number> | undefined): string {
+  const base = 'traffic.log.' + key + 'Detail'
+  if (key !== 'gateFail') return base
+  const kind = params?.kind
+  return kind === 'p99' ? base + 'P99' : kind === 'failed' ? base + 'Failed' : kind === 'requests' ? base + 'Requests' : base
 }

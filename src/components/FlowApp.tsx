@@ -12,6 +12,7 @@ import ProvisioningStage from './ProvisioningStage'
 import DataMigrationStage from './DataMigrationStage'
 import TrafficShiftStage from './TrafficShiftStage'
 import CutoverStage from './CutoverStage'
+import ReportStage from './ReportStage'
 import StageRail from './StageRail'
 import DemoControls from './DemoControls'
 import LangSwitch from './LangSwitch'
@@ -20,7 +21,7 @@ import { ConnectionToast, StatusPanel } from './MigrationStatus'
 import { ArriveMorph, DISSOLVE_MS, TransitionLayer } from './ScreenFx'
 import { translateIn, useI18n, type Lang, type MsgKey, type Params, type Translate } from '../lib/i18n'
 import { useMigration } from '../lib/migration/MigrationProvider'
-import { cutoverEntry, dataNextStage } from '../lib/migration/flow'
+import { dataNextStage, resumeStage } from '../lib/migration/flow'
 import { requiresSource } from '../lib/migration/config'
 import { captureScreen, fx, recentHandoff, registerTransition } from '../lib/particleHandoff'
 import { isStage, STAGE_ORDER, type Stage } from '../lib/stages'
@@ -41,7 +42,7 @@ import VoiceCaption from './VoiceCaption'
 import ReviewGatePanel, { useReviewGate } from './ReviewGatePanel'
 import { showReviewPanel } from '../lib/migration/review'
 import { analysisWait, showMappingSheet } from '../lib/migration/analysisWait'
-import { browserSession, clearMigration, readMigration, saveMigration, stageForPhase } from '../lib/migration/session'
+import { browserSession, clearMigration, readMigration, saveMigration } from '../lib/migration/session'
 
 // 실제 환경을 바꾸기 전(입력~승인)까지만 이전 단계로 돌아갈 수 있다. 승인 이후는 되돌림이 아니라 롤백 정책을 따른다.
 const BACK: Partial<Record<Stage, Stage>> = { setup: 'intro', analysis: 'setup', rehearsal: 'analysis', planning: 'rehearsal', approval: 'planning' }
@@ -356,6 +357,8 @@ export default function FlowApp() {
 
   // 실제 모드: 돌고 있는 이전에 다시 붙는 중(새로 고침·새 탭). 첫 이벤트들이 들어와 조용해지면 마지막 phase의 화면을 연다.
   const reattaching = useRef(false)
+  // 다시 붙기 시작한 시각: 복제 중에는 이벤트(data.lsn)가 쉬지 않고 오므로 조용해지기를 무한정 기다리지 않는다.
+  const reattachSince = useRef(0)
   const [reattachTick, setReattachTick] = useState(0)
 
   // 주소로 단계를 바로 열 수 있다: ?stage=traffic&target=gcp&demo=1
@@ -371,6 +374,7 @@ export default function FlowApp() {
     if (saved) {
       if (saved.target) setTarget(saved.target)
       reattaching.current = true
+      reattachSince.current = Date.now()
       setReattachTick(tick => tick + 1)
       provider.attach(saved.id)
       return
@@ -395,16 +399,20 @@ export default function FlowApp() {
     if (reattaching.current) reattaching.current = false
   }, [lostMigration])
 
-  // 다시 붙은 뒤: 이벤트가 0.6초 동안 더 오지 않으면(snapshot을 다 받았으면) 마지막 phase의 화면을 연다. 아무것도 안 오면 4초 뒤 분석 화면.
+  // 다시 붙은 뒤: 이벤트가 0.6초 동안 더 오지 않으면(snapshot을 다 받았으면, 늦어도 2.5초 뒤) 받은 이벤트 type으로 고른 화면을 연다(flow.ts resumeStage).
+  // phase로 고르지 않는다: DB 전환 뒤에도 data.phase가 data_copy로 와서 데이터 화면으로 되돌아가기 때문이다. 아무것도 안 오면 4초 뒤 분석 화면.
   const { lastSeq, lastPhase } = migrationState
+  const latestState = useRef(migrationState)
+  latestState.current = migrationState
   useEffect(() => {
     if (!reattaching.current || reattachTick === 0) return
     const open = () => {
       if (!reattaching.current) return
       reattaching.current = false
-      jump(stageForPhase(lastPhase), false)
+      jump(resumeStage(latestState.current), false)
     }
-    const timer = window.setTimeout(open, lastSeq > 0 || lastPhase ? 600 : 4000)
+    // 이벤트가 0.6초 쉬면 연다. 쉬지 않고 와도(복제·트래픽 중) 붙은 지 2.5초가 지나면 연다.
+    const timer = window.setTimeout(open, lastSeq > 0 || lastPhase ? Math.max(0, Math.min(600, reattachSince.current + 2500 - Date.now())) : 4000)
     return () => window.clearTimeout(timer)
   }, [reattachTick, lastSeq, lastPhase, jump])
 
@@ -503,10 +511,12 @@ export default function FlowApp() {
     {stage === 'approval' && <ArriveMorph key={'approval' + round} />}
     {stage === 'provisioning' && <ProvisioningStage key={round + target} target={target} onComplete={reportProvisioningComplete} onNext={next('data')} />}
     {stage === 'data' && <DataMigrationStage key={round} target={target} onNext={() => go(dataNextStage(migrationState))} />}
-    {stage === 'traffic' && <TrafficShiftStage key={round + target} target={target} onNext={next('cutover')} />}
-    {stage === 'cutover' && <CutoverStage key={round + target} target={target} onTraffic={next('traffic')}
-      onComplete={() => sayVoice(voiceText(voiceLang, 'r.migration.done'), voiceLang !== lang ? voiceText(lang, 'r.migration.done') : undefined)}
-      onRestart={() => jump('intro')} />}
+    {stage === 'cutover' && <CutoverStage key={round + target} target={target} onTraffic={next('traffic')} />}
+    {stage === 'traffic' && <TrafficShiftStage key={round + target} target={target} onCutover={next('cutover')} onNext={() => {
+      sayVoice(voiceText(voiceLang, 'r.migration.done'), voiceLang !== lang ? voiceText(lang, 'r.migration.done') : undefined)
+      go('report')
+    }} />}
+    {stage === 'report' && <ReportStage key={round + target} target={target} onRestart={() => jump('intro')} />}
     <StatusPanel stage={stage} onHome={() => jump('intro')} onSetup={() => jump('setup')} />
     {reviewShown && <ReviewGatePanel view={review.view} mapping={reviewMapping} since={review.doneAt} onView={review.setView} inline={stage === 'analysis'}
       onHome={() => { review.dismiss(); jump('intro') }} onSetup={() => { review.dismiss(); jump('setup') }} />}
@@ -517,7 +527,7 @@ export default function FlowApp() {
     <LangSwitch />
     <PulseWidget />
     <FaultBadge />
-    {exited && <StageRail stage={stage} dbFirst={migrationState.cutover.dbFirst} complete={stage === 'cutover' && cutoverEntry(migrationState) === 'report'} />}
+    {exited && <StageRail stage={stage} />}
     {demoPanel && <DemoControls stage={stage} target={target} onJump={jump} onTarget={setTarget} />}
     <aside className={'jv is-' + jvStatus + (voice.awake ? ' is-awake' : '') + (chatOpen ? ' is-open' : '') + (stage === 'intro' ? ' is-intro' : '')} aria-label={t('agent.title')}>
       {chatOpen && <section className="jv-panel" aria-label={t('agent.title')}>

@@ -28,6 +28,10 @@ const HEARTBEAT_MS = 15000
 // 시험용 MOCK_SPEED=N(1–20): 대본 시계를 N배 빠르게 돌린다(단위 시험이 실제 시간만큼 기다리지 않게).
 const SPEED = Math.min(20, Math.max(1, Number(process.env.MOCK_SPEED) || 1))
 const PHASE_GAP_MS = 800
+// 복제가 streaming이 된 뒤 DB 전환 승인 요청까지의 간격(실제 리허설: 06:07:52 streaming → 06:08:20 요청, 약 28초).
+const CUTOVER_REQUEST_MS = Number(process.env.MOCK_CUTOVER_REQUEST_MS ?? 8000)
+// 복제는 DB 전환·트래픽 동안에도 계속 흐른다: 백엔드처럼 data.phase(streaming, phase data_copy)를 계속 보낸다.
+const STREAMING_TICK_MS = 2000
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -112,10 +116,23 @@ function cancelRun(record) {
   const state = runtime(record.id)
   state.cancelled = true
   state.sim?.stop()
+  stopStreaming(record)
   for (const waiter of state.waiters) { clearTimeout(waiter.timer); waiter.reject(CANCELLED) }
   state.waiters.clear()
   for (const [, approval] of state.approvals) approval.reject(CANCELLED)
   state.approvals.clear()
+}
+
+/** 데이터 복제 뒤: 이전이 끝날 때까지 data.phase(streaming)를 계속 보낸다(백엔드와 같다). */
+function keepStreaming(record) {
+  const state = runtime(record.id)
+  if (state.streaming) return
+  state.streaming = setInterval(() => emit(record, { type: 'data.phase', phase: 'data_copy', status: 'running', data: { phase: 'streaming' } }), STREAMING_TICK_MS / SPEED)
+}
+function stopStreaming(record) {
+  const state = runtime(record.id)
+  if (state.streaming) clearInterval(state.streaming)
+  state.streaming = null
 }
 
 /** 대본을 정해진 시각대로 내보낸다. */
@@ -145,7 +162,8 @@ function approve(record, gate) {
   return true
 }
 
-const PHASES = ['analysis', 'build', 'planning', 'approval', 'provisioning', 'data_copy', 'traffic', 'verification']
+// 백엔드 Workflow 순서: 데이터 복제 → DB 전환(verification phase로 오는 cutover.*) → 트래픽
+const PHASES = ['analysis', 'build', 'planning', 'approval', 'provisioning', 'data_copy', 'verification', 'traffic']
 
 const phaseRunners = {
   async analysis(record) {
@@ -201,6 +219,7 @@ const phaseRunners = {
       if (scenario !== 'pass' && finished) await wait(record, 2 ** 31 - 1)
     }
     await script
+    keepStreaming(record)
   },
   async traffic(record) {
     const state = runtime(record.id)
@@ -232,11 +251,13 @@ const phaseRunners = {
     state.sim = null
   },
   async verification(record) {
-    // 전환 계획(승인 2/2 화면) → 승인 → 전환. 전환이 거부되면(?cutover=kill|tamper-classic 첫 시도) 원본에 남고 다시 승인을 기다린다 [가정].
+    // 복제가 따라잡은 뒤 전환 계획 + 승인 요청(gate=cutover) → 승인 → 전환. 실제 백엔드처럼 둘 다 phase verification으로 보낸다.
+    // 전환이 거부되면(?cutover=kill|tamper-classic 첫 시도) 원본에 남고 승인 요청을 다시 보낸다.
     const scenario = record.cutover ?? 'fast'
+    await wait(record, CUTOVER_REQUEST_MS)
     emit(record, { type: 'cutover.plan', phase: 'verification', status: 'waiting', data: cutoverPlan(record.target, scenario) })
     for (let attempt = 1; ; attempt++) {
-      emit(record, { type: 'approval.required', phase: 'verification', status: 'waiting', data: { excluded: [], rollback_policy: '', gate: 'cutover' } })
+      emit(record, { type: 'approval.required', phase: 'verification', status: 'waiting', data: { excluded: [], rollback_policy: 'reverse_replication', gate: 'cutover' } })
       record.status = 'waiting'
       await waitApproval(record, 'cutover')
       record.status = 'running'
@@ -264,8 +285,10 @@ async function run(record, from) {
     }
     record.status = 'done'
     record.pending = null
+    stopStreaming(record)
     save()
   } catch (error) {
+    stopStreaming(record)
     if (error !== CANCELLED) {
       console.error('대본 실행 실패:', error)
       fail(record, 'internal_error', String(error?.message ?? error))
@@ -392,6 +415,8 @@ const server = http.createServer(async (req, res) => {
       revision: 1, review: url.searchParams.get('review') === '1', retried: false,
       preflight: ['route', 'unknown'].includes(url.searchParams.get('preflight')) ? url.searchParams.get('preflight') : 'pass',
       cutover: ['classic', 'kill', 'tamper', 'tamper-classic'].includes(url.searchParams.get('cutover')) ? url.searchParams.get('cutover') : 'fast',
+      // ?cutover_not_ready=1: 첫 DB 전환 승인은 409 CUTOVER_NOT_READY(백엔드 openapi)로 거절한다.
+      cutoverNotReady: url.searchParams.get('cutover_not_ready') === '1',
       seq: 0, history: [], approved: { plan: false, cutover: false, review: false }, aiFixes: Number(body.ai_fixes) >= 1 && Number(body.ai_fixes) <= 4 ? Number(body.ai_fixes) : 1, pending: 'analysis',
     }
     migrations.set(record.id, record)
@@ -453,6 +478,11 @@ const server = http.createServer(async (req, res) => {
     // 승인 본문에 revision이 있으면 지금 계획 버전과 같아야 한다(계획이 수정된 뒤의 옛 승인을 막는다).
     const body = await readBody(req)
     if (gate === 'plan' && body.revision !== undefined && Number(body.revision) !== record.revision) return send(res, 409, { error: 'stale_revision', revision: record.revision })
+    if (gate === 'cutover') {
+      // 백엔드 openapi: 202 접수, 아직 전환할 수 없으면 409 { detail: { code: 'CUTOVER_NOT_READY' } }
+      if (record.cutoverNotReady) { record.cutoverNotReady = false; save(); return send(res, 409, { detail: { code: 'CUTOVER_NOT_READY', phase: 'data_copy' } }) }
+      return approve(record, gate) ? send(res, 202, { status: 'accepted' }) : send(res, 409, { detail: { code: 'CUTOVER_NOT_READY', phase: 'data_copy' } })
+    }
     return approve(record, gate) ? send(res, 200, { ok: true }) : send(res, 409, { error: 'not_waiting_for_approval' })
   }
   if (req.method === 'POST' && sub === '/cancel') {
