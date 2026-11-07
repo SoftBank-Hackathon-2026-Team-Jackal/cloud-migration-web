@@ -26,6 +26,17 @@ export function sandboxScenario(): SandboxScenario {
   return value === 'pass' || value === 'code' || value === 'infra' || value === 'render' ? value : 'spec'
 }
 
+/**
+ * 시연용 ?redteam=…: 샌드박스 테스트가 통과한 뒤 레드팀 점검(승인 → 공격 → 보안 수정)이 나온다. 목업에서만 동작한다.
+ *  1 약점 3개를 찾아 보안 수정 2회로 모두 고친다 · clean 약점이 없다 · open 보안 수정을 3회 해도 하나가 남는다
+ */
+export type RedTeamDemo = 'fix' | 'clean' | 'open'
+export function redteamDemo(): RedTeamDemo | null {
+  if (typeof window === 'undefined') return null
+  const value = new URLSearchParams(window.location.search).get('redteam')
+  return value === '1' ? 'fix' : value === 'clean' || value === 'open' ? value : null
+}
+
 /** 시연용 ?review=1: 샌드박스 루프가 3회 실패해 사람 검토 대기 화면이 나온다. */
 export function reviewDemo(): boolean {
   return flag('review', '1')

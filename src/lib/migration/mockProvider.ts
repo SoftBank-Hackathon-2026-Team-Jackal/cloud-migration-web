@@ -5,7 +5,8 @@ import { TRAFFIC_READY_EVENTS, trafficPrepareTimeline, approvalTimeline, reportF
 import { DATA_LSN_TICK_MS, DATA_TABLES, dataTickAt, dataTimeline } from './dataScript'
 import { cutoverPlan, cutoverRun } from './cutoverScript'
 import { TrafficSim } from './trafficSim'
-import { aiFixCount, analysisItemsDemo, cutoverScenario, deliveryFailDemo, digestMismatchDemo, preflightScenario, reviewDemo, sandboxScenario, mockSpeed, stabilizeDemoSeconds, manualStepsDemo } from '../demoConfig'
+import { aiFixCount, analysisItemsDemo, cutoverScenario, deliveryFailDemo, digestMismatchDemo, preflightScenario, redteamDemo, reviewDemo, sandboxScenario, mockSpeed, stabilizeDemoSeconds, manualStepsDemo } from '../demoConfig'
+import { REDTEAM_TAIL_GAP_MS, redteamDeclined, redteamRun, redteamWaiting } from './redteamScript'
 
 /**
  * 백엔드 없이 지금까지와 똑같이 움직이게 하는 공급자. 단계 화면이 준비되면 그 단계의 대본(script.ts)을
@@ -23,6 +24,9 @@ export class MockProvider implements MigrationProvider {
   private reviewPending = reviewDemo()
   private retried = false
   private buildPlay: (() => void) | null = null
+  /** ?redteam: 사람이 승인·거절할 때까지 붙잡아 둔 샌드박스 완료 이벤트(레드팀이 끝난 뒤에 나간다) */
+  private redteamTail: TimedDraft[] | null = null
+  private redteamPlay: (() => void) | null = null
   private traffic: TrafficSim | null = null
   private cutoverCancel: (() => void) | null = null
   private cutoverAttempt = 0
@@ -52,6 +56,35 @@ export class MockProvider implements MigrationProvider {
     return timelineFor(phase, { target: this.target, aiFixes: aiFixCount(), revision: this.revision, review: this.reviewPending, retried: this.retried, digestMismatch: digestMismatchDemo(), sandbox: sandboxScenario(), analysisItems: analysisItemsDemo() })
   }
 
+  /**
+   * ?redteam이 켜져 있고 샌드박스가 통과하는 시나리오면, 완료(sandbox.done)를 뒤로 미루고 그 자리에 레드팀 승인 대기를 넣는다.
+   * 사람이 승인·거절하면 레드팀 대본이 흐르고, 끝난 뒤에 완료 이벤트가 나간다(백엔드와 같은 순서: 시험 통과 → 승인 → 공격 → 정리).
+   */
+  private withRedteam(items: TimedDraft[]): TimedDraft[] {
+    this.redteamTail = null
+    if (!redteamDemo()) return items
+    const done = items.filter(item => item.event.type === 'sandbox.done')
+    const passes = done.some(item => item.event.type === 'sandbox.done' && item.event.data.status === 'PASSED')
+    if (!passes) return items
+    const rest = items.filter(item => item.event.type !== 'sandbox.done')
+    const last = Math.max(0, ...rest.map(item => item.after))
+    const first = Math.min(...done.map(item => item.after))
+    this.redteamTail = done.map(item => ({ ...item, after: item.after - first }))
+    return [...rest, { after: last + 500, event: redteamWaiting() }]
+  }
+
+  private runRedteam(items: TimedDraft[]) {
+    const tail = this.redteamTail
+    if (!tail) return
+    this.redteamTail = null
+    const end = Math.max(0, ...items.map(item => item.after)) + REDTEAM_TAIL_GAP_MS
+    this.redteamPlay?.()
+    this.redteamPlay = this.play([...items, ...tail.map(item => ({ ...item, after: item.after + end }))])
+  }
+
+  approveRedteam() { this.runRedteam(redteamRun(redteamDemo() ?? 'fix')) }
+  declineRedteam() { this.runRedteam(redteamDeclined()) }
+
   start(request: StartRequest) {
     this.target = targetOfRequest(request)
     this.analysisDone = false
@@ -76,8 +109,8 @@ export class MockProvider implements MigrationProvider {
         if (!keepResult) stop = this.play(this.scripted('analysis'))
         break
       case 'build':
-        this.buildPlay = this.play(this.scripted('build'))
-        stop = () => { this.buildPlay?.(); this.buildPlay = null }
+        this.buildPlay = this.play(this.withRedteam(this.scripted('build')))
+        stop = () => { this.buildPlay?.(); this.buildPlay = null; this.redteamPlay?.(); this.redteamPlay = null; this.redteamTail = null }
         break
       case 'planning':
       case 'provisioning':

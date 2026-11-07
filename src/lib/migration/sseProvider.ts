@@ -259,6 +259,9 @@ export class SseProvider implements MigrationProvider {
   revisePlan() { this.decide('REJECT', () => { void this.post('/plan/revise', undefined, { phase: 'awaiting_approval' }) }) }
   /** [가정] 백엔드 계약에 없다: 샌드박스 3회 초과 뒤 사람 검토가 어떻게 이뤄지는지 정해지지 않았다. */
   retrySandbox() { if (this.can('sandbox.retry')) void this.post('/sandbox/retry', undefined, { phase: 'build' }) }
+  /** [가정] 백엔드에 승인 API가 아직 없다(워크플로 신호 `approve_redteam`·`decline_redteam`만 있다). 만들어지면 capability `redteam`을 켠다. */
+  approveRedteam() { if (this.can('redteam')) void this.post('/redteam/approve', undefined, { phase: 'build' }) }
+  declineRedteam() { if (this.can('redteam')) void this.post('/redteam/decline', undefined, { phase: 'build' }) }
   /**
    * 두 번째 승인(DB 전환). [확정: 플랫폼 routes/migrations.py] POST /migrations/{id}/approve?gate=cutover →
    * DataMigrationWorkflow에 switchover 신호. 409 CUTOVER_NOT_READY(복제가 아직 streaming이 아님)·404·503은

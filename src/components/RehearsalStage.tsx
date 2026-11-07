@@ -6,6 +6,7 @@ import StageShell from './StageShell'
 import { useT, type MsgKey } from '../lib/i18n'
 import type { Target } from '../lib/stages'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
+import RedTeamPanel from './RedTeamPanel'
 import { useVoiceActions } from '../lib/voice/actions'
 import { currentStep, elapsedSeconds, isMasked, mappingCell, splitSeconds, waitingForAnalysisReview, type StepTime } from '../lib/migration/sandboxProgress'
 import { shortDigest, type BuildErrorCode, type BuildFixData, type BuildResultData, type SandboxAttemptData, type SandboxEnvData, type SandboxStep, type SandboxTestsData } from '../lib/migration/events'
@@ -238,6 +239,7 @@ function RehearsalBody({ ready, target, onNext, onComplete }: { ready: boolean; 
       {tests && <p className="flow-note sbx-tests"><b>{t('sbx.testsBy')}</b> {t('sbx.tests', { total: tests.total, catalog: tests.catalog, original: tests.original, generated: tests.generated, readOnly: tests.read_only })}</p>}
       {migration.build.result && <BuildResultNote result={migration.build.result} />}
       <FixerEnvNotice fixes={fixes} />
+      <RedTeamPanel />
     </section>
 
     <aside className="flow-panel sbx-side" aria-label={t('sbx.chamberAria')}>
@@ -269,6 +271,7 @@ function RehearsalBody({ ready, target, onNext, onComplete }: { ready: boolean; 
         ? t('sbx.foot.pass') + (appliedFixes.length ? ' ' + t('sbx.foot.fixes', { n: appliedFixes.length }) : '')
         : done?.status === 'STOPPED_RENDER' ? t('sbx.foot.render')
         : migration.build.review ? t('review.title')
+        : sandbox.redteam && sandbox.redteam.phase !== 'DONE' ? t(('rt.foot.' + sandbox.redteam.phase) as MsgKey)
         : real && nowText ? (current ? t('sbx.foot.now', { n: current.attempt, max: latest?.max_attempts ?? 3, now: nowText }) : nowText)
         : current ? t('sbx.foot.run', { n: current.attempt, max: latest?.max_attempts ?? 3 })
         : reviewFirst ? t('sbx.waitReview') : t('sbx.foot.wait')}</span>
