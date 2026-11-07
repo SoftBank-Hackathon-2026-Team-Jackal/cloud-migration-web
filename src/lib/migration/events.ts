@@ -338,15 +338,18 @@ export type DataProgressData = {
 }
 
 /**
- * 아래 세 이벤트(data.verify, traffic.ready, cutover.handover)는 민서님 13단계 흐름의 하위 항목
- * (데이터 정합성 확인, 전환 조건 확인, 최종 검증·운영권 인계)을 위한 프론트 [가정]이다. 백엔드 계약은 아직 없다.
- * 필드는 소울님 PoC(poc/demo)가 내는 값(행 수·체크섬 비교, 전환 가능 시점)에 맞췄다.
+ * data.verify [확정: 플랫폼 cmp_data/cutover_events.py verify_events] — DB 전환이 통과하고 검증을 켰을 때만 온다.
+ * rows running → rows 결과(source·target) → checksum running → checksum 결과(source·target 없음). 실패는 event status failed(표의 불일치, 이전 실패 아님).
+ * traffic.ready [확정: cmp_traffic snapshot.py]. cutover.handover는 플랫폼이 아직 내지 않는다(목업 전용, 계획 handover=[]이면 화면이 기다리지 않는다).
  */
 export type DataVerifyName = 'rows' | 'checksum'
 export type DataVerifyData = { name: DataVerifyName; state: 'running' | 'done' | 'failed'; source?: number; target?: number }
 
 /* ==== 데이터 이전 단계 상세 (data.preflight · data.phase · data.lsn · data.table · data.readiness) ====
- * [가정: SSE 이벤트 이름·필드는 백엔드와 미정]. 값은 Finals 리허설(poc/demo · poc/cdc)을 따른다:
+ * [확정: 플랫폼 packages/contracts/src/cmp_contracts/events.py(DataPreflightData·DataPhaseData·DataLsnData·DataTableData·DataReadinessData)].
+ * 플랫폼 이름(check_cidr_overlap·bytes_received·longest_xact_ms·copying 등)은 플랫폼 to_web이 아래 웹 이름으로 바꿔 보낸다.
+ * 플랫폼이 보내지 않는 값: 검사·판정의 PENDING·RUNNING·SKIPPED(앞 검사 실패로 안 돈 검사는 UNKNOWN + NOT_RUN_AFTER_STATIC_FAILURE),
+ * path.kind cloud_vpn, data.table matched(목업 전용). 흐름:
  * Migration Network Preflight(check_cidr_overlap · check_route · probe_db_path · probe_large_transfer → run_network_preflight)
  * → 스키마 덤프(pg_dump --schema-only + mig.marker) → 테이블별 초기 복사 → CDC 따라잡기 → 지연≈0 스트리밍.
  * 문구는 담지 않는다: evidence·endpoint·LSN처럼 언어와 무관한 값만 온다.
@@ -359,7 +362,7 @@ export type DbPathStep = 'DNS' | 'TCP' | 'TLS' | 'AUTH' | 'QUERY'
 export type PreflightCheck = {
   name: PreflightCheckName
   status: PreflightStatus
-  /** 실패·확인 불가 코드(예: CIDR_OVERLAP, ROUTE_NOT_TUNNEL, DNS_FAILED, TCP_UNREACHABLE, TLS_FAILED, AUTH_FAILED, QUERY_FAILED) */
+  /** 실패·확인 불가 코드(플랫폼: CIDR_OVERLAP·CIDR_INPUT_MISSING·NO_ROUTE·UNEXPECTED_PATH·ROUTE_UNVERIFIED·DNS_FAILED·TCP_UNREACHABLE·TLS_FAILED·AUTH_FAILED·QUERY_FAILED·TRANSFER_SHORT·TRANSFER_TIMEOUT·TRANSFER_INTERRUPTED·NOT_RUN_AFTER_STATIC_FAILURE 등. 목업은 ROUTE_NOT_TUNNEL) */
   code: string | null
   /** 증거 원문(mono로 그대로 보인다) */
   evidence: string
@@ -399,7 +402,8 @@ export type DataPreflightData = {
   network: PreflightNetwork
 }
 /** preflight 사전 검사 · blocked 시작 차단 · schema 스키마 복사 · copy 초기 복사 · catchup 변경분 따라잡기 · streaming 지연≈0 유지 */
-export type DataPhase = 'preflight' | 'blocked' | 'schema' | 'copy' | 'catchup' | 'streaming'
+/** tunnel: 원본 쪽 복제 통로(WireGuard 게이트웨이·NLB)를 여는 중(플랫폼 DataMigrationWorkflow phase "tunnel", 2분 30초 이상 걸릴 수 있다). */
+export type DataPhase = 'tunnel' | 'preflight' | 'blocked' | 'schema' | 'copy' | 'catchup' | 'streaming'
 export type DataPhaseData = { phase: DataPhase }
 /** 원본 쓰기 위치(pg_current_wal_lsn)와 대상 재생 위치(replay LSN). 둘의 차이가 복제 지연이다. */
 export type DataLsnData = { source_lsn: string; target_lsn: string | null; lag_bytes: number; lag_ms: number | null }
@@ -412,21 +416,23 @@ export type DataReadinessData = { longest_tx_ms: number; lock_waits: number; com
 export type TrafficReadyData = { state: 'running' | 'done' | 'waiting'; lag_ms: number; longest_tx_ms: number; commits_per_sec: number }
 
 export type HandoverItem = 'dns' | 'origin' | 'access'
-/** held: 전환이 거부돼 인계를 보류했다 [가정]. detail은 서버가 보내는 근거(예: 도메인·TTL, 보존 시간) [가정]. */
+/** 목업 전용(플랫폼은 cutover.handover를 내지 않는다). held: 전환이 거부돼 인계를 보류했다. detail은 근거(예: 도메인·TTL, 보존 시간). */
 export type HandoverData = { item: HandoverItem; state: 'running' | 'done' | 'held'; detail?: string }
 
 export type TrafficPhase = 'applying' | 'observing' | 'gate' | 'complete' | 'rolledback'
 /** 트래픽 피드에 남길 기록. key로 화면이 자기 문구를 고른다. restart는 피드를 비우라는 뜻이다. */
 /**
  * 트래픽 피드에 남길 기록. key로 화면이 자기 문구를 고른다. restart는 피드를 비우라는 뜻이다.
- * [가정] prepare·observe·rollback 키와 activity(백엔드 Temporal Activity 이름, 예: traffic_set_weight)는 프론트 가정이다.
+ * 플랫폼(cmp_traffic snapshot.py)이 보내는 key: apply·observe·gatePass·gateFail·rollback·reached·manual·restart 등. prepare·inject·drained는 화면·목업이 쓴다.
  * activity가 없으면 화면이 key로 기본 이름을 고른다(trafficModel.ts).
  */
 export type TrafficNoteKey = 'prepare' | 'apply' | 'observe' | 'gatePass' | 'gateFail' | 'rollback' | 'reached' | 'manual' | 'inject' | 'drained' | 'restart'
 export type TrafficNote = { key: TrafficNoteKey; params?: Record<string, string | number>; activity?: string }
 
 /*
- * ---- 트래픽 이전 상세 [가정: Traffic #61–#63의 필드 이름이 정해지기 전 프론트 가정] ----
+ * ---- 트래픽 이전 상세 [확정: 플랫폼 packages/traffic/src/cmp_traffic/snapshot.py · contracts events.py] ----
+ * 플랫폼 traffic.prepare check id: handoff_status·ready·external_endpoint·health, reason: HANDOVER_NOT_READY·RELAY_NOT_CONFIGURED·TARGET_MISMATCH·TARGET_UNHEALTHY·PREPARE_FAILED.
+ * 플랫폼이 보내지 않는 선택 값: entry_host·origin·data_path·target.platform·location·tunnel(prepare), steps·backends·results·replication·gate.observe_seconds(snapshot).
  * traffic.prepare: traffic_prepare Activity의 사전 확인(인계 상태 READY · ready=true · external_endpoint 있음 · 헬스).
  * 하나라도 실패하면 실행하지 않고 reason을 보낸다. 노드 이름·연결 정보는 화면이 그대로 보인다(문구가 아니라 값).
  */
@@ -449,16 +455,16 @@ export type TrafficPrepareData = {
   /** 정책(단계·관찰 창·게이트 기준). 스냅샷 값이 오면 그 값을 쓴다. */
   policy?: { steps: number[]; observe_seconds: number; max_failed_requests: number; max_p99_ratio: number }
 }
-/** [가정] 백엔드별 관찰 지표 */
+/** 백엔드별 관찰 지표(목업 전용: 플랫폼은 아직 보내지 않는다) */
 export type TrafficBackendMetrics = { requests_per_sec: number; p99_ms: number; failed_requests: number }
-/** [가정] 끝난 단계의 판정 기록 */
+/** 끝난 단계의 판정 기록(목업 전용: 플랫폼은 아직 보내지 않는다) */
 export type TrafficStepResult = { step: number; verdict: 'pass' | 'rollback'; failed_requests: number; p99_ratio: number; observed_seconds?: number }
 export type TrafficSnapshotData = {
   phase: TrafficPhase
   weights: { origin: number; target: number }
   /** 지금 단계의 대상 비율(%). steps가 오면 그 값 중 하나다. */
   step: number
-  /** [가정] 전환 단계(대상 비율 %, 예: [50, 100]). 없으면 화면은 기본 단계(10 · 50 · 100)를 쓴다. */
+  /** 전환 단계(대상 비율 %, 예: [50, 100]). 플랫폼은 보내지 않는다: 없으면 화면은 기본 단계(10 · 50 · 100)를 쓴다. */
   steps?: number[]
   gate: {
     failed_requests: number
@@ -466,22 +472,25 @@ export type TrafficSnapshotData = {
     p99_ratio: number
     max_p99_ratio: number
     observe_left_seconds: number
-    /** [가정] 관찰 창 길이(정책 observe_seconds) */
+    /** 관찰 창 길이(정책 observe_seconds). 플랫폼은 보내지 않는다. */
     observe_seconds?: number
   }
   residual: { requests_per_sec: number; streams: number }
   decision?: 'advance' | 'rollback' | 'done'
   notes?: TrafficNote[]
-  /** [가정] 백엔드별 지표(원본·대상) */
+  /** 백엔드별 지표(원본·대상). 목업 전용 */
   backends?: { origin: TrafficBackendMetrics; target: TrafficBackendMetrics }
-  /** [가정] 끝난 단계들의 판정 */
+  /** 끝난 단계들의 판정. 목업 전용 */
   results?: TrafficStepResult[]
-  /** [가정] 이 구간에도 계속되는 논리 복제의 지연 */
+  /** 이 구간에도 계속되는 논리 복제의 지연. 목업 전용 */
   replication?: { lag_ms: number | null }
 }
 
-/* ==== DB 전환 상세 [가정] (cutover.plan · cutover.ready · cutover.step 확장 · cutover.outcome · cutover.verify) ====
- * 소울님 리허설(poc/cdc · poc/demo)의 fast switchover 순서에 맞춘 프론트 [가정]이다. 백엔드 문서상 DB 전환·쓰기 제어·역방향 복제는 "확인 필요".
+/* ==== DB 전환 상세 (cutover.plan · cutover.ready · cutover.step 확장 · cutover.outcome · cutover.verify) ====
+ * [확정: 플랫폼 packages/data/src/cmp_data/cutover_events.py · apps/worker/src/cmp_worker/activities/data_cutover.py, phase는 verification].
+ * 순서: cutover.plan(+ approval.required gate=cutover) → 승인 → cutover.ready → cutover.step(모두 done, 끝에 verify 한 번) → cutover.outcome → cutover.verify.
+ * 플랫폼이 보내지 않는 값: plan.steps의 실제 ms(전환 전에는 0)·start_ms·proposal, step state running·ms, outcome held_requests·failed_requests,
+ * verify checksum pending·skipped, cutover.result(목업·poc_bridge 전용). plan.handover는 늘 [].
  * 단계 순서·이름·시간·방식·임계값은 모두 이벤트로 오고, 화면은 받은 순서대로 그린다(순서가 바뀌어도 화면은 그대로).
  */
 export type CutoverMethod = 'fast' | 'classic'
@@ -521,13 +530,14 @@ export type CutoverReadyData = {
 }
 /**
  * 전환 단계. state: running(진행 중) → done(완료), verify는 단계가 끝나고 검증 구간에 들어갔다는 표시다.
- * [가정] id·ms·method·of·result: 단계 이름(id), 걸린 시간(ms), 방식, 전체 단계 수(of), 결과(fail이면 대상 확인 실패, revert는 원본으로 되돌리는 단계).
+ * id·ms·method·of·result: 단계 이름(id), 걸린 시간(ms, 플랫폼은 보내지 않고 outcome.steps로 준다), 방식, 전체 단계 수(of), 결과(fail이면 대상 확인 실패, revert는 원본으로 되돌리는 단계 resume_source).
  */
 export type CutoverStepData = { n: number; state: 'running' | 'done' | 'verify'; id?: string; ms?: number; method?: CutoverMethod; of?: number; result?: 'ok' | 'fail' | 'revert'; window?: CutoverWindow }
 /**
  * 전환 결과: switched(대상이 주 DB) 또는 refused(전환 거부 → 원본 DB로 RESUME).
  * 백엔드는 끝났을 때 한 번 알려 준다: 통과면 write_pause_ms와 단계별 시간(steps_ms → steps), 중단이면 stderr 글(message)과 있으면 사유 코드(reason).
- * 중단된 실행은 단계별 시간·쓰기 중단 시간이 없을 수 있다(null·생략). held_requests는 PAUSE 동안 PgBouncer가 붙잡은 요청 수 [가정].
+ * 중단된 실행은 단계별 시간·쓰기 중단 시간이 없을 수 있다(null·생략). held_requests·failed_requests는 목업 전용(플랫폼은 보내지 않는다).
+ * 거부(refused)는 event status waiting으로 온다(이전은 계속 돌고 다시 승인할 수 있다).
  */
 export type CutoverOutcomeData = {
   result: 'switched' | 'refused'
@@ -542,7 +552,7 @@ export type CutoverOutcomeData = {
 }
 /** RESUME 뒤, 전환 순간 스냅샷과 비교한 테이블별 결과. 거부면 target_rows가 없고 checksum은 skipped. */
 export type CutoverVerifyData = { table: string; source_rows: number; target_rows: number | null; checksum: 'match' | 'mismatch' | 'pending' | 'skipped' }
-/** 측정 결과(합계). id로 화면 문구(cutover.tile.<id>)를 고르고, 모르는 id는 label·value를 그대로 보인다 [가정]. */
+/** 측정 결과(합계). 목업·poc_bridge 전용(플랫폼 Workflow는 보내지 않는다). id로 화면 문구(cutover.tile.<id>)를 고르고, 모르는 id는 label·value를 그대로 보인다. */
 export type CutoverResultData = { id: string; value: string; label?: string; ok?: boolean }
 /* ==== DB 전환 상세 끝 ==== */
 

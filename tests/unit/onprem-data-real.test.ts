@@ -222,3 +222,12 @@ test('리포트: cutover_outcome이 있으면 그 쓰기 중단 시간, 없으�
   const fromEvent = run(base, { type: 'cutover.outcome', phase: 'verification', status: 'running', data: SWITCHED } as DraftEvent)
   assert.equal(reportPauseMs(fromEvent), 7.4)
 })
+
+// ---- 데이터: 복제 통로 단계(data.phase tunnel) ----
+
+test('data.phase tunnel을 받아 둔다(데이터 화면이 통로 여는 중으로 보인다), 사전 검사 결과가 와도 phase 값은 그대로', () => {
+  seq = 0
+  const state = run(running(), { type: 'data.phase', phase: 'data_copy', status: 'running', data: { phase: 'tunnel' } } as DraftEvent)
+  assert.equal(state.data.phase, 'tunnel')
+  assert.equal(state.status, 'running')
+})
