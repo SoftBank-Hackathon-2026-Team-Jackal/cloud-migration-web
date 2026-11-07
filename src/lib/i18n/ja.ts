@@ -403,6 +403,7 @@ export const ja: Record<MsgKey, string> = {
   "agent.voiceLang": "話す言語",
   "agent.inputLang": "認識する言語",
   "agent.captions": "字幕",
+  "agent.captionLang": "字幕の言語",
   "agent.on": "オン",
   "agent.off": "オフ",
   "agent.status.idle": "待機中",

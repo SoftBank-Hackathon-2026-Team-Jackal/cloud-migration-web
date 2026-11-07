@@ -403,6 +403,7 @@ export const en: Record<MsgKey, string> = {
   "agent.voiceLang": "Speaking language",
   "agent.inputLang": "Listening language",
   "agent.captions": "Captions",
+  "agent.captionLang": "Caption language",
   "agent.on": "On",
   "agent.off": "Off",
   "agent.status.idle": "Idle",
