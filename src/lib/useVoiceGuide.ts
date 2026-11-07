@@ -513,5 +513,13 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', recog
     } else armAudio()
   }, [armAudio, stopAudio])
 
-  return { micEnabled, recognitionSupported, soundEnabled, speaking, heard, message, caption, utterance, awake, chime, error, speak, speakText, toggleMic, toggleSound, armAudio, voiceLevel, voiceActive, micLevel }
+  /** 지금 나오는 말을 끊는다(화면을 눌러 다음으로 넘어갈 때). 끝 신호(onEnd)는 부르지 않고, 마이크는 다시 듣기 시작한다. */
+  const stopSpeech = useCallback(() => {
+    if (!speakingRef.current) return
+    utterToken.current += 1
+    stopAudio()
+    window.setTimeout(listen, 150)
+  }, [stopAudio, listen])
+
+  return { micEnabled, recognitionSupported, soundEnabled, speaking, heard, message, caption, utterance, awake, chime, error, speak, speakText, stopSpeech, toggleMic, toggleSound, armAudio, voiceLevel, voiceActive, micLevel }
 }

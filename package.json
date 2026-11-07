@@ -21,6 +21,7 @@
     "test:e2e:voice": "node tests/e2e/voice.mjs",
     "test:e2e:voice-lang": "node tests/e2e/voice-lang.mjs",
     "test:e2e:voice-wake": "node tests/e2e/voice-wake.mjs",
+    "test:e2e:voice-async": "node tests/e2e/voice-async-nav.mjs",
     "tts:download": "node scripts/download-tts-model.mjs",
     "tts:pregen": "node scripts/pregen-tts.ts",
     "tts:clips": "node scripts/generate-voice-clips.ts",
