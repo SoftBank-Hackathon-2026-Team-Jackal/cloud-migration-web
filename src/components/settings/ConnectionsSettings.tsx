@@ -18,13 +18,13 @@ const TABS: Tab[] = ['aws', 'gcp', 'agent']
 export default function ConnectionsSettings() {
   const { t } = useI18n()
   const now = useNowSeconds()
-  const [list, setList] = useState<ConnectionsList | 'loading' | { error: ApiErrorCode }>('loading')
+  const [list, setList] = useState<ConnectionsList | 'loading' | { error: ApiErrorCode; detail: string | null }>('loading')
   const [tab, setTab] = useState<Tab>('aws')
 
   const load = useCallback(async (signal?: AbortSignal) => {
     const result = await api<ConnectionsList>('/api/connections', { signal }).catch(() => null)
     if (!result || signal?.aborted) return
-    setList(current => (result.ok ? result.data : current !== 'loading' && !('error' in current) ? current : { error: result.error }))
+    setList(current => (result.ok ? result.data : current !== 'loading' && !('error' in current) ? current : { error: result.error, detail: result.detail }))
   }, [])
 
   // 주소의 #agent 등으로 탭을 고를 수 있다. Agent 상태(마지막 접속)는 10초마다 다시 읽는다.
@@ -60,7 +60,7 @@ export default function ConnectionsSettings() {
           </Tabs.Trigger>)}
         </Tabs.List>
         {list === 'loading' && <Skeleton rows={2} />}
-        {list !== 'loading' && 'error' in list && <ErrorNote error={list.error} onRetry={refresh} />}
+        {list !== 'loading' && 'error' in list && <ErrorNote error={list.error} detail={list.detail} onRetry={refresh} />}
         {data && <>
           <Tabs.Content value="aws" className="cx-panel"><AwsSection connections={data.connections} error={data.meta.connections.error} errorDetail={data.meta.connections.detail} mock={data.meta.connections.mock} now={now} onChanged={refresh} /></Tabs.Content>
           <Tabs.Content value="gcp" className="cx-panel"><GcpSection connections={data.connections} error={data.meta.connections.error} errorDetail={data.meta.connections.detail} mock={data.meta.connections.mock} now={now} onChanged={refresh} /></Tabs.Content>
