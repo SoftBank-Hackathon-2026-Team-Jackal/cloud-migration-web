@@ -20,7 +20,7 @@ export default function FaultBadge() {
     const load = async () => {
       const response = await fetch('/api/tools/fault', { cache: 'no-store' }).catch(() => null)
       if (!alive) return
-      if (!response || response.status === 404 || response.status === 503) { setActive(false); return }
+      if (!response || response.status === 204 || response.status === 404 || response.status === 503) { setActive(false); return }
       const view = response.ok ? parseFaultView(await response.json().catch(() => null)) : null
       if (alive) setActive(faultActive(view))
       timer = window.setTimeout(load, POLL_MS)
