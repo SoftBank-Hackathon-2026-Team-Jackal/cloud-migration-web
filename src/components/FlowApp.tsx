@@ -31,7 +31,8 @@ import { buildAgentFacts } from '../lib/agent/context'
 import { askAgent } from '../lib/agent/ask'
 import PulseWidget from './PulseWidget'
 import FaultBadge from './tools/FaultBadge'
-import { AGENT_STEP_KEYS } from '../lib/agent/steps'
+import { AGENT_STEP_KEYS, THOUGHT_KEYS } from '../lib/agent/steps'
+import type { StatusStep, Thought } from '../lib/agent/platform'
 import { FoldIcon, MicIcon, SpeakerIcon } from './JackalIcons'
 import { isRecommendRequest, isStartCommand, targetFromUtterance } from '../lib/agent/intent'
 import { useStageVoice } from '../lib/voice/useStageVoice'
@@ -59,7 +60,8 @@ const REPORT: Partial<Record<Stage, VoiceKey>> = {
   cutover: 'r.start.cutover',
 }
 
-type ChatMessage = { id: number; role: 'user' | 'agent'; text: string; tag?: 'report' | 'model' | 'local' }
+// reasoning·skills: 플랫폼 판단 루프가 낸 답의 근거(관찰 → 판단 → 권고)와 읽은 skill. 소리로는 읽지 않고 화면에만 보인다.
+type ChatMessage = { id: number; role: 'user' | 'agent'; text: string; tag?: 'report' | 'model' | 'local'; reasoning?: Thought[]; skills?: string[] }
 
 /** "지금 어디야"를 모델에 물을 때의 질문(음성 언어별) */
 const STATUS_QUESTION: Record<Lang, string> = {
@@ -180,21 +182,27 @@ export default function FlowApp() {
     onIntent: text => handleIntent(text),
     onCommand: (text, options) => voiceCommand.current(text, options),
     onAsk: question => askHandler.current(question),
-    onSay: (text, meta) => pushChat('agent', text, meta.kind === 'answer' ? meta.source ?? 'local' : 'report'),
+    onSay: (text, meta) => {
+      // 답의 근거는 바로 앞에서 askAgent가 받아 둔 것이다(speakText가 같은 흐름에서 onSay를 부른다).
+      const why = meta.kind === 'answer' ? pendingWhy.current : null
+      if (meta.kind === 'answer') pendingWhy.current = null
+      pushChat('agent', text, meta.kind === 'answer' ? meta.source ?? 'local' : 'report', why ?? undefined)
+    },
     onHeard: text => pushChat('user', text),
   })
 
   // 채팅 기록: 음성 안내·음성 질문·입력한 질문과 답을 한 곳에 남긴다. 위젯은 접을 수 있다.
   const [chat, setChat] = useState<ChatMessage[]>([])
+  const pendingWhy = useRef<Pick<ChatMessage, 'reasoning' | 'skills'> | null>(null)
   const [chatOpen, setChatOpen] = useState(true)
   const [unread, setUnread] = useState(0)
   const chatId = useRef(0)
   const chatOpenRef = useRef(true)
   const logRef = useRef<HTMLDivElement>(null)
   chatOpenRef.current = chatOpen
-  function pushChat(role: ChatMessage['role'], text: string, tag?: ChatMessage['tag']) {
+  function pushChat(role: ChatMessage['role'], text: string, tag?: ChatMessage['tag'], why?: Pick<ChatMessage, 'reasoning' | 'skills'>) {
     chatId.current += 1
-    const message: ChatMessage = { id: chatId.current, role, text, tag }
+    const message: ChatMessage = { id: chatId.current, role, text, tag, ...why }
     setChat(list => [...list.slice(-59), message])
     if (role === 'agent' && !chatOpenRef.current) setUnread(count => count + 1)
   }
@@ -205,7 +213,7 @@ export default function FlowApp() {
   const [question, setQuestion] = useState('')
   const [asking, setAsking] = useState(false)
   // 서버가 알려 주는 진행 단계(상태 읽는 중 → 모델에 묻는 중 …). 없으면 '생각 중'.
-  const [askStep, setAskStep] = useState<string | null>(null)
+  const [askStep, setAskStep] = useState<StatusStep | null>(null)
   // captionLang: 화면 언어. 음성 언어와 다르면 답을 화면 언어 자막으로도 받는다(심사 화면은 일본어, 음성은 한국어 같은 경우).
   const askContext = useRef({ migrationState, stage, lang: voiceLang, captionLang: lang })
   askContext.current = { migrationState, stage, lang: voiceLang, captionLang: lang }
@@ -213,9 +221,10 @@ export default function FlowApp() {
     setAsking(true)
     const { migrationState: current, stage: currentStage, lang: currentLang, captionLang } = askContext.current
     const facts = buildAgentFacts(current, currentStage, t(('stage.' + currentStage) as MsgKey))
-    const { answer, source, caption } = await askAgent(text, facts, currentLang, captionLang, setAskStep)
+    const { answer, source, caption, reasoning, skills } = await askAgent(text, facts, currentLang, captionLang, setAskStep)
     setAsking(false)
     setAskStep(null)
+    pendingWhy.current = reasoning?.length ? { reasoning, skills } : null
     voice.speakText(answer, currentLang, source, caption)
   }
 
@@ -298,7 +307,8 @@ export default function FlowApp() {
   const askStatus = async (isStale: () => boolean) => {
     const { migrationState: current, stage: currentStage, lang: currentLang, captionLang } = askContext.current
     const facts = buildAgentFacts(current, currentStage, t(('stage.' + currentStage) as MsgKey))
-    const { answer, source, caption } = await askAgent(STATUS_QUESTION[currentLang], facts, currentLang, captionLang)
+    const { answer, source, caption, reasoning, skills } = await askAgent(STATUS_QUESTION[currentLang], facts, currentLang, captionLang)
+    pendingWhy.current = reasoning?.length ? { reasoning, skills } : null
     if (isStale() || source !== 'model') return false
     voice.speakText(answer, currentLang, source, caption)
     return true
@@ -549,9 +559,13 @@ export default function FlowApp() {
           {chat.map(message => <div key={message.id} className={'jv-msg is-' + message.role} {...(message.tag ? { 'data-msg-tag': message.tag } : {})}
             {...(message.tag === 'model' || message.tag === 'local' ? { 'data-agent-source': message.tag } : {})}>
             <p>{message.text}</p>
+            {message.reasoning?.length ? <details className="jv-why" open>
+              <summary>{t('agent.reasoning')}{message.skills?.length ? ' · ' + t('agent.skillsUsed', { names: message.skills.join(', ') }) : ''}</summary>
+              <ol>{message.reasoning.map((thought, index) => <li key={index} data-kind={thought.kind}><b>{t(THOUGHT_KEYS[thought.kind])}</b> {thought.text}</li>)}</ol>
+            </details> : null}
             {(message.tag === 'model' || message.tag === 'local') && <small>{t(message.tag === 'model' ? 'agent.sourceModel' : 'agent.sourceLocal')}</small>}
           </div>)}
-          {asking && <div className="jv-msg is-agent is-typing"><p>{t(askStep && AGENT_STEP_KEYS[askStep] ? AGENT_STEP_KEYS[askStep] : 'agent.thinking')}</p></div>}
+          {asking && <div className="jv-msg is-agent is-typing"><p>{t(askStep && AGENT_STEP_KEYS[askStep.step] ? AGENT_STEP_KEYS[askStep.step] : 'agent.thinking', { name: typeof askStep?.name === 'string' ? askStep.name : '' })}</p></div>}
         </div>
         {voice.error && <small className="jv-error">{voice.error}</small>}
         {stage === 'intro' && <div className="jv-chips">

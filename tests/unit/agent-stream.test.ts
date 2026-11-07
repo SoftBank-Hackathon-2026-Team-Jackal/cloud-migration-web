@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { parseSse, readSse, sseBlock } from '../../src/lib/agent/sse.ts'
-import { askPlatform } from '../../src/lib/agent/platform.ts'
+import { askPlatform, parseReasoning, parseSkills } from '../../src/lib/agent/platform.ts'
 
 const input = { question: '지금 단계?', context: 'stage: analysis', lang: 'ko' as const, captionLang: null }
 const streamOf = (...chunks: string[]) => new Response(new ReadableStream({
@@ -40,4 +40,39 @@ test('askPlatform returns null for an error event, a bad status and a network fa
   assert.equal(await run(async () => streamOf(sseBlock('error', { code: 'AGENT_DISABLED' }))), null)
   assert.equal(await run(async () => new Response('x', { status: 500 })), null)
   assert.equal(await run(async () => { throw new Error('connect') }), null)
+})
+
+test('askPlatform passes skill and tool steps with their names and keeps the reasoning', async () => {
+  const seen: Array<Record<string, unknown>> = []
+  const reasoning = [
+    { kind: 'observe', text: '대상 오류율 48.1%, p99 1000ms.' },
+    { kind: 'judge', text: '기준 5%를 넘었다.' },
+    { kind: 'recommend', text: '롤백한다.' },
+  ]
+  const result = await askPlatform('http://api', input, s => seen.push(s), (async () => streamOf(
+    sseBlock('status', { step: 'tool', name: 'read_traffic_health' }),
+    sseBlock('status', { step: 'skill', name: 'ops-rollback' }),
+    sseBlock('answer', { answer: '롤백을 권합니다.', provider: 'platform', reasoning, skills: ['ops-rollback'] }),
+    sseBlock('done', {}),
+  )) as unknown as typeof fetch)
+  assert.deepEqual(seen, [{ step: 'tool', name: 'read_traffic_health' }, { step: 'skill', name: 'ops-rollback' }])
+  assert.deepEqual(result, { answer: '롤백을 권합니다.', provider: 'platform', reasoning, skills: ['ops-rollback'] })
+})
+
+test('parseReasoning and parseSkills keep only well-formed entries', () => {
+  assert.deepEqual(parseReasoning('x'), [])
+  assert.deepEqual(parseReasoning([
+    { kind: 'observe', text: '  값 ' },
+    { kind: 'guess', text: '모르는 종류' },
+    { kind: 'judge', text: '' },
+    null,
+    { kind: 'judge', text: 'x'.repeat(300) },
+    { kind: 'recommend', text: 'a' }, { kind: 'recommend', text: 'b' }, { kind: 'recommend', text: 'c' },
+  ]), [
+    { kind: 'observe', text: '값' },
+    { kind: 'judge', text: 'x'.repeat(200) },
+    { kind: 'recommend', text: 'a' },
+    { kind: 'recommend', text: 'b' },
+  ])
+  assert.deepEqual(parseSkills(['ops-rollback', '../etc', 3, 'Bad Name']), ['ops-rollback'])
 })

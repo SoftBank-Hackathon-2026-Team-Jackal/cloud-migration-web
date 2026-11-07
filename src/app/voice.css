@@ -90,3 +90,11 @@
 .jv-caption p { margin: 0; text-wrap: balance; }
 .jv-caption .jv-caption-sub { margin-top: 4px; color: rgba(255, 255, 255, .72); font-size: .78em; }
 @media (prefers-reduced-motion: reduce) { .jv-caption { transition: none; } }
+
+/* 판단 근거(플랫폼 판단 루프의 관찰 → 판단 → 권고). 소리로는 읽지 않고 답 아래에만 보인다. */
+.jv-why { margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(0, 0, 0, 0.08); font-size: 12px; }
+.jv-why summary { cursor: pointer; color: var(--text-muted); font-size: 11px; list-style-position: inside; }
+.jv-why ol { margin: 4px 0 0; padding: 0; list-style: none; display: grid; gap: 3px; }
+.jv-why li { line-height: 1.45; overflow-wrap: anywhere; }
+.jv-why li b { display: inline-block; min-width: 2.6em; margin-right: 4px; font-weight: 600; font-size: 11px; color: var(--text-muted); }
+.jv-why li[data-kind="recommend"] b { color: #b42318; }

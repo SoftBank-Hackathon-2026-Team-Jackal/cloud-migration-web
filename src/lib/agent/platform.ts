@@ -6,7 +6,25 @@
 import { readSse } from './sse.ts'
 
 export type AgentInput = { question: string; context: string; lang: 'ko' | 'en' | 'ja'; captionLang: 'ko' | 'en' | 'ja' | null }
-export type AgentResult = { answer: string; caption?: string; provider: string }
+/** 판단 근거 한 줄: 관찰(observe) → 판단(judge) → 권고(recommend). 플랫폼 판단 루프만 보낸다. */
+export type Thought = { kind: 'observe' | 'judge' | 'recommend'; text: string }
+export type AgentResult = { answer: string; caption?: string; provider: string; reasoning?: Thought[]; skills?: string[] }
+
+const KINDS = new Set(['observe', 'judge', 'recommend'])
+
+/** 서버가 보낸 근거·skill 목록에서 모양이 맞는 것만 남긴다(최대 4개·6개). */
+export function parseReasoning(value: unknown): Thought[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((item): item is Thought => !!item && typeof item === 'object' && KINDS.has((item as Thought).kind) && typeof (item as Thought).text === 'string' && !!(item as Thought).text.trim())
+    .slice(0, 4)
+    .map(item => ({ kind: item.kind, text: item.text.trim().slice(0, 200) }))
+}
+
+export function parseSkills(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((name): name is string => typeof name === 'string' && /^[a-z0-9][a-z0-9-]*$/.test(name)).slice(0, 6)
+}
 export type StatusStep = { step: string; [key: string]: unknown }
 
 const TIMEOUT_MS = 50000
@@ -35,6 +53,10 @@ export async function askPlatform(
           provider: typeof payload.provider === 'string' ? payload.provider : 'platform',
           ...(typeof payload.caption === 'string' && payload.caption ? { caption: payload.caption } : {}),
         }
+        const reasoning = parseReasoning(payload.reasoning)
+        const skills = parseSkills(payload.skills)
+        if (reasoning.length) result.reasoning = reasoning
+        if (skills.length) result.skills = skills
       }
     })
   } catch {
