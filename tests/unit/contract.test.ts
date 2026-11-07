@@ -362,3 +362,21 @@ test('목업 서버가 SSE로 보내는 이벤트(snapshot 포함)가 스키마�
     server.kill('SIGTERM')
   }
 })
+
+test('그림자 리허설 이벤트(shadow.progress·shadow.result)와 사전 조건 shadow 줄이 스키마를 통과한다', () => {
+  const sample = { method: 'GET', path: '/api/orders/7', status_origin: 200, status_target: 200, diff: [{ pointer: '/total', origin: 10, target: 11 }] }
+  assertValid(validateEvent, stamp({ type: 'shadow.progress', phase: 'data_copy', status: 'running', data: { run_id: 'r1', compared: 42, match: 41, mismatch: 1, elapsed_s: 12.5, window_s: 60 } }), 'shadow.progress')
+  for (const state of ['pass', 'warn', 'skipped', 'stopped']) {
+    const skipped = state === 'skipped'
+    assertValid(validateEvent, stamp({ type: 'shadow.result', phase: 'data_copy', status: 'done', data: {
+      run_id: 'r1', state, compared: skipped ? 0 : 1240, match: skipped ? 0 : 1238, mismatch: skipped ? 0 : 2, match_ratio: skipped ? null : 0.998,
+      target_5xx: 0, p99_ratio: skipped ? null : 1.1, reason: skipped ? 'SHADOW_NO_TRAFFIC' : null,
+      samples: skipped ? [] : [sample], ai: skipped ? null : { category: 'data', summary: '합계 값이 다르다', hypotheses: ['복제 지연 중 쓰기'] },
+    } }), 'shadow.result/' + state)
+  }
+  const plan = cutoverPlan('onprem', 'fast')
+  for (const state of ['pass', 'warn', 'skip']) {
+    const data = { ...plan, preconditions: [...plan.preconditions, { id: 'shadow', state, value: '1238/1240', evidence: 'GET 1240건 비교' }] }
+    assertValid(validateEvent, stamp({ type: 'cutover.plan', phase: 'verification', status: 'waiting', data }), 'cutover.plan/shadow-' + state)
+  }
+})

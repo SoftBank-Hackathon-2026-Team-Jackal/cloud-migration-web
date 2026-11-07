@@ -7,12 +7,14 @@ import type {
   DataProgressData, ErrorData, MigrationEvent, MigrationStatus, PlanStepData, ProvisionResourceData,
   ReportData, TrafficAlertData, TrafficNote, TrafficPrepareData, TrafficSnapshotData,
   DataLsnData, DataPhase, DataPreflightData, DataReadinessData, DataTableData,
+  ShadowProgressData, ShadowResultData,
   SandboxAttemptData, SandboxDoneData, SandboxEnvData, SandboxStep, SandboxStepData, SandboxTestsData,
 } from './events'
 import { isBackendPreview, normalizeEvidence } from './events.ts'
 import { adaptBackendPreview } from './previewAdapter.ts'
 import { markTime, type StepTime } from './sandboxProgress.ts'
 import { nextFlowStage } from './stageOf.ts'
+import type { ShadowState } from './shadow.ts'
 import type { Stage } from '../stages.ts'
 
 export const LAG_HISTORY_POINTS = 48
@@ -54,10 +56,14 @@ export type MigrationState = {
   /** pendingDecisions: 승인 요청이 보낸 정해야 할 값(code). 계획 미리보기의 pending_decisions와 함께 요약에 쓴다. */
   approval: { required: boolean; excluded: string[]; rollbackPolicy: string; pendingDecisions: string[]; cutoverRequired: boolean; decision: ApprovalDecisionData | null }
   provision: { resources: ProvisionResourceData[]; checks: ProvisionCheckData[] }
-  /** preflight·phase·lsn·lagTrace·tables·readiness: 데이터 이전 단계 상세(사전 검사 → 스키마 → 초기 복사 → CDC → 스트리밍) [가정] */
+  /**
+   * preflight·phase·lsn·lagTrace·tables·readiness: 데이터 이전 단계 상세(사전 검사 → 스키마 → 초기 복사 → CDC → 스트리밍) [가정]
+   * shadow: 그림자 리허설(shadow.progress·shadow.result). 오지 않으면 둘 다 null이고 화면은 그대로다.
+   */
   data: {
     current: DataProgressData | null; lagHistory: number[]; verify: DataVerifyData[]
     preflight: DataPreflightData | null; phase: DataPhase | null; lsn: DataLsnData | null; lagTrace: number[]; tables: DataTableData[]; readiness: DataReadinessData | null
+    shadow: ShadowState
   }
   /** prepare: 사전 확인·연결 정보 [가정]. trace: 관찰 중 p99 비율 추이. startedAt: 이 단계의 첫 이벤트 시각(기록의 +초 기준) */
   traffic: { snapshot: TrafficSnapshotData | null; logs: TrafficLogEntry[]; logCounter: number; ready: TrafficReadyData | null; prepare: TrafficPrepareData | null; trace: number[]; startedAt: string | null; alert: TrafficAlertData | null }
@@ -89,7 +95,7 @@ export const initialState: MigrationState = {
   plan: { steps: [], ready: false, meta: null, preview: null, backend: null },
   approval: { required: false, excluded: [], rollbackPolicy: '', pendingDecisions: [], cutoverRequired: false, decision: null },
   provision: { resources: [], checks: [] },
-  data: { current: null, lagHistory: [], verify: [], preflight: null, phase: null, lsn: null, lagTrace: [], tables: [], readiness: null },
+  data: { current: null, lagHistory: [], verify: [], preflight: null, phase: null, lsn: null, lagTrace: [], tables: [], readiness: null, shadow: { progress: null, result: null } },
   traffic: { snapshot: null, logs: [], logCounter: 0, ready: null, prepare: null, trace: [], startedAt: null, alert: null },
   cutover: { doneSteps: 0, verifying: false, results: [], handover: [], plan: null, ready: null, steps: [], outcome: null, tables: [], attempt: 0 },
   report: null,
@@ -306,6 +312,11 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
     }
     case 'data.readiness':
       return { ...next, data: { ...next.data, readiness: event.data } }
+    // ---- 그림자 리허설: 경고·표시 전용(이전 상태를 실패로 바꾸지 않는다). 새 run_id면 지난 결과를 비운다. ----
+    case 'shadow.progress':
+      return { ...next, data: { ...next.data, shadow: applyShadowProgress(next.data.shadow, event.data) } }
+    case 'shadow.result':
+      return { ...next, data: { ...next.data, shadow: applyShadowResult(next.data.shadow, event.data) } }
     case 'traffic.ready':
       return { ...next, traffic: { ...next.traffic, ready: event.data } }
     case 'traffic.prepare':
@@ -365,6 +376,14 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
     default:
       return next
   }
+}
+
+function applyShadowProgress(shadow: ShadowState, data: ShadowProgressData): ShadowState {
+  return { progress: data, result: shadow.result && shadow.result.run_id === data.run_id ? shadow.result : null }
+}
+
+function applyShadowResult(shadow: ShadowState, data: ShadowResultData): ShadowState {
+  return { progress: shadow.progress && shadow.progress.run_id === data.run_id ? shadow.progress : null, result: data }
 }
 
 function withoutRequestError(state: MigrationState, key: RequestKey): MigrationState {

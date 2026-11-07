@@ -25,14 +25,14 @@ test('보고 문구: 세 언어 모두 같은 키·같은 변수를 가진다', 
 })
 
 test('보고 문구: 한 문장(두 승인 지점·실패·단계 시작만 두 문장), 단계 끝은 다음 단계를 묻는다', () => {
-  const TWO = /^(r\.start\.|r\.approval\.|r\.cutover\.(facts|refused)|r\.data\.preflight|r\.sandbox\.(attemptFail|review|passed)|r\.analysis\.done|r\.plan\.ready|r\.prov\.done|r\.data\.(lagZero|copyDone)|r\.traffic\.(done|step|gate|rollback|alertError|alertP99)|r\.cutover\.(pause|done)|r\.error|r\.migration\.done|c\.confirm)/
+  const TWO = /^(r\.start\.|r\.approval\.|r\.cutover\.(facts|refused)|r\.data\.preflight|r\.sandbox\.(attemptFail|review|passed)|r\.analysis\.done|r\.plan\.ready|r\.prov\.done|r\.data\.(lagZero|copyDone)|r\.shadow\.(pass|warn)|r\.traffic\.(done|step|gate|rollback|alertError|alertP99)|r\.cutover\.(pause|done)|r\.error|r\.migration\.done|c\.confirm)/
   for (const [key, text] of Object.entries(VOICE_MESSAGES.ko)) {
     if (!key.startsWith('r.') && !key.startsWith('c.')) continue
     const sentences = text.split(/[.?!](\s|$)/).filter(part => part.trim().length > 1).length
     assert.ok(sentences <= (TWO.test(key) ? 2 : 1), `${key}: ${text}`)
     assert.ok(text.replace(/\{\w+\}/g, '12').length <= 40, `${key}: 너무 길다 — ${text}`)
   }
-  for (const key of ['r.analysis.done', 'r.sandbox.passed', 'r.plan.ready', 'r.prov.done', 'r.data.lagZero', 'r.traffic.done'] as VoiceKey[]) {
+  for (const key of ['r.analysis.done', 'r.sandbox.passed', 'r.plan.ready', 'r.prov.done', 'r.data.lagZero', 'r.shadow.pass', 'r.shadow.warn', 'r.traffic.done'] as VoiceKey[]) {
     assert.ok(VOICE_MESSAGES.ko[key].endsWith('{next}(으)로 갈까요?'), key)
   }
   assert.equal(voiceText('ko', 'r.sandbox.attemptFail', { attempt: 1, cls: 'cls.CODE' }), '1차 실패. 코드 문제를 고칩니다.')

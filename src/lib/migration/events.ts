@@ -511,6 +511,32 @@ export type TrafficHealthJudgement = {
 /** traffic.alert: 안정화 구간에서 대상이 기준을 넘기 시작했거나(breach) 회복했다(recovered). 상태가 바뀔 때만 한 번 온다. */
 export type TrafficAlertData = TrafficHealthJudgement & { state: 'breach' | 'recovered'; phase: 'stabilizing' }
 
+/* ==== 그림자 리허설 (shadow.progress · shadow.result, phase data_copy) ====
+ * 복제가 따라잡은 뒤 DB 전환 승인 전에 실제 GET 요청을 대상에도 복사해 원본과 비교한다. 경고와 표시만 하고 절대 막지 않는다(기본 꺼짐).
+ * 이벤트가 오지 않으면 화면은 예전과 같다. 결과는 cutover.plan.preconditions의 id shadow 한 줄(warn·skip 포함)로도 온다.
+ */
+export type ShadowProgressData = { run_id: string; compared: number; match: number; mismatch: number; elapsed_s: number; window_s: number }
+/** reason 코드: SHADOW_NO_TRAFFIC · SHADOW_UNAVAILABLE · SHADOW_STOPPED_REPLICATION · SHADOW_DISABLED */
+export type ShadowReason = 'SHADOW_NO_TRAFFIC' | 'SHADOW_UNAVAILABLE' | 'SHADOW_STOPPED_REPLICATION' | 'SHADOW_DISABLED'
+export type ShadowDiff = { pointer: string; origin?: unknown; target?: unknown }
+export type ShadowSample = { method: string; path: string; status_origin: number | null; status_target: number | null; diff: ShadowDiff[] }
+export type ShadowAi = { category: 'noise' | 'data' | 'env' | 'code'; summary: string; hypotheses: string[] }
+export type ShadowResultData = {
+  run_id: string
+  state: 'pass' | 'warn' | 'skipped' | 'stopped'
+  compared: number
+  match: number
+  mismatch: number
+  match_ratio: number | null
+  target_5xx: number
+  p99_ratio: number | null
+  reason: string | null
+  /** 불일치 샘플(최대 5) */
+  samples: ShadowSample[]
+  ai: ShadowAi | null
+}
+/* ==== 그림자 리허설 끝 ==== */
+
 /* ==== DB 전환 상세 (cutover.plan · cutover.ready · cutover.step 확장 · cutover.outcome · cutover.verify) ====
  * [확정: 플랫폼 packages/data/src/cmp_data/cutover_events.py · apps/worker/src/cmp_worker/activities/data_cutover.py, phase는 verification].
  * 순서: cutover.plan(+ approval.required gate=cutover) → 승인 → cutover.ready → cutover.step(모두 done, 끝에 verify 한 번) → cutover.outcome → cutover.verify.
@@ -520,7 +546,7 @@ export type TrafficAlertData = TrafficHealthJudgement & { state: 'breach' | 'rec
  */
 export type CutoverMethod = 'fast' | 'classic'
 /** 전환 전 조건 한 줄. id로 화면이 이름을 고르고(cut.pre.<id>), value·evidence는 서버 값을 그대로 보인다. proposal이면 백엔드에 아직 없는 제안안 조건이다. */
-export type CutoverPrecondition = { id: string; state: 'pass' | 'wait' | 'fail'; value?: string; evidence?: string; proposal?: boolean }
+export type CutoverPrecondition = { id: string; state: 'pass' | 'wait' | 'fail' | 'warn' | 'skip'; value?: string; evidence?: string; proposal?: boolean }
 /** 전환 구간: pre는 PAUSE 전에 미리 하는 일(예: 시퀀스 미리 올림), pause는 쓰기 중단 구간 안이다. */
 export type CutoverWindow = 'pre' | 'pause'
 /**
@@ -638,6 +664,8 @@ export type MigrationEvent =
   | Base<'traffic.snapshot', TrafficSnapshotData>
   | Base<'traffic.prepare', TrafficPrepareData>
   | Base<'traffic.alert', TrafficAlertData>
+  | Base<'shadow.progress', ShadowProgressData>
+  | Base<'shadow.result', ShadowResultData>
   | Base<'cutover.step', CutoverStepData>
   | Base<'cutover.result', CutoverResultData>
   | Base<'cutover.handover', HandoverData>

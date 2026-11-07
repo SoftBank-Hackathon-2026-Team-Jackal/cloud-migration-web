@@ -312,6 +312,16 @@ export class ReportEngine {
       case 'data.verify':
         if (event.data.state === 'failed') return this.first(phase, 'verifyFail') ? [make('r.data.verifyFail', 'failure')] : []
         return event.data.name === 'checksum' && event.data.state === 'done' && this.first(phase, 'verified') ? [make('r.data.verified', 'milestone')] : []
+      // 그림자 리허설: 시작 한 번, 결과(pass·warn·skipped) 한 번. warn이어도 막지 않으므로 다음 단계로 갈지 묻는 흐름은 같다.
+      case 'shadow.progress':
+        return this.first(phase, 'shadowStart:' + event.data.run_id) ? [make('r.shadow.start', 'milestone')] : []
+      case 'shadow.result': {
+        const { state, compared, mismatch, run_id } = event.data
+        if (state === 'stopped' || !this.first(phase, 'shadowResult:' + run_id)) return []
+        if (state === 'pass') return [ask('r.shadow.pass', { n: compared })]
+        if (state === 'warn') return [ask('r.shadow.warn', { n: mismatch, m: compared })]
+        return [make('r.shadow.skipped', 'milestone')]
+      }
       case 'traffic.prepare':
         return event.data.state === 'failed' && this.first(phase, 'prepareFail') ? [make('r.traffic.prepareFail', 'failure')] : []
       case 'traffic.snapshot': {
