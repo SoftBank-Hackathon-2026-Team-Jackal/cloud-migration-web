@@ -17,6 +17,7 @@ import { approvalFactReports, cutoverFactReports, renderReport, ReportEngine, Re
 import { statusLine } from './status'
 import { prefetchTts } from './ttsClient'
 import { isQuestionLine, parseWake } from './wake'
+import { pendingOnEvent, pendingOnReport, type Pending } from './pending'
 
 const PHASE_OF: Record<string, BackendPhase> = {
   analysis: 'analysis', rehearsal: 'build', planning: 'planning', approval: 'awaiting_approval',
@@ -25,9 +26,6 @@ const PHASE_OF: Record<string, BackendPhase> = {
 /** 호출어 없이 받는 명령의 최대 길이(정규화한 글자 수): 발표 중의 긴 설명이 명령으로 잡히지 않게 */
 const BARE_COMMAND_MAX = 14
 const CONFIRM_MS = 12000
-/** 안정화 구간 이상 알림("롤백할까요?") 뒤에 "응"만으로 롤백을 승인할 수 있는 시간 */
-const ALERT_CONFIRM_MS = 30000
-const ROLLBACK_ASKS = new Set(['r.traffic.alertError', 'r.traffic.alertP99'])
 /** "지금 어디야"를 모델로 답할 때 기다리는 최대 시간(그 뒤에는 고정 문장) */
 const STATUS_MODEL_MS = 5000
 /** 자칼이 되묻거나 말을 시킨 뒤, 호출어 없이 짧은 대답("응", "승인해")을 받는 시간 */
@@ -62,7 +60,13 @@ export function useStageVoice({ stage, lang, captionLang, speaking, lastLine, sp
   live.current = { stage, lang, captionLang, speaking, lastLine, speak, onSetupStart, askStatus, state }
   const [paused, setPaused] = useState(false)
   const [confirming, setConfirming] = useState<CommandId | null>(null)
-  const pending = useRef<{ command: CommandId; until: number } | null>(null)
+  const pending = useRef<Pending>(null)
+  /** 확인 대기를 바꾸고 화면(되묻는 중 안내)에도 알린다 */
+  const setPending = useCallback((next: Pending) => {
+    if (next === pending.current) return
+    pending.current = next
+    setConfirming(next?.command ?? null)
+  }, [])
   // 이 단계에서 승인 사실을 읽어 줬는지(읽어 준 뒤에만 "승인해"로 승인한다)
   const factsRead = useRef(false)
   // 자칼이 마지막으로 되묻거나 말을 시킨 때(이 뒤 잠깐은 호출어 없이 짧은 대답을 받는다)
@@ -82,13 +86,15 @@ export function useStageVoice({ stage, lang, captionLang, speaking, lastLine, sp
   useEffect(() => subscribe(action => {
     const now = performance.now()
     if (action.type === 'event') {
+      // 대상이 회복했거나 안정화 구간을 벗어났으면 알림이 세운 롤백 확인을 거둔다.
+      setPending(pendingOnEvent(pending.current, action.event))
       for (const report of engine.current.fromEvent(action.event, live.current.stage, now)) {
         queue.current.push(report)
         prefetchTts(renderReport(report, live.current.lang), live.current.lang)
       }
     } else if (action.type === 'resetPhase') engine.current.resetPhase(action.phase)
     else if (action.type === 'started' || action.type === 'reset') { engine.current.reset(); queue.current.clear() }
-  }), [subscribe])
+  }), [subscribe, setPending])
 
   // ---- 큐 → 말 ----
   const wasSpeaking = useRef(speaking)
@@ -101,16 +107,15 @@ export function useStageVoice({ stage, lang, captionLang, speaking, lastLine, sp
       const report = queue.current.next(performance.now(), live.current.speaking)
       if (!report) return
       if (report.key === 'r.approval.ask' || report.key === 'r.cutover.ask') factsRead.current = true
+      const { lang: spoken, captionLang: shown, state: snapshot } = live.current
+      const line = renderReport(report, spoken)
       // Jackal이 먼저 "롤백할까요?"라고 물었으면 롤백을 확인 대기로 둔다: "응"이면 바로 롤백, "아니"면 취소.
-      if (ROLLBACK_ASKS.has(report.key)) {
-        pending.current = { command: 'rollback', until: performance.now() + ALERT_CONFIRM_MS }
-        setConfirming('rollback')
-      }
-      const { lang: spoken, captionLang: shown } = live.current
-      speakLine(renderReport(report, spoken), shown !== spoken ? renderReport(report, shown) : undefined)
+      // 회복·완료 보고나 다른 질문("리포트로 갈까요?")이면 그 확인을 거둔다.
+      setPending(pendingOnReport(pending.current, { key: report.key, asks: isQuestionLine(line) }, performance.now(), snapshot.traffic.snapshot?.phase ?? null))
+      speakLine(line, shown !== spoken ? renderReport(report, shown) : undefined)
     }, 250)
     return () => window.clearInterval(timer)
-  }, [speakLine])
+  }, [speakLine, setPending])
 
   const enqueueFacts = useCallback((reports: Report[]) => {
     for (const report of reports) {
@@ -129,12 +134,11 @@ export function useStageVoice({ stage, lang, captionLang, speaking, lastLine, sp
   // ---- 단계가 바뀌면 ----
   useEffect(() => {
     queue.current.dropStale(PHASE_OF[stage] ?? null)
-    pending.current = null
-    setConfirming(null)
+    setPending(null)
     factsRead.current = false
     // DB 전환 화면은 승인부터 시작한다: 단계 안내 뒤에 사실과 승인 방법을 읽는다(첫 승인은 approval.required 이벤트가 읽는다).
     if (stage === 'cutover') enqueueFacts(gateFacts())
-  }, [stage, enqueueFacts, gateFacts])
+  }, [stage, enqueueFacts, gateFacts, setPending])
 
   // ---- 명령 ----
   const run = useCallback((command: CommandId): void => {
@@ -165,8 +169,7 @@ export function useStageVoice({ stage, lang, captionLang, speaking, lastLine, sp
       case 'confirm':
       case 'deny': {
         const waiting = pending.current
-        pending.current = null
-        setConfirming(null)
+        setPending(null)
         if (!waiting || command === 'deny') { say('c.denied'); return }
         const handler = voiceAction(ACTION_OF[waiting.command]!)
         if (!handler) { say('c.noAction'); return }
@@ -201,8 +204,7 @@ export function useStageVoice({ stage, lang, captionLang, speaking, lastLine, sp
         if (!handler) { say('c.noAction'); return }
         const ask = RISKY[command]
         if (ask) {
-          pending.current = { command, until: performance.now() + CONFIRM_MS }
-          setConfirming(command)
+          setPending({ command, until: performance.now() + CONFIRM_MS })
           say(ask)
           return
         }
@@ -210,7 +212,7 @@ export function useStageVoice({ stage, lang, captionLang, speaking, lastLine, sp
         handler()
       }
     }
-  }, [say, speakLine, enqueueFacts, gateFacts])
+  }, [say, speakLine, enqueueFacts, gateFacts, setPending])
 
   /**
    * 들은 말(또는 입력창)을 명령으로 처리했으면 true. 아니면 질문·의도로 넘긴다.
@@ -222,7 +224,7 @@ export function useStageVoice({ stage, lang, captionLang, speaking, lastLine, sp
     if (current === 'intro') return false
     const said = normalizeUtterance(text)
     const woke = WAKE.test(said) || parseWake(text).woke
-    if (pending.current && performance.now() > pending.current.until) { pending.current = null; setConfirming(null) }
+    if (pending.current && performance.now() > pending.current.until) setPending(null)
     const armed = options?.armed === true
     const answering = pending.current !== null || performance.now() - questionAt.current < ANSWER_MS
     if (!woke && !armed && !answering && current !== 'setup') return false
@@ -232,7 +234,7 @@ export function useStageVoice({ stage, lang, captionLang, speaking, lastLine, sp
     if (current === 'setup' && command !== 'advance' && command !== 'status' && command !== 'repeat') return false
     run(command)
     return true
-  }, [run])
+  }, [run, setPending])
 
   const available = useAvailableVoiceActions()
   const hints = hintKeys(stage, available, { confirming: confirming !== null, paused }).map(key => voiceText(lang, key))
