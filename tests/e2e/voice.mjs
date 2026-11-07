@@ -47,6 +47,8 @@ await page.addInitScript(() => {
     stop() { if (!this.active) return; this.active = false; setTimeout(() => this.onend?.(), 0) }
   }
   window.SpeechRecognition = FakeRecognition
+  // 이 시험은 계속 듣기(호출어) 방식을 본다. 기본값은 누르고 말하기라서 고른 값을 남겨 둔다.
+  try { localStorage.setItem('jackal.listenMode', 'continuous') } catch {}
   window.webkitSpeechRecognition = FakeRecognition
   window.__voice = state
   window.__say = text => new Promise((resolve, reject) => {

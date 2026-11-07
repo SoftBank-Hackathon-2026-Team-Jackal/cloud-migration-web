@@ -29,6 +29,7 @@ import { captureScreen, fx, recentHandoff, registerTransition } from '../lib/par
 import { isStage, STAGE_ORDER, type Stage } from '../lib/stages'
 import { pathOf, type Target as SetupTarget } from '../lib/migration/events'
 import { useVoiceGuide } from '../lib/useVoiceGuide'
+import { isTypingTarget, LISTEN_MODE_KEY, parseListenMode, pttKeyAction, type ListenMode } from '../lib/voice/pushToTalk'
 import { buildAgentFacts } from '../lib/agent/context'
 import { askAgent } from '../lib/agent/ask'
 import { PulseRow, RunningJackal, usePulse } from './PulseWidget'
@@ -82,6 +83,8 @@ export default function FlowApp() {
   // 자막 언어: 음성과 다르면 아래에 이 언어 문구를 같이 보인다. 따로 고르지 않으면 화면 언어를 따른다.
   const [captionChoice, setCaptionChoice] = useState<Lang | null>(null)
   const [captionsOn, setCaptionsOn] = useState(true)
+  // 듣기 방식: 기본은 누르고 말하기(Space·마이크 버튼을 누르는 동안만 듣는다). 계속 듣기는 위젯에서 고른다.
+  const [listenChoice, setListenChoice] = useState<ListenMode>('ptt')
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem('jackal.voiceLang')
@@ -91,6 +94,7 @@ export default function FlowApp() {
       const savedCaption = window.localStorage.getItem('jackal.captionLang')
       if (savedCaption === 'ko' || savedCaption === 'en' || savedCaption === 'ja') setCaptionChoice(savedCaption)
       if (window.localStorage.getItem('jackal.captions') === 'off') setCaptionsOn(false)
+      setListenChoice(parseListenMode(window.localStorage.getItem(LISTEN_MODE_KEY)))
     } catch { /* 저장소를 못 쓰면 기본값 */ }
   }, [])
   const voiceLang: Lang = voiceChoice ?? lang
@@ -99,6 +103,7 @@ export default function FlowApp() {
   const pickVoiceLang = (next: Lang) => { setVoiceChoice(next); try { window.localStorage.setItem('jackal.voiceLang', next) } catch { /* 무시 */ } }
   const pickInputLang = (next: Lang) => { setInputChoice(next); try { window.localStorage.setItem('jackal.inputLang', next) } catch { /* 무시 */ } }
   const pickCaptionLang = (next: Lang) => { setCaptionChoice(next); try { window.localStorage.setItem('jackal.captionLang', next) } catch { /* 무시 */ } }
+  const pickListenMode = (next: ListenMode) => { setListenChoice(next); try { window.localStorage.setItem(LISTEN_MODE_KEY, next) } catch { /* 무시 */ } }
   const toggleCaptions = () => setCaptionsOn(on => { try { window.localStorage.setItem('jackal.captions', on ? 'off' : 'on') } catch { /* 무시 */ } return !on })
   const { provider, state: migrationState, mode } = useMigration()
   // SSE 모드(목업 서버 시험 제외)는 고른 저장소 없이 이전을 시작하지 않는다: 음성 시작도 설정 화면으로 보낸다.
@@ -189,6 +194,7 @@ export default function FlowApp() {
     // 말하는 언어(첫 화면 포함)와 알아듣는 언어를 따로 고를 수 있다. 고르지 않으면 둘 다 화면 언어를 따른다.
     lang: voiceLang,
     recognitionLang: listenLang,
+    pushToTalk: listenChoice === 'ptt',
     ask: stage !== 'intro',
     onWake: () => wake(),
     onStart: () => handleIntent(''),
@@ -401,8 +407,8 @@ export default function FlowApp() {
   const listenMode = useRef(false)
   const [forceListen, setForceListen] = useState(false)
   useEffect(() => {
-    listenMode.current = forceListen || (stage === 'intro' && started && !voice.speaking && !voiceStarting.current)
-  }, [forceListen, stage, started, voice.speaking])
+    listenMode.current = forceListen || voice.holding || (stage === 'intro' && started && !voice.speaking && !voiceStarting.current)
+  }, [forceListen, stage, started, voice.speaking, voice.holding])
 
   // 분석·샌드박스·구축의 완료 보고는 이벤트에 묶인 말 보고(useStageVoice)가 한다(같은 말을 두 번 하지 않게 화면 완료 신호로는 말하지 않는다).
   const reportAnalysisComplete = useCallback(() => {}, [])
@@ -506,6 +512,27 @@ export default function FlowApp() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  // 누르고 말하기: Space를 누르는 동안만 듣는다. 입력창·반복 keydown·조합키는 무시하고, 버튼이 Space로 눌리지 않게 막는다.
+  const pttKeys = useRef({ mode: listenChoice, holding: false, press: voice.pressTalk, release: voice.releaseTalk })
+  pttKeys.current = { mode: listenChoice, holding: voice.holding, press: voice.pressTalk, release: voice.releaseTalk }
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const keys = pttKeys.current
+      const typing = isTypingTarget(event.target as HTMLElement | null)
+      const action = pttKeyAction(event, { mode: keys.mode, typing, holding: keys.holding })
+      // 누르고 말하기 모드의 Space는 화면 버튼(포커스된 버튼·구체)을 누르지 않는다.
+      if (keys.mode === 'ptt' && !typing && (event.code === 'Space' || event.key === ' ')) { event.preventDefault(); event.stopPropagation() }
+      if (action === 'press') { keys.holding = true; keys.press() }
+      if (action === 'release') { keys.holding = false; keys.release() }
+    }
+    // 창을 벗어나면(키를 뗀 신호를 못 받으면) 듣기를 끝낸다.
+    const onBlur = () => { if (pttKeys.current.holding) { pttKeys.current.holding = false; pttKeys.current.release() } }
+    window.addEventListener('keydown', onKey, true)
+    window.addEventListener('keyup', onKey, true)
+    window.addEventListener('blur', onBlur)
+    return () => { window.removeEventListener('keydown', onKey, true); window.removeEventListener('keyup', onKey, true); window.removeEventListener('blur', onBlur) }
+  }, [])
+
   const index = STAGE_ORDER.indexOf(stage)
   const go = (to: Stage, animate = true) => {
     if (!animate) { setStage(to); return }
@@ -541,7 +568,9 @@ export default function FlowApp() {
   }, [stage])
 
   // Jackal 위젯 상태 점: 말하는 중 > 듣는 중(마이크 켬) > 대기
-  const jvStatus = voice.speaking ? 'speaking' : voice.awake || voice.micEnabled ? 'listening' : 'idle'
+  // 누르고 말하기는 누르는 동안만 듣는 중이다.
+  const ptt = listenChoice === 'ptt'
+  const jvStatus = voice.speaking ? 'speaking' : voice.holding || (!ptt && (voice.awake || voice.micEnabled)) ? 'listening' : 'idle'
 
   return <main className={'experience' + (dissolving ? ' is-dissolving' : '')} aria-label={t('flow.aria')}>
     <ParticleField morphToSphere={started} analysisMode={exited} voiceLevel={voice.voiceLevel} voiceActive={voice.voiceActive} micLevel={voice.micLevel} listenMode={listenMode}
@@ -589,8 +618,15 @@ export default function FlowApp() {
           <strong>{t('agent.title')}</strong>
           <span className="jv-status">{t(('agent.status.' + jvStatus) as MsgKey)}</span>
           <div className="jv-head-actions">
-            <button type="button" className="jv-toggle" onClick={voice.toggleMic} disabled={!voice.recognitionSupported} aria-pressed={voice.micEnabled}
-              aria-label={t('agent.mic')} title={t('agent.mic') + ' · ' + t(voice.micEnabled ? 'agent.on' : 'agent.off')}><MicIcon off={!voice.micEnabled} /></button>
+            {ptt
+              // 누르고 말하기: 길게 누르는 동안 듣는다(마우스·터치). 켜기/끄기 토글이 아니다.
+              ? <button type="button" className={'jv-toggle jv-ptt' + (voice.holding ? ' is-holding' : '')} disabled={!voice.recognitionSupported} aria-pressed={voice.holding}
+                  aria-label={t('agent.pttHold')} title={t('agent.pttHold')}
+                  onPointerDown={event => { event.preventDefault(); event.currentTarget.setPointerCapture?.(event.pointerId); voice.pressTalk() }}
+                  onPointerUp={voice.releaseTalk} onPointerCancel={voice.releaseTalk} onLostPointerCapture={voice.releaseTalk}
+                  onContextMenu={event => event.preventDefault()}><MicIcon off={false} /></button>
+              : <button type="button" className="jv-toggle" onClick={voice.toggleMic} disabled={!voice.recognitionSupported} aria-pressed={voice.micEnabled}
+                  aria-label={t('agent.mic')} title={t('agent.mic') + ' · ' + t(voice.micEnabled ? 'agent.on' : 'agent.off')}><MicIcon off={!voice.micEnabled} /></button>}
             <button type="button" className="jv-toggle" onClick={voice.toggleSound} aria-pressed={voice.soundEnabled}
               aria-label={t('agent.voice')} title={t('agent.voice') + ' · ' + t(voice.soundEnabled ? 'agent.on' : 'agent.off')}><SpeakerIcon off={!voice.soundEnabled} /></button>
             <button type="button" className="jv-toggle jv-cc" onClick={toggleCaptions} aria-pressed={captionsOn}
@@ -601,6 +637,11 @@ export default function FlowApp() {
           </div>
         </header>
         {pulse && <PulseRow view={pulse} />}
+        <div className="jv-lang jv-listen" role="group" aria-label={t('agent.listenMode')} data-listen-mode={listenChoice}>
+          <span>{t('agent.listenMode')}</span>
+          {(['ptt', 'continuous'] as const).map(mode => <button key={mode} type="button" className={listenChoice === mode ? 'is-active' : ''} aria-pressed={listenChoice === mode} onClick={() => pickListenMode(mode)}>{t(('agent.listenMode.' + mode) as MsgKey)}</button>)}
+          {ptt && <small className="jv-ptt-hint">{t(voice.holding ? 'agent.pttListening' : 'agent.pttHint')}</small>}
+        </div>
         <div className="jv-lang" role="group" aria-label={t('agent.voiceLang')}>
           <span>{t('agent.voiceLang')}</span>
           {(['ko', 'en', 'ja'] as const).map(code => <button key={code} type="button" className={voiceLang === code ? 'is-active' : ''} aria-pressed={voiceLang === code} onClick={() => pickVoiceLang(code)}>{{ ko: '한국어', en: 'English', ja: '日本語' }[code]}</button>)}
@@ -650,7 +691,7 @@ export default function FlowApp() {
       </section>}
       <button type="button" className={'jv-pill' + (pulse?.className ?? '')} style={pulse?.style} aria-expanded={chatOpen}
         title={(chatOpen ? t('agent.fold') : t('agent.open')) + (pulse ? ' · ' + pulse.detail : '')} onClick={() => setChatOpen(open => !open)}>
-        {pulse ? <RunningJackal /> : <span className="jv-dot" aria-hidden="true" />}{voice.awake ? t('agent.status.listening') : t('agent.title')}{!chatOpen && unread > 0 && <b>{unread}</b>}
+        {pulse ? <RunningJackal /> : <span className="jv-dot" aria-hidden="true" />}{voice.awake || voice.holding ? t('agent.status.listening') : t('agent.title')}{!chatOpen && unread > 0 && <b>{unread}</b>}
       </button>
       {stage !== 'intro' && !dissolving && <VoiceHints label={stageVoice.hintLabel} hints={stageVoice.hints} />}
     </aside>

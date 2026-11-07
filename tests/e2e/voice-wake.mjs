@@ -40,7 +40,8 @@ const initScript = voiceLang => {
   const query = navigator.permissions?.query?.bind(navigator.permissions)
   if (query) navigator.permissions.query = d => d?.name === 'microphone' ? Promise.resolve({ state: 'granted' }) : query(d)
   if (navigator.mediaDevices) navigator.mediaDevices.getUserMedia = () => Promise.reject(new Error('no mic in test'))
-  try { if (voiceLang) localStorage.setItem('jackal.voiceLang', voiceLang) } catch {}
+  // 이 시험은 계속 듣기(호출어) 방식을 본다. 기본값은 누르고 말하기라서 고른 값을 남겨 둔다.
+  try { localStorage.setItem('jackal.listenMode', 'continuous'); if (voiceLang) localStorage.setItem('jackal.voiceLang', voiceLang) } catch {}
   const info = console.info.bind(console)
   console.info = (...args) => { try { if (String(args[0]).includes('jackal-voice')) state.logs.push(args[1]) } catch {} info(...args) }
 }
