@@ -120,6 +120,12 @@
     },
     {
       "$ref": "#/$defs/event:traffic.alert"
+    },
+    {
+      "$ref": "#/$defs/event:shadow.progress"
+    },
+    {
+      "$ref": "#/$defs/event:shadow.result"
     }
   ],
   "$defs": {
@@ -4265,8 +4271,11 @@
                 "enum": [
                   "pass",
                   "wait",
-                  "fail"
-                ]
+                  "fail",
+                  "warn",
+                  "skip"
+                ],
+                "description": "warn·skip은 그림자 리허설(id shadow) 같은 경고 전용 조건이다. 승인을 막지 않는다."
               },
               "value": {
                 "type": "string"
@@ -4881,6 +4890,276 @@
         },
         "data": {
           "$ref": "#/$defs/data:traffic.alert"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "phase",
+        "type",
+        "status",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "data:shadow.progress": {
+      "type": "object",
+      "description": "그림자 리허설 진행: 실제 GET 요청을 대상에도 복사해 비교한 수와 관찰 시간(phase data_copy). 경고·표시 전용, 전환을 막지 않는다.",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "compared": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "match": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mismatch": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "elapsed_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "window_s": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "run_id",
+        "compared",
+        "match",
+        "mismatch",
+        "elapsed_s",
+        "window_s"
+      ],
+      "additionalProperties": false
+    },
+    "data:shadow.result": {
+      "type": "object",
+      "description": "그림자 리허설 결과. reason 코드: SHADOW_NO_TRAFFIC · SHADOW_UNAVAILABLE · SHADOW_STOPPED_REPLICATION · SHADOW_DISABLED",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "pass",
+            "warn",
+            "skipped",
+            "stopped"
+          ]
+        },
+        "compared": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "match": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mismatch": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "match_ratio": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "target_5xx": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "p99_ratio": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "samples": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "status_origin": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "status_target": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "diff": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "pointer": {
+                      "type": "string"
+                    },
+                    "origin": {},
+                    "target": {}
+                  },
+                  "required": [
+                    "pointer"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "method",
+              "path",
+              "status_origin",
+              "status_target",
+              "diff"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "ai": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "category": {
+                  "enum": [
+                    "noise",
+                    "data",
+                    "env",
+                    "code"
+                  ]
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "hypotheses": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "category",
+                "summary",
+                "hypotheses"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "run_id",
+        "state",
+        "compared",
+        "match",
+        "mismatch",
+        "match_ratio",
+        "target_5xx",
+        "p99_ratio",
+        "reason",
+        "samples",
+        "ai"
+      ],
+      "additionalProperties": false
+    },
+    "event:shadow.progress": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "type": {
+          "const": "shadow.progress"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/data:shadow.progress"
+        }
+      },
+      "required": [
+        "seq",
+        "at",
+        "phase",
+        "type",
+        "status",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "event:shadow.result": {
+      "type": "object",
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+        },
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "type": {
+          "const": "shadow.result"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "progress": {
+          "type": "number"
+        },
+        "message": {
+          "type": "string"
+        },
+        "data": {
+          "$ref": "#/$defs/data:shadow.result"
         }
       },
       "required": [

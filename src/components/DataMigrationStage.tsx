@@ -4,11 +4,12 @@ import { useEffect, useState } from 'react'
 import StageShell from './StageShell'
 import ReplicationDiagram from './ReplicationDiagram'
 import PhaseStrip, { STRIP_GATE, type GateState } from './PhaseStrip'
-import { useI18n, type MsgKey } from '../lib/i18n'
+import { useI18n, useTOr, type MsgKey } from '../lib/i18n'
 import type { Target } from '../lib/stages'
 import type { DataPhase, PreflightCheck, PreflightCheckName } from '../lib/migration/events'
 import type { MigrationState } from '../lib/migration/reducer'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
+import { shadowView, type ShadowView } from '../lib/migration/shadow'
 import { useVoiceActions } from '../lib/voice/actions'
 
 /**
@@ -80,6 +81,7 @@ function DataBody({ ready, target, onNext }: { ready: boolean; target: Target; o
   const gate1 = view === 'ready'
   useVoiceActions({ next: gate1 && onNext })
   const elapsed = useElapsed(ready)
+  const shadow = shadowView(data.shadow)
 
   // 초기 복사 진행: 테이블별 행 수 합(없으면 예전 dump_percent)
   const rowsTotal = data.tables.reduce((sum, table) => sum + table.rows_total, 0)
@@ -129,7 +131,8 @@ function DataBody({ ready, target, onNext }: { ready: boolean; target: Target; o
         <div className="dm-pane-head"><h2>{t('dmig.lag.title')}</h2><small className="dm-mono">{lag === null ? '— · p99 —' : `${num(lag)} ms · p99 ${num(p99 ?? lag)} ms`}</small></div>
         <LagScope trace={trace} synced={synced} empty={blocked ? t('dmig.lag.blocked') : t('dmig.lag.empty')} />
       </section>
-      <section className="dm-card dm-pane" aria-label={t('dmig.tables.title')}>
+      {/* 그림자 리허설(shadow.*)이 오면 복제가 따라잡은 뒤라 테이블별 복사 자리에 비교 결과를 보인다. 오지 않으면 예전 그대로다. */}
+      {shadow ? <ShadowPane view={shadow} num={num} /> : <section className="dm-card dm-pane" aria-label={t('dmig.tables.title')}>
         <div className="dm-pane-head"><h2>{t('dmig.tables.title')}</h2><small>{tableSummary()}</small></div>
         {data.tables.length > 0 ? <table className="dm-tables">
           <tbody>{data.tables.map(table => <tr key={table.name} className={'is-' + table.state}>
@@ -138,7 +141,7 @@ function DataBody({ ready, target, onNext }: { ready: boolean; target: Target; o
             <td className="dm-num">{table.state === 'matched' ? t('dmig.tables.matched') : table.state === 'waiting' ? '—' : num(table.rows_copied)}</td>
           </tr>)}</tbody>
         </table> : <p className="dm-empty">{blocked ? t('dmig.tables.blocked') : t('dmig.tables.empty')}</p>}
-      </section>
+      </section>}
       <section className="dm-card dm-pane" aria-label={t('dmig.ready.title')}>
         <div className="dm-pane-head"><h2>{t('dmig.ready.title')}</h2><small>{t('dmig.ready.every')}</small></div>
         <dl className="dm-ready">
@@ -164,6 +167,43 @@ function DataBody({ ready, target, onNext }: { ready: boolean; target: Target; o
     if (phase === 'catchup' || phase === 'streaming') return t('dmig.tables.sumCdc')
     return t('dmig.tables.sumWait')
   }
+}
+
+// ---- 그림자 리허설: 실제 GET 요청을 대상에도 복사해 비교한 결과. 경고·표시 전용(다음 버튼을 막지 않는다). 기존 패널 스타일만 쓴다. ----
+
+/** 화면에 보일 불일치 샘플 수(패널 높이 안에 들게) */
+const SHADOW_SAMPLES = 3
+
+function ShadowPane({ view, num }: { view: ShadowView; num: (value: number) => string }) {
+  const { t } = useI18n()
+  const tOr = useTOr()
+  const state = view.mode === 'running' ? 'running' : view.result.state
+  const result = view.mode === 'result' ? view.result : null
+  const samples = result && result.state !== 'skipped' ? result.samples.slice(0, SHADOW_SAMPLES) : []
+  const status = (value: number | null) => value === null ? '—' : String(value)
+  return <section className="dm-card dm-pane" aria-label={t('dmig.shadow.title')}>
+    <div className="dm-pane-head"><h2>{t('dmig.shadow.title')}</h2><small>{t(('dmig.shadow.st.' + state) as MsgKey)}</small></div>
+    {view.mode === 'running' ? <dl className="dm-ready">
+      <dt>{t('dmig.shadow.compared')}</dt><dd className="dm-mono">{num(view.compared)}</dd>
+      <dt>{t('dmig.shadow.elapsed')}</dt><dd className="dm-mono">{num(Math.round(view.elapsed_s))} / {num(Math.round(view.window_s))} s</dd>
+    </dl> : <dl className="dm-ready">
+      <dt>{t('dmig.shadow.match')}</dt><dd className="dm-mono">{num(view.result.match)} / {num(view.result.compared)}</dd>
+      <dt>{t('dmig.shadow.mismatch')}</dt><dd className="dm-mono">{num(view.result.mismatch)}</dd>
+      {view.result.target_5xx > 0 && <><dt>{t('dmig.shadow.target5xx')}</dt><dd className="dm-mono">{num(view.result.target_5xx)}</dd></>}
+    </dl>}
+    {samples.length > 0 && <table className="dm-tables">
+      <tbody>{samples.map((sample, index) => <tr key={index}>
+        <td className="dm-mono" title={sample.method + ' ' + sample.path}>{sample.method} {sample.path}</td>
+        <td className="dm-mono" title={sample.diff.map(item => item.pointer).join(', ')}>{sample.diff.map(item => item.pointer).join(', ') || '—'}</td>
+        <td className="dm-num dm-mono">{status(sample.status_origin)} → {status(sample.status_target)}</td>
+      </tr>)}</tbody>
+    </table>}
+    <p className={'dm-ready-verdict' + (state === 'pass' ? ' is-ok' : '')} role="status">
+      {t(('dmig.shadow.note.' + state) as MsgKey)}
+      {result?.reason && <> {tOr('dmig.shadow.reason.' + result.reason, result.reason)}</>}
+      {result?.ai && <><br /><b>AI · {tOr('dmig.shadow.cat.' + result.ai.category, result.ai.category)}</b> {result.ai.summary}{result.ai.hypotheses.length > 0 && <> — {result.ai.hypotheses.join(' · ')}</>}</>}
+    </p>
+  </section>
 }
 
 // ---- 이전 경로 사전 검사(장부) ----

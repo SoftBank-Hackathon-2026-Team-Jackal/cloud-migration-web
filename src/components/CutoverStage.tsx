@@ -12,6 +12,7 @@ import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
 import type { MigrationState } from '../lib/migration/reducer'
 import type { CutoverPlanData, CutoverStepData, CutoverStepPlan } from '../lib/migration/events'
 import { canApproveCutover, cutoverEntry, cutoverGate, cutoverRunView, type CutoverRunView } from '../lib/migration/flow'
+import { preconditionMark, preconditionTone, preconditionsAllowCutover } from '../lib/migration/shadow'
 import { useVoiceActions } from '../lib/voice/actions'
 import type { Target } from '../lib/stages'
 import { useT, useTOr, type MsgKey } from '../lib/i18n'
@@ -76,7 +77,8 @@ function CutoverApproval({ onApprove }: { onApprove: () => void }) {
   // 승인을 보내는 중(중복 클릭 막음). 202면 진행 화면으로, 거절(409 CUTOVER_NOT_READY 등)이면 안내와 함께 다시 누를 수 있다.
   const [sending, setSending] = useState(false)
   const plan = state.cutover.plan
-  const allPass = !plan || plan.preconditions.every(item => item.state === 'pass')
+  // 경고 전용 조건(그림자 리허설 warn·skip)은 승인을 막지 않는다.
+  const allPass = !plan || preconditionsAllowCutover(plan.preconditions)
   const gate = cutoverGate(state, sending)
   const approveError = gate === 'rejected' ? state.requestErrors.cutover : undefined
   const approveErrorText = useApproveErrorText()
@@ -99,10 +101,10 @@ function CutoverApproval({ onApprove }: { onApprove: () => void }) {
       <section className="cx-card" aria-label={t('cut.pre.head')}>
         <h3>{t('cut.pre.head')}<small>{t('cut.pre.note')}</small></h3>
         {plan ? <div className="cx-ledger">
-          {plan.preconditions.map(item => <div key={item.id} className={'cx-lrow is-' + item.state}>
-            <span className="cx-ck" aria-hidden="true">{item.state === 'pass' ? '✓' : item.state === 'fail' ? '✕' : ''}</span>
+          {plan.preconditions.map(item => <div key={item.id} className={'cx-lrow is-' + preconditionTone(item.state)}>
+            <span className="cx-ck" aria-hidden="true">{preconditionMark(item.state)}</span>
             <strong>{tOr('cut.pre.' + item.id, item.id)}{item.proposal && <> <ProposalTag /></>}<em>{tOr('cut.pre.' + item.id + 'Sub')}</em></strong>
-            <span className="cx-lval">{item.value && <b className="cx-mono">{item.value}</b>}<i className={'cx-pill is-' + item.state}>{t(('cut.state.' + item.state) as MsgKey)}</i></span>
+            <span className="cx-lval">{item.value && <b className="cx-mono">{item.value}</b>}<i className={'cx-pill is-' + preconditionTone(item.state)}>{t(('cut.state.' + item.state) as MsgKey)}</i></span>
             {item.evidence && <span className="cx-ev cx-mono">{item.evidence}</span>}
           </div>)}
         </div> : <p className="cx-quiet">{t('cut.plan.wait')}</p>}

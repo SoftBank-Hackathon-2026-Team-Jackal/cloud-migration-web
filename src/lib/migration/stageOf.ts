@@ -24,7 +24,7 @@ export function stageOfEvent(event: Pick<MigrationEvent, 'type' | 'phase' | 'dat
   const type = event.type
   if (type === 'approval.required') return (event.data as { gate?: string } | null)?.gate === 'cutover' ? 'cutover' : 'approval'
   if (type === 'approval.decision') return 'approval'
-  if (type.startsWith('data.')) return 'data'
+  if (type.startsWith('data.') || type.startsWith('shadow.')) return 'data'
   if (type.startsWith('cutover.')) return 'cutover'
   if (type.startsWith('traffic.')) return 'traffic'
   if (type.startsWith('analysis.')) return 'analysis'
