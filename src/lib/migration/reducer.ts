@@ -5,7 +5,7 @@
 import type {
   AnalysisFindingData, AnalysisScanData, BackendPreviewData, ApprovalDecisionData, ApprovalRequiredData, DataVerifyData, HandoverData, TrafficReadyData, BackendPhase, BuildCheckData, BuildFixData, BuildResultData, BuildReviewData, PlanPreviewData, PlanReadyData, ProvisionCheckData, CutoverResultData, CutoverPlanData, CutoverReadyData, CutoverStepData, CutoverOutcomeData, CutoverVerifyData,
   DataProgressData, ErrorData, MigrationEvent, MigrationStatus, PlanStepData, ProvisionResourceData,
-  ReportData, TrafficNote, TrafficPrepareData, TrafficSnapshotData,
+  ReportData, TrafficAlertData, TrafficNote, TrafficPrepareData, TrafficSnapshotData,
   DataLsnData, DataPhase, DataPreflightData, DataReadinessData, DataTableData,
   SandboxAttemptData, SandboxDoneData, SandboxEnvData, SandboxStep, SandboxStepData, SandboxTestsData,
 } from './events'
@@ -23,7 +23,7 @@ const TRAFFIC_LOG_LIMIT = 30
 export const TRAFFIC_TRACE_POINTS = 160
 
 /** activity: Temporal Activity 이름(서버가 보낸 값, 없으면 화면이 key로 기본 이름을 고른다). prepareFail은 사전 확인 실패. */
-export type TrafficLogEntry = { id: number; at: string; key: Exclude<TrafficNote['key'], 'restart'> | 'prepareFail'; params: Record<string, string | number>; activity?: string }
+export type TrafficLogEntry = { id: number; at: string; key: Exclude<TrafficNote['key'], 'restart'> | 'prepareFail' | 'alert' | 'recovered'; params: Record<string, string | number>; activity?: string }
 export type Failure = { code: string; message: string; retryable: boolean }
 /**
  * 이전 전체를 실패로 바꾸지 않는 요청 오류. 그 화면 안에서만 보인다.
@@ -60,7 +60,7 @@ export type MigrationState = {
     preflight: DataPreflightData | null; phase: DataPhase | null; lsn: DataLsnData | null; lagTrace: number[]; tables: DataTableData[]; readiness: DataReadinessData | null
   }
   /** prepare: 사전 확인·연결 정보 [가정]. trace: 관찰 중 p99 비율 추이. startedAt: 이 단계의 첫 이벤트 시각(기록의 +초 기준) */
-  traffic: { snapshot: TrafficSnapshotData | null; logs: TrafficLogEntry[]; logCounter: number; ready: TrafficReadyData | null; prepare: TrafficPrepareData | null; trace: number[]; startedAt: string | null }
+  traffic: { snapshot: TrafficSnapshotData | null; logs: TrafficLogEntry[]; logCounter: number; ready: TrafficReadyData | null; prepare: TrafficPrepareData | null; trace: number[]; startedAt: string | null; alert: TrafficAlertData | null }
   /**
    * plan: 승인 2/2가 읽는 전환 계획 · ready: 전환 가능 시점 · steps: 쓰기 중단 구간 단계(받은 순서, n순) ·
    * outcome: 전환 결과(통과·거부) · tables: 테이블별 검증 · attempt: 몇 번째 전환 시도인지 [가정]
@@ -90,7 +90,7 @@ export const initialState: MigrationState = {
   approval: { required: false, excluded: [], rollbackPolicy: '', pendingDecisions: [], cutoverRequired: false, decision: null },
   provision: { resources: [], checks: [] },
   data: { current: null, lagHistory: [], verify: [], preflight: null, phase: null, lsn: null, lagTrace: [], tables: [], readiness: null },
-  traffic: { snapshot: null, logs: [], logCounter: 0, ready: null, prepare: null, trace: [], startedAt: null },
+  traffic: { snapshot: null, logs: [], logCounter: 0, ready: null, prepare: null, trace: [], startedAt: null, alert: null },
   cutover: { doneSteps: 0, verifying: false, results: [], handover: [], plan: null, ready: null, steps: [], outcome: null, tables: [], attempt: 0 },
   report: null,
   failures: {},
@@ -138,6 +138,19 @@ function addTrafficLogs(state: MigrationState, data: TrafficSnapshotData, at: st
   // 관찰 중·판정 중의 p99 비율만 추이에 남긴다(가중치 적용 중에는 아직 관찰하지 않는다).
   if (data.phase === 'observing' || data.phase === 'gate') trace = [...trace, data.gate.p99_ratio].slice(-TRAFFIC_TRACE_POINTS)
   return { logs, logCounter: counter, trace }
+}
+
+/** 안정화 구간 알림을 실행 기록에 남긴다: 넘은 기준(오류율 %·p99 ms)과 한도. */
+function addAlertLog(state: MigrationState, data: TrafficAlertData, at: string) {
+  const counter = state.traffic.logCounter + 1
+  const params: Record<string, string | number> = {
+    rate: data.error_rate === null ? '—' : Math.round(data.error_rate * 1000) / 10,
+    p99: data.p99_ms === null ? '—' : Math.round(data.p99_ms),
+    rateLimit: Math.round(data.alert_error_rate * 1000) / 10,
+    p99Limit: Math.round(data.p99_limit_ms),
+  }
+  const entry: TrafficLogEntry = { id: counter, at, key: data.state === 'breach' ? 'alert' : 'recovered', params, activity: 'traffic_stabilize' }
+  return { logs: [entry, ...state.traffic.logs].slice(0, TRAFFIC_LOG_LIMIT), logCounter: counter }
 }
 
 /** 사전 확인 결과. 끝난(done·failed) 결과가 처음 올 때만 기록에 남긴다(재전송으로 겹쳐 와도 한 번). */
@@ -297,8 +310,13 @@ function applyEvent(state: MigrationState, event: MigrationEvent): MigrationStat
       return { ...next, traffic: { ...next.traffic, ready: event.data } }
     case 'traffic.prepare':
       return { ...next, traffic: applyTrafficPrepare(next, event.data, event.at) }
-    case 'traffic.snapshot':
-      return { ...next, traffic: { ...next.traffic, snapshot: event.data, startedAt: next.traffic.startedAt ?? event.at, ...addTrafficLogs(next, event.data, event.at) } }
+    case 'traffic.snapshot': {
+      // 안정화 구간을 벗어나면(롤백·확정·재시도) 지난 알림은 지운다.
+      const alert = event.data.phase === 'stabilizing' ? next.traffic.alert : null
+      return { ...next, traffic: { ...next.traffic, snapshot: event.data, alert, startedAt: next.traffic.startedAt ?? event.at, ...addTrafficLogs(next, event.data, event.at) } }
+    }
+    case 'traffic.alert':
+      return { ...next, traffic: { ...next.traffic, ...addAlertLog(next, event.data, event.at), alert: event.data.state === 'breach' ? event.data : null } }
     case 'cutover.plan':
       return { ...next, cutover: { ...next.cutover, plan: event.data } }
     case 'cutover.ready': {

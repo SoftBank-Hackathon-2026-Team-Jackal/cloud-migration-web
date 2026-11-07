@@ -5,9 +5,10 @@
  *   sandbox.retry      POST /migrations/{id}/sandbox/retry   (사람 검토 뒤 샌드박스 재시도)
  *   traffic.rollback   POST /migrations/{id}/traffic/rollback
  *   traffic.retry      POST /migrations/{id}/traffic/retry
+ *   traffic.finalize   POST /migrations/{id}/traffic/finalize   (안정화 구간을 끝내고 이전 확정)
  *   report             GET  /migrations/{id}/report          (리포트 타임라인)
  */
-export const CAPABILITIES = ['sandbox.retry', 'traffic.rollback', 'traffic.retry', 'report'] as const
+export const CAPABILITIES = ['sandbox.retry', 'traffic.rollback', 'traffic.retry', 'traffic.finalize', 'report'] as const
 export type Capability = typeof CAPABILITIES[number]
 
 /** SSE 모드 기본값: 위 API는 아직 플랫폼에 없다. */

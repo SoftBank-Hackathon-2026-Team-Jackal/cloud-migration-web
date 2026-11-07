@@ -319,14 +319,24 @@ export class ReportEngine {
         const out: Report[] = []
         const previous = this.trafficPhase
         this.trafficPhase = state
+        const notes = event.data.notes ?? []
         if (state === 'rolledback') {
-          if (previous !== 'rolledback') out.push(trafficRollbackReport(event.data.notes, make))
+          // 안정화 구간에서 사람이 롤백했으면 "기준 초과" 대신 되돌린 사실을, DB까지 되돌렸으면 한 번 더 말한다.
+          if (previous !== 'rolledback') out.push(previous === 'stabilizing' ? make('r.traffic.rollbackManual', 'failure') : trafficRollbackReport(event.data.notes, make))
+          if (notes.some(note => note.key === 'dbRollback') && this.first(phase, 'dbRollback')) out.push(make('r.traffic.dbRollback', 'complete'))
+          return out
+        }
+        if (state === 'stabilizing') {
+          if (previous !== 'stabilizing' && this.first(phase, 'stabilizing')) out.push(make('r.traffic.stabilizing', 'milestone'))
           return out
         }
         // 사용자 트래픽이 없어 합성 요청으로 확인했으면 단계 안에서 한 번만 알린다.
         const idle = event.data.notes?.find(note => note.key === 'idleProbe')
         if (idle && this.first(phase, 'idleProbe')) out.push(make('r.traffic.idle', 'milestone', { n: Number(idle.params?.requests ?? 0) }, { series: 'idle:' + phase }))
-        if (previous === 'rolledback') { this.trafficStep = -1; this.gatesPassed.clear(); this.once.delete(phase + ':done') }
+        if (previous === 'rolledback') {
+          this.trafficStep = -1; this.gatesPassed.clear()
+          for (const key of ['done', 'stabilizing', 'dbRollback']) this.once.delete(phase + ':' + key)
+        }
         for (const result of event.data.results ?? []) {
           if (result.verdict === 'pass' && !this.gatesPassed.has(result.step) && result.step < 100) {
             this.gatesPassed.add(result.step)
@@ -345,6 +355,16 @@ export class ReportEngine {
             : make('r.traffic.stepShort', 'milestone', { p: step }, { series: 'progress:' + phase }))
         }
         return out
+      }
+      case 'traffic.alert': {
+        // 안정화 구간의 이상: 사람이 묻기 전에 먼저 말하고 롤백할지 묻는다. 값은 이벤트 그대로(오류율 %, p99 ms).
+        const data = event.data
+        if (data.state === 'recovered') return [make('r.traffic.recovered', 'milestone', {}, { series: 'alert:' + phase })]
+        const error = data.breach.find(item => item.code === 'ERROR_RATE')
+        const p99 = data.breach.find(item => item.code === 'P99')
+        if (error) return [make('r.traffic.alertError', 'failure', { p: Math.round(error.value * 1000) / 10 }, { series: 'alert:' + phase })]
+        if (p99) return [make('r.traffic.alertP99', 'failure', { ms: Math.round(p99.value) }, { series: 'alert:' + phase })]
+        return []
       }
       case 'cutover.step': {
         const { state, id, result } = event.data

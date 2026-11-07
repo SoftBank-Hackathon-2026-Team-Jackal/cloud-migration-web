@@ -5,19 +5,20 @@ import StageShell from './StageShell'
 import ProposalTag from './ProposalTag'
 import TrafficCanvas from './TrafficCanvas'
 import MigrationLanes from './MigrationLanes'
+import TrafficHealthPanel from './TrafficHealthPanel'
 import type { Target } from '../lib/stages'
 import { useI18n, useT, type MsgKey } from '../lib/i18n'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
 import { useVoiceActions } from '../lib/voice/actions'
 import { trafficWait } from '../lib/migration/flow'
-import { DEFAULT_ACTIVITY, logDetailKey, policyOf, stageOf, stepCards, verdictOf, type CardState, type Stage } from '../lib/migration/trafficModel'
+import { DEFAULT_ACTIVITY, breachOf, logDetailKey, policyOf, stageOf, stepCards, verdictOf, type CardState, type Stage } from '../lib/migration/trafficModel'
 
 type Tone = 'ok' | 'warn' | 'fail' | 'pass'
 // 실행 기록의 종류별 색. 문구는 traffic.log.<key> / traffic.log.<key>Detail
 // pass(금색)는 통과 순간(100% 도달·원본 정리 가능)에만 쓴다.
-const LOG_TONE: Record<string, Tone> = { gateFail: 'fail', idleProbe: 'ok', rollback: 'fail', prepareFail: 'fail', manual: 'warn', inject: 'warn', reached: 'pass', drained: 'pass' }
+const LOG_TONE: Record<string, Tone> = { gateFail: 'fail', idleProbe: 'ok', rollback: 'fail', prepareFail: 'fail', manual: 'warn', inject: 'warn', reached: 'pass', drained: 'pass', alert: 'fail', dbRollback: 'warn', finalized: 'pass' }
 // 화면 국면별 제목 키 꼬리(traffic.heading.<key>)
-const HEADING: Record<Stage, string> = { prepare: 'prepare', blocked: 'blocked', applying: 'shifting', observing: 'shifting', gate: 'shifting', complete: 'done', drained: 'done', rolledback: 'rolledback' }
+const HEADING: Record<Stage, string> = { prepare: 'prepare', blocked: 'blocked', applying: 'shifting', observing: 'shifting', gate: 'shifting', stabilizing: 'stabilizing', complete: 'done', drained: 'done', rolledback: 'rolledback' }
 
 /** onNext: 트래픽 전환이 끝나면 완료 리포트. onCutover: 트래픽이 아직 시작되지 않았고 승인할 DB 전환이 남았으면 DB 전환 화면으로. */
 export default function TrafficShiftStage({ target, onNext, onCutover }: { target: Target; onNext: () => void; onCutover: () => void }) {
@@ -45,7 +46,16 @@ function TrafficBody({ ready, target, onNext, onCutover }: { ready: boolean; tar
   const policy = policyOf(snapshot, prepare)
   const cards = stepCards(snapshot, policy)
   const manual = state.traffic.logs.find(entry => entry.key === 'manual' || entry.key === 'rollback' || entry.key === 'gateFail')?.key === 'manual'
-  const verdict = verdictOf(stage, cards, manual)
+  const alerting = breachOf(snapshot, state.traffic.alert)
+  const verdict = verdictOf(stage, cards, manual, alerting)
+  const judgement = stage === 'stabilizing' ? snapshot?.health ?? state.traffic.alert ?? null : null
+  const stabilizeLeft = stage === 'stabilizing' ? snapshot?.stabilize_left_seconds ?? null : null
+  // 목업 시뮬레이터는 백엔드별 지표를 보낸다(플랫폼은 보내지 않는다: 실제 모드는 중계 서버 실측값을 쓴다).
+  const originBackend = snapshot?.backends?.origin
+  const originMetrics = originBackend ? {
+    requests: originBackend.requests_per_sec, failed: originBackend.failed_requests, rps: originBackend.requests_per_sec, p99_ms: originBackend.p99_ms,
+    error_rate: originBackend.requests_per_sec > 0 ? originBackend.failed_requests / originBackend.requests_per_sec : null,
+  } : null
   const failed = snapshot?.gate.failed_requests ?? 0
   const p99Ratio = snapshot?.gate.p99_ratio ?? 1
   const observeLeft = snapshot?.gate.observe_left_seconds ?? 0
@@ -55,7 +65,7 @@ function TrafficBody({ ready, target, onNext, onCutover }: { ready: boolean; tar
   const drained = stage === 'drained'
   // 트래픽 이벤트(traffic.*)가 오기 전: DB 전환을 기다린다(백엔드는 DB 전환이 끝나야 트래픽을 시작한다).
   const waiting = trafficWait(state)
-  useVoiceActions({ next: drained && onNext, rollback: can('traffic.rollback') && stage !== 'rolledback' && stage !== 'prepare' && stage !== 'blocked' && (() => provider.rollbackTraffic()), inject: mode === 'mock' && (stage === 'observing' || stage === 'applying') && (() => provider.injectFailure()), retry: can('traffic.retry') && stage === 'rolledback' && (() => provider.retryTraffic()) })
+  useVoiceActions({ next: drained && onNext, rollback: can('traffic.rollback') && stage !== 'rolledback' && stage !== 'prepare' && stage !== 'blocked' && (() => provider.rollbackTraffic()), inject: mode === 'mock' && (stage === 'observing' || stage === 'applying' || stage === 'stabilizing') && (() => provider.injectFailure()), retry: can('traffic.retry') && stage === 'rolledback' && (() => provider.retryTraffic()) })
   const failedBad = failed > policy.maxFailed
   const p99Bad = p99Ratio > policy.maxP99Ratio
   const origin = prepare?.origin?.name ?? t('traffic.card.originFallback')
@@ -74,10 +84,12 @@ function TrafficBody({ ready, target, onNext, onCutover }: { ready: boolean; tar
     step: verdict.step ?? '', failed, ratio: p99Ratio.toFixed(2), maxFailed: policy.maxFailed, maxRatio: policy.maxP99Ratio,
     origin: weights.origin, target: weights.target, reason: prepare?.reason ?? '', sec: policy.observeSeconds,
     endpoint: prepare?.target?.external_endpoint ?? '', requests: residual.requests, streams: residual.streams,
+    left: stabilizeLeft === null ? '' : Math.ceil(stabilizeLeft),
   }
-  const decisionCode = verdict.key === 'advance' ? 'advance' : verdict.key === 'rollback' || verdict.key === 'manual' ? 'rollback' : verdict.key === 'done' || verdict.key === 'drained' ? 'done' : null
+  const decisionCode = verdict.key === 'advance' ? 'advance' : verdict.key === 'rollback' || verdict.key === 'manual' ? 'rollback' : verdict.key === 'done' || verdict.key === 'drained' ? 'done' : verdict.key === 'stabilizingAlert' ? 'alert' : null
   const gateScope = stage === 'prepare' || stage === 'blocked' ? t('traffic.gate.scopePrepare')
     : stage === 'complete' || stage === 'drained' ? t('traffic.gate.scopeDone')
+    : stage === 'stabilizing' ? t('traffic.gate.scopeStabilizing')
     : stage === 'rolledback' ? t('traffic.gate.scopeRolledback', { step: verdict.step ?? '' })
     : t('traffic.gate.scopeStep', { step: activeCard?.step ?? '', sec: policy.observeSeconds })
 
@@ -102,6 +114,7 @@ function TrafficBody({ ready, target, onNext, onCutover }: { ready: boolean; tar
       </section>
 
       <aside className="traffic-side" aria-label={t('traffic.gates.aria')}>
+        <TrafficHealthPanel judgement={judgement} leftSeconds={stabilizeLeft} alerting={alerting} live={mode !== 'mock'} origin={originMetrics} />
         <section className="traffic-panel traffic-gatepanel">
           <h2>{t('traffic.gates.title')} <ProposalTag /> <small>{gateScope}</small></h2>
           <div className={'traffic-row' + (failedBad ? ' is-bad' : '')}>
@@ -151,12 +164,13 @@ function TrafficBody({ ready, target, onNext, onCutover }: { ready: boolean; tar
       <div className="traffic-lane-slot">
         {/* 두 갈래 진행 띠(앱 트래픽 · DB, 게이트 0/1/2) */}
         <MigrationLanes stage="traffic" />
-        <span className="traffic-foot-note">{stage === 'rolledback' ? t('traffic.foot.rolledback') : drained ? t('traffic.foot.done') : stage === 'complete' ? t('traffic.foot.draining', verdictParams) : t('traffic.foot.default')}</span>
+        <span className="traffic-foot-note">{stage === 'stabilizing' ? t(alerting ? 'traffic.foot.stabilizingAlert' : 'traffic.foot.stabilizing') : stage === 'rolledback' ? t('traffic.foot.rolledback') : drained ? t('traffic.foot.done') : stage === 'complete' ? t('traffic.foot.draining', verdictParams) : t('traffic.foot.default')}</span>
       </div>
       <div className="traffic-actions">
         {/* 실제 모드: 롤백·재시도 API가 아직 없으면 버튼을 숨긴다(capabilities.ts). */}
-        {can('traffic.rollback') && <button type="button" className="flow-secondary" onClick={() => provider.rollbackTraffic()} disabled={stage === 'rolledback' || stage === 'prepare' || stage === 'blocked'}>{t('traffic.btn.rollback')}</button>}
-        {mode === 'mock' && <button type="button" className="flow-secondary" onClick={() => provider.injectFailure()} disabled={stage !== 'observing' && stage !== 'applying'}>{t('traffic.btn.inject')}</button>}
+        {can('traffic.rollback') && <button type="button" className={'flow-secondary' + (alerting ? ' traffic-urgent' : '')} onClick={() => provider.rollbackTraffic()} disabled={stage === 'rolledback' || stage === 'prepare' || stage === 'blocked'}>{t('traffic.btn.rollback')}</button>}
+        {mode === 'mock' && <button type="button" className="flow-secondary" onClick={() => provider.injectFailure()} disabled={stage !== 'observing' && stage !== 'applying' && stage !== 'stabilizing'}>{t('traffic.btn.inject')}</button>}
+        {stage === 'stabilizing' && can('traffic.finalize') && <button type="button" className="flow-secondary" onClick={() => provider.finalizeTraffic()} disabled={alerting}>{t('traffic.btn.finalize')}</button>}
         {stage === 'rolledback' && can('traffic.retry') && <button type="button" className="flow-secondary" onClick={() => provider.retryTraffic()}>{t('traffic.btn.retry')}</button>}
         <button type="button" className="flow-primary" disabled={!drained} onClick={onNext}>{t('traffic.btn.go')} <span aria-hidden="true">→</span></button>
       </div>

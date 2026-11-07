@@ -37,6 +37,8 @@ export interface MigrationProvider {
   rollbackTraffic(): void
   /** 롤백된 트래픽 이전을 처음부터 다시 시도한다. */
   retryTraffic(): void
+  /** 안정화 구간을 끝내고 이전을 확정한다(POST /traffic/finalize). */
+  finalizeTraffic(): void
   /** 데모 전용 장애 주입. 목업에서만 동작한다. */
   injectFailure(): void
   loadReport(): void
