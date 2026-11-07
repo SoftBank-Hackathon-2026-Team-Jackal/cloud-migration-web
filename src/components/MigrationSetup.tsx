@@ -8,7 +8,7 @@ import { useMigration } from '../lib/migration/MigrationProvider'
 import type { PinnedSource } from '../lib/github/repos'
 import type { Detection, RepoScan } from '../lib/github/scan'
 import { api } from '../lib/connections/client'
-import { agentState, type AgentView, type Connection, type ConnectionsList, type ScopeConfirmation } from '../lib/connections/types'
+import { agentState, chooseAgent, selectableAgents, type AgentView, type Connection, type ConnectionsList, type ScopeConfirmation } from '../lib/connections/types'
 import { crossCheck } from '../lib/setup/envFile'
 import { DEMO_REPO, DEMO_SCAN } from '../lib/setup/demoRepo'
 import RepoPicker from './RepoPicker'
@@ -39,16 +39,14 @@ export function foundList(t: Translate, detections: Detection[]): string {
 }
 
 /** 설정 화면이 쓰는 등록 정보: 통합 목록(GET /api/connections)에서 원본 1개·대상(GKE·K3s)만 고른다 */
-export type Registered = { source: Connection | null; gcp: Connection | null; agent: AgentView | null; sources: Connection[]; agentsError: boolean }
+export type Registered = { source: Connection | null; gcp: Connection | null; agents: AgentView[]; sources: Connection[]; agentsError: boolean }
 
 export function pickRegistered(list: ConnectionsList, nowSeconds: number): Registered {
   const sources = list.connections.filter(item => item.kind === 'AWS_SOURCE' && item.status === 'CONNECTED')
-  const live = list.agents.filter(agent => !agent.revoked)
-  const rank = (agent: AgentView) => ({ online: 0, offline: 1, pending: 2, revoked: 3 })[agentState(agent, nowSeconds)]
   return {
     source: sources[0] ?? list.connections.find(item => item.kind === 'AWS_SOURCE') ?? null,
     gcp: list.connections.find(item => item.kind === 'GCP_TARGET' && item.status === 'CONNECTED') ?? list.connections.find(item => item.kind === 'GCP_TARGET') ?? null,
-    agent: [...live].sort((a, b) => rank(a) - rank(b))[0] ?? null,
+    agents: selectableAgents(list.agents, nowSeconds),
     sources,
     agentsError: Boolean(list.meta.agents.error),
   }
@@ -63,12 +61,14 @@ function useNow() {
   return now
 }
 
-/** 플랫폼에 등록된 원본·대상(읽기 전용, /settings에서 관리). 대상 카드만 고를 수 있다. */
-function Environments({ env, target, onTarget }: { env: Registered; target: Target; onTarget: (target: Target) => void }) {
+/** 플랫폼에 등록된 원본·대상(읽기 전용, /settings에서 관리). 대상 카드만 고를 수 있다. Agent가 여럿이면 그중 하나를 고른다. */
+function Environments({ env, target, onTarget, agent, onAgent }: {
+  env: Registered; target: Target; onTarget: (target: Target) => void; agent: AgentView | null; onAgent: (agentId: string) => void
+}) {
   const { t, tOr } = useI18n()
   const now = useNow()
   const regionName = (id: string) => tOr('region.' + id, id)
-  const { source, gcp, agent } = env
+  const { source, gcp, agents } = env
   const state = agent ? agentState(agent, now) : null
   const seconds = agent?.last_seen_at != null ? Math.max(0, now - agent.last_seen_at) : 0
   const chip = (connection: Connection | null) => connection?.status === 'CONNECTED'
@@ -93,7 +93,15 @@ function Environments({ env, target, onTarget }: { env: Registered; target: Targ
       </div>
       <strong>{t(target === 'onprem' ? 'setup2.onpremTitle' : 'setup2.gcpTitle')}</strong>
       <span className="senv-detail">{target === 'onprem'
-        ? agent ? t('setup3.onpremDetail', { agent: agent.agent_id }) : t(env.agentsError ? 'setup3.agentsError' : 'setup3.noAgent')
+        ? agent
+          ? agents.length > 1
+            ? <select className="senv-agent" aria-label={t('setup3.agentPick')} value={agent.agent_id} onChange={event => onAgent(event.target.value)}>
+              {agents.map(item => <option key={item.agent_id} value={item.agent_id}>
+                {t('setup3.onpremDetail', { agent: item.agent_id })} · {tOr('setup3.agentState.' + agentState(item, now), agentState(item, now))}
+              </option>)}
+            </select>
+            : t('setup3.onpremDetail', { agent: agent.agent_id })
+          : t(env.agentsError ? 'setup3.agentsError' : 'setup3.noAgent')
         : gcp ? t('setup3.gcpDetail', { project: gcp.project_id ?? '—', region: gcp.region ?? '—', regionName: regionName(gcp.region ?? '') }) : t('setup3.noGcp')}</span>
       <div className="migration-segment senv-switch" role="radiogroup" aria-label={t('setup.targetAria')}>
         {(['gcp', 'onprem'] as const).map(value => <button key={value} type="button"
@@ -110,6 +118,9 @@ export default function MigrationSetup({ target, onTarget, onNext, onSay, startR
   const needsSource = requiresSource(mode)
   const backendWaiting = mode === 'sse' && sseStartMode() === 'wait'
   const [env, setEnv] = useState<Registered | null | 'loading'>('loading')
+  // 사용자가 고른 대상 Agent(없으면 목록 맨 앞: 온라인 우선)
+  const [agentId, setAgentId] = useState<string | null>(null)
+  const agent = env && env !== 'loading' ? chooseAgent(env.agents, agentId) : null
   // 1단계: 연결·코드·.env → 2단계: 이전 범위 선택(확정해야 분석으로 넘어간다)
   const [step, setStep] = useState<'inputs' | 'scope'>('inputs')
   const scopeAction = useRef<(() => void) | null>(null)
@@ -169,7 +180,7 @@ export default function MigrationSetup({ target, onTarget, onNext, onSay, startR
   const onScopeConfirmed = (confirmation: ScopeConfirmation) => {
     const registered = env && env !== 'loading' ? env : null
     onNext(startRequestFor(target, {
-      region: registered?.gcp?.region, agentId: registered?.agent?.agent_id,
+      region: registered?.gcp?.region, agentId: agent?.agent_id,
       // 시연용 저장소는 싣지 않는다. .env는 플랫폼에 올린 참조가 있을 때만 싣는다(목업 모드에서는 키 이름만 알아서 싣지 않는다).
       source: source ?? undefined,
       envFileRef: envFile?.ref ?? undefined,
@@ -216,7 +227,7 @@ export default function MigrationSetup({ target, onTarget, onNext, onSay, startR
       </div>
       {env === 'loading' && <p className="setup2-note" role="status">{t('setup2.loading')}</p>}
       {env === null && <p className="setup2-note is-alert" role="alert">{t('setup2.unavailable')}</p>}
-      {env && env !== 'loading' && <Environments env={env} target={target} onTarget={onTarget} />}
+      {env && env !== 'loading' && <Environments env={env} target={target} onTarget={onTarget} agent={agent} onAgent={setAgentId} />}
       {step === 'scope' && <ScopeSelect sources={env && env !== 'loading' ? env.sources : []} onConfirmed={onScopeConfirmed}
         onBack={() => setStep('inputs')} actionRef={scopeAction} onSay={text => sayRef.current?.(text)} />}
       {step === 'inputs' && <><div className="setup2-main">

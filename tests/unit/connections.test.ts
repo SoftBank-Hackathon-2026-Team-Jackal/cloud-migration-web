@@ -388,3 +388,15 @@ test('실제 범위 선택: 리전·클러스터·Namespace·워크로드·분�
   await assert.rejects(api.confirmScope('sa-x', ['nope']), (error: PlatformError) => error.status === 400 && error.detail === 'INVALID_SCOPE')
   await assert.rejects(api.listScopeOptions('regions', { connection_id: 'missing' }), (error: PlatformError) => error.status === 404 && error.detail === 'CONNECTION_NOT_FOUND')
 })
+
+test('이전 대상 Agent: 폐기된 것은 빼고 온라인을 앞에 두며, 고른 Agent를 우선한다', async () => {
+  const { selectableAgents, chooseAgent } = await import('../../src/lib/connections/types.ts')
+  const now = 1_000_000
+  const agent = (agent_id: string, last_seen_at: number | null, revoked = false) => ({ agent_id, last_seen_at, revoked }) as never
+  const list = selectableAgents([agent('old', now - 3600), agent('gone', now, true), agent('kms', now - 2), agent('mine', now - 4), agent('new', null)], now)
+  assert.deepEqual(list.map((item: { agent_id: string }) => item.agent_id), ['kms', 'mine', 'old', 'new'])
+  assert.equal(chooseAgent(list, null)?.agent_id, 'kms')
+  assert.equal(chooseAgent(list, 'mine')?.agent_id, 'mine')
+  assert.equal(chooseAgent(list, 'missing')?.agent_id, 'kms')
+  assert.equal(chooseAgent([], 'mine'), null)
+})
