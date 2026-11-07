@@ -131,7 +131,9 @@ function addTrafficLogs(state: MigrationState, data: TrafficSnapshotData, at: st
   for (const note of data.notes ?? []) {
     if (note.key === 'restart') { logs = []; trace = []; continue }
     counter += 1
-    logs = [{ id: counter, at, key: note.key, params: note.params ?? {}, ...(note.activity ? { activity: note.activity } : {}) }, ...logs].slice(0, TRAFFIC_LOG_LIMIT)
+    // 롤백·합성 요청 기록에는 지금 단계(%)를 같이 넣는다(문구가 {pct}를 쓴다). 서버가 보낸 값이 있으면 그대로 둔다.
+    const withStep = note.key === 'gateFail' || note.key === 'idleProbe' ? { pct: data.step, ...(note.params ?? {}) } : (note.params ?? {})
+    logs = [{ id: counter, at, key: note.key, params: withStep, ...(note.activity ? { activity: note.activity } : {}) }, ...logs].slice(0, TRAFFIC_LOG_LIMIT)
   }
   // 관찰 중·판정 중의 p99 비율만 추이에 남긴다(가중치 적용 중에는 아직 관찰하지 않는다).
   if (data.phase === 'observing' || data.phase === 'gate') trace = [...trace, data.gate.p99_ratio].slice(-TRAFFIC_TRACE_POINTS)
