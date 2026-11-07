@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { temporalStatusOf, type TemporalStatus } from '../lib/temporalStatus'
 
 /**
- * 로컬 데모 전용: NEXT_PUBLIC_TEMPORAL_SIDEBAR=1 일 때 오른쪽에 Temporal UI를 iframe으로 띄운다.
+ * 화면 오른쪽에 Temporal UI를 iframe으로 띄운다(읽기 전용, src/proxy.ts).
  * Temporal UI는 next.config.ts의 fallback rewrite로 같은 origin에서 열린다. 새 이전 건이 시작되면 그 워크플로로 옮겨 간다.
  * 왼쪽 가장자리를 끌어 폭을 바꾸고(더블클릭하면 기본 폭), 폭은 localStorage에 남긴다.
  */

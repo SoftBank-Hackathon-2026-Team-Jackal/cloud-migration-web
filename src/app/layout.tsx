@@ -28,6 +28,6 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return <html lang="ko">
-    <body><I18nProvider>{children}</I18nProvider>{process.env.NEXT_PUBLIC_TEMPORAL_SIDEBAR === '1' && <TemporalSidebar />}</body>
+    <body><I18nProvider>{children}</I18nProvider><TemporalSidebar /></body>
   </html>
 }
