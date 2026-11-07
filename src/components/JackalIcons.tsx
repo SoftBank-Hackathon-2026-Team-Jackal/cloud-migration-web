@@ -19,3 +19,10 @@ export function SpeakerIcon({ off }: { off?: boolean }) {
 export function FoldIcon() {
   return <svg {...base}><path d="M4 8h8" /></svg>
 }
+
+/** 크게 보기(대각선 바깥 화살표) / 원래 크기(안쪽 화살표) */
+export function ExpandIcon({ shrink }: { shrink?: boolean }) {
+  return <svg {...base}>{shrink
+    ? <path d="M9.5 2.5v4h4M6.5 13.5v-4h-4M9.5 6.5l4-4M6.5 9.5l-4 4" />
+    : <path d="M10 2.5h3.5V6M6 13.5H2.5V10M13.5 2.5L9.5 6.5M2.5 13.5l4-4" />}</svg>
+}
