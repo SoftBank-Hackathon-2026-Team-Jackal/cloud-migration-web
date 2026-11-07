@@ -1,7 +1,7 @@
 export const dynamic = 'force-dynamic'
 
 /**
- * 로컬 데모 전용: Temporal UI 서버의 HTTP API(SSM 터널, 기본 http://127.0.0.1:8233)를 읽어
+ * Temporal UI 서버의 HTTP API(TEMPORAL_UI_URL, 로컬 기본 http://127.0.0.1:8233)를 읽어
  * 이전 한 건(MigrationWorkflow 루트)의 워크플로 트리와 최근 이벤트를 돌려준다. 읽기만 한다.
  */
 const BASE = (process.env.TEMPORAL_UI_URL || 'http://127.0.0.1:8233').replace(/\/+$/, '')
@@ -58,8 +58,6 @@ function describe(ev: Ev, scheduled: Map<string, string>): { kind: string; text:
 }
 
 export async function GET(request: Request) {
-  // 사이드바를 켠 로컬 데모에서만 연다. 배포 환경에서는 없는 경로처럼 보인다.
-  if (process.env.NEXT_PUBLIC_TEMPORAL_SIDEBAR !== '1') return new Response(null, { status: 404 })
   try {
     let root = new URL(request.url).searchParams.get('wf')
     if (root && !/^[\w.:-]+$/.test(root)) return Response.json({ error: 'invalid wf' }, { status: 400 })

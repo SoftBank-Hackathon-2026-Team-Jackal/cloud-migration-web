@@ -2,9 +2,13 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { temporalStatusOf, type TemporalStatus } from '../lib/temporalStatus'
+import { FaultCard, HealthCard } from './tools/ToolsPage'
+import '../app/settings/settings.css'
+import '../app/tools/tools.css'
 
 /**
- * 로컬 데모 전용: NEXT_PUBLIC_TEMPORAL_SIDEBAR=1 일 때 오른쪽에 Temporal UI를 iframe으로 띄운다.
+ * 오른쪽 패널(항상 켜짐): Temporal 탭은 Temporal UI를 iframe으로, Tools 탭은 시연용 장애 주입과 원본·대상 지표를 보여 준다.
+ * 다른 화면은 `window.dispatchEvent(new Event(OPEN_TOOLS_EVENT))`로 패널을 Tools 탭으로 연다.
  * Temporal UI는 next.config.ts의 fallback rewrite로 같은 origin에서 열린다. 새 이전 건이 시작되면 그 워크플로로 옮겨 간다.
  * 왼쪽 가장자리를 끌어 폭을 바꾸고(더블클릭하면 기본 폭), 폭은 localStorage에 남긴다.
  */
@@ -23,12 +27,15 @@ function StatusIcon({ status }: { status: Status }) {
 }
 
 const KEY = 'temporal-sidebar-width'
+export const OPEN_TOOLS_EVENT = 'jackal:open-tools'
+type Tab = 'temporal' | 'tools'
 const MIN = 280
 const defaultWidth = () => Math.round(window.innerWidth * 0.38)
 const clamp = (w: number) => Math.min(Math.max(w, MIN), window.innerWidth - 40)
 
 export default function TemporalSidebar() {
   const [open, setOpen] = useState(true)
+  const [tab, setTab] = useState<Tab>('temporal')
   const [width, setWidth] = useState<number | null>(null)
   const [dragging, setDragging] = useState(false)
   const [root, setRoot] = useState<string | null>(null)
@@ -58,6 +65,12 @@ export default function TemporalSidebar() {
   }, [])
 
   useEffect(() => {
+    const show = () => { setTab('tools'); setOpen(true) }
+    window.addEventListener(OPEN_TOOLS_EVENT, show)
+    return () => window.removeEventListener(OPEN_TOOLS_EVENT, show)
+  }, [])
+
+  useEffect(() => {
     if (width && !dragging) localStorage.setItem(KEY, String(width))
   }, [width, dragging])
 
@@ -81,10 +94,17 @@ export default function TemporalSidebar() {
         onDoubleClick={() => setWidth(clamp(defaultWidth()))}
       />
       <header>
-        <strong className={`is-${status}`}><StatusIcon status={status} /> Temporal <em>{LABEL[status]}</em></strong>
+        <nav className="tsb-tabs" role="tablist">
+          <button role="tab" aria-selected={tab === 'temporal'} className={tab === 'temporal' ? 'is-on' : ''} onClick={() => setTab('temporal')}>
+            <strong className={`is-${status}`}><StatusIcon status={status} /> Temporal <em>{LABEL[status]}</em></strong>
+          </button>
+          <button role="tab" aria-selected={tab === 'tools'} className={tab === 'tools' ? 'is-on' : ''} data-testid="tsb-tools-tab" onClick={() => setTab('tools')}>Tools</button>
+        </nav>
         <button onClick={() => setOpen(false)} aria-label="close">×</button>
       </header>
-      <iframe key={src} src={src} title="Temporal UI" />
+      {/* iframe은 탭을 바꿔도 남겨 둔다(다시 불러오지 않게). */}
+      <iframe key={src} src={src} title="Temporal UI" hidden={tab !== 'temporal'} />
+      {tab === 'tools' && <div className="tsb-tools"><FaultCard /><HealthCard /></div>}
     </aside>
   </>
 }

@@ -25,3 +25,8 @@
 @keyframes tsb-spin{to{transform:rotate(360deg)}}
 @keyframes tsb-pop{from{transform:scale(.4);opacity:0}to{transform:scale(1);opacity:1}}
 @keyframes tsb-glow{to{box-shadow:0 0 0 10px rgba(90,169,255,0)}}
+.tsb iframe[hidden]{display:none}
+.tsb-tabs{display:flex;gap:4px;align-items:center}
+.tsb-tabs button{display:inline-flex;align-items:center;padding:4px 10px;border-radius:8px;color:#8b8f99;font:13px ui-monospace,SFMono-Regular,Menlo,monospace}
+.tsb-tabs button.is-on{background:#2a2d35;color:#e8e8ea}
+.tsb-tools{flex:1;overflow:auto;display:flex;flex-direction:column;gap:12px;padding:12px;background:#f7f7f7;color:var(--cx-ink);font-family:var(--font-sans)}
