@@ -28,6 +28,7 @@ import { pathOf, type Target as SetupTarget } from '../lib/migration/events'
 import { useVoiceGuide } from '../lib/useVoiceGuide'
 import { buildAgentFacts } from '../lib/agent/context'
 import { askAgent } from '../lib/agent/ask'
+import { AGENT_STEP_KEYS } from '../lib/agent/steps'
 import { FoldIcon, MicIcon, SpeakerIcon } from './JackalIcons'
 import { isRecommendRequest, isStartCommand, targetFromUtterance } from '../lib/agent/intent'
 import { useStageVoice } from '../lib/voice/useStageVoice'
@@ -200,6 +201,8 @@ export default function FlowApp() {
   // 에이전트 질문: 화면의 현재 상태를 요약해 임시 백엔드(/api/agent)에 묻고, 답은 말로도 읽어 준다.
   const [question, setQuestion] = useState('')
   const [asking, setAsking] = useState(false)
+  // 서버가 알려 주는 진행 단계(상태 읽는 중 → 모델에 묻는 중 …). 없으면 '생각 중'.
+  const [askStep, setAskStep] = useState<string | null>(null)
   // captionLang: 화면 언어. 음성 언어와 다르면 답을 화면 언어 자막으로도 받는다(심사 화면은 일본어, 음성은 한국어 같은 경우).
   const askContext = useRef({ migrationState, stage, lang: voiceLang, captionLang: lang })
   askContext.current = { migrationState, stage, lang: voiceLang, captionLang: lang }
@@ -207,8 +210,9 @@ export default function FlowApp() {
     setAsking(true)
     const { migrationState: current, stage: currentStage, lang: currentLang, captionLang } = askContext.current
     const facts = buildAgentFacts(current, currentStage, t(('stage.' + currentStage) as MsgKey))
-    const { answer, source, caption } = await askAgent(text, facts, currentLang, captionLang)
+    const { answer, source, caption } = await askAgent(text, facts, currentLang, captionLang, setAskStep)
     setAsking(false)
+    setAskStep(null)
     voice.speakText(answer, currentLang, source, caption)
   }
 
@@ -533,7 +537,7 @@ export default function FlowApp() {
             <p>{message.text}</p>
             {(message.tag === 'model' || message.tag === 'local') && <small>{t(message.tag === 'model' ? 'agent.sourceModel' : 'agent.sourceLocal')}</small>}
           </div>)}
-          {asking && <div className="jv-msg is-agent is-typing"><p>{t('agent.thinking')}</p></div>}
+          {asking && <div className="jv-msg is-agent is-typing"><p>{t(askStep && AGENT_STEP_KEYS[askStep] ? AGENT_STEP_KEYS[askStep] : 'agent.thinking')}</p></div>}
         </div>
         {voice.error && <small className="jv-error">{voice.error}</small>}
         {stage === 'intro' && <div className="jv-chips">
