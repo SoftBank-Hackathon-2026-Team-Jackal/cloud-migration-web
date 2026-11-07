@@ -6,6 +6,7 @@ import ProposalTag from './ProposalTag'
 import TrafficCanvas from './TrafficCanvas'
 import MigrationLanes from './MigrationLanes'
 import TrafficHealthPanel from './TrafficHealthPanel'
+import { OPEN_TOOLS_EVENT } from './TemporalSidebar'
 import type { Target } from '../lib/stages'
 import { useI18n, useT, type MsgKey } from '../lib/i18n'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
@@ -185,6 +186,8 @@ function TrafficBody({ ready, target, onNext, onCutover }: { ready: boolean; tar
         {/* 실제 모드: 롤백·재시도 API가 아직 없으면 버튼을 숨긴다(capabilities.ts). */}
         {can('traffic.rollback') && <button type="button" className={'flow-secondary' + (alerting ? ' traffic-urgent' : '')} onClick={() => provider.rollbackTraffic()} disabled={stage === 'rolledback' || stage === 'prepare' || stage === 'blocked'}>{t('traffic.btn.rollback')}</button>}
         {mode === 'mock' && <button type="button" className="flow-secondary" onClick={() => provider.injectFailure()} disabled={stage !== 'observing' && stage !== 'applying' && stage !== 'stabilizing'}>{t('traffic.btn.inject')}</button>}
+        {/* 실제 모드: 장애는 안정화 구간에서만 판정에 잡히므로 그때만 오른쪽 패널의 Tools 탭(대상 앱 장애 주입)을 연다. */}
+        {mode !== 'mock' && stage === 'stabilizing' && <button type="button" className="flow-secondary" data-testid="traffic-tools" onClick={() => window.dispatchEvent(new Event(OPEN_TOOLS_EVENT))}>{t('traffic.btn.inject')}</button>}
         {stage === 'stabilizing' && can('traffic.finalize') && <button type="button" className="flow-secondary" onClick={() => provider.finalizeTraffic()} disabled={alerting}>{t('traffic.btn.finalize')}</button>}
         {stage === 'rolledback' && can('traffic.retry') && <button type="button" className="flow-secondary" onClick={() => provider.retryTraffic()}>{t('traffic.btn.retry')}</button>}
         <button type="button" className="flow-primary" disabled={!drained} onClick={onNext}>{t('traffic.btn.go')} <span aria-hidden="true">→</span></button>

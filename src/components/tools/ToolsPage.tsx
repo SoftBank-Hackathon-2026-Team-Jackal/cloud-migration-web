@@ -50,7 +50,7 @@ export default function ToolsPage() {
   </div>
 }
 
-function FaultCard() {
+export function FaultCard() {
   const { t } = useI18n()
   const [view, setView] = useState<Load<FaultView>>('loading')
   const [preset, setPreset] = useState<Preset>('mixed')
@@ -166,7 +166,7 @@ function Trend({ health }: { health: TrafficHealth }) {
   </figure>
 }
 
-function HealthCard() {
+export function HealthCard() {
   const { t } = useI18n()
   const [health, setHealth] = useState<Load<TrafficHealth>>('loading')
   useEffect(() => {
