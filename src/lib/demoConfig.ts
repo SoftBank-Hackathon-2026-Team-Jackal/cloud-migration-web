@@ -92,3 +92,12 @@ export function stabilizeDemoSeconds(): number {
   const value = Number(new URLSearchParams(window.location.search).get('stabilize'))
   return Number.isInteger(value) && value >= 1 && value <= 600 ? value : 0
 }
+
+/**
+ * 시연용 ?manual=1: 목업에서 10%·50% 단계가 판정을 통과해도 자동으로 넘어가지 않고 "다음 단계로" 버튼(또는 음성)을 기다린다.
+ * 없으면 예전처럼 자동으로 넘어간다. 실제 모드는 플랫폼 정책(manual_steps)을 따른다.
+ */
+export function manualStepsDemo(): boolean {
+  if (typeof window === 'undefined') return false
+  return new URLSearchParams(window.location.search).get('manual') === '1'
+}

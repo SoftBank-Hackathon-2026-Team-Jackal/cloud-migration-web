@@ -96,7 +96,7 @@ export class SseProvider implements MigrationProvider {
    * request: 있으면 이전 전체를 실패로 바꾸지 않고 그 화면의 요청 오류(requestErrors)로만 알린다(2차 승인 등).
    * 오류 본문의 detail이 코드(APPROVER_TOKEN_NOT_CONFIGURED 등, 또는 {code})면 함께 넘겨 화면이 원인 문구를 보여 준다.
    */
-  private async post(path: string, body?: object, options: { to?: 'migration' | 'platform' | 'relay'; phase?: BackendPhase; request?: RequestKey } = {}): Promise<unknown> {
+  private async post(path: string, body?: object, options: { to?: 'migration' | 'platform' | 'relay'; phase?: BackendPhase; request?: RequestKey; quiet?: number } = {}): Promise<unknown> {
     if (!this.migrationId) return undefined
     const to = options.to ?? 'migration'
     const report = (error: ErrorData) => {
@@ -114,6 +114,8 @@ export class SseProvider implements MigrationProvider {
         body: body ? JSON.stringify(body) : undefined,
       })
       if (!response.ok) {
+        // quiet: 이 상태 코드는 오류로 보이지 않는다(예: 이미 다음 단계로 넘어감).
+        if (options.quiet === response.status) return undefined
         const data = await response.json().catch(() => null) as { detail?: unknown } | null
         // 화면 안 오류는 코드가 없어도 HTTP 상태로 문구를 고른다(HTTP_404 등).
         const detail = errorCode(data?.detail) ?? (options.request ? 'HTTP_' + response.status : undefined)
@@ -273,6 +275,11 @@ export class SseProvider implements MigrationProvider {
   /** [가정] 트래픽 롤백·재시도 경로는 정해지지 않았다. */
   rollbackTraffic() { if (this.can('traffic.rollback')) void this.post('/traffic/rollback', undefined, { phase: 'traffic' }) }
   retryTraffic() { if (this.can('traffic.retry')) void this.post('/traffic/retry', undefined, { phase: 'traffic' }) }
+  /**
+   * 수동 단계 대기 중 다음 단계로. [확정: 계약] POST /migrations/{id}/traffic/advance → 202, 409 TRAFFIC_ACTION_NOT_ALLOWED(대기 중이 아님: 이미 넘어감)·409 TRAFFIC_NOT_RUNNING·404·503.
+   * 버튼은 awaitNext 알림이 있을 때만 보이므로 capability로 막지 않는다(서버가 수동 모드를 켠 경우에만 알림이 온다).
+   */
+  async advanceTraffic() { await this.post('/traffic/advance', undefined, { phase: 'traffic', quiet: 409 }) }
   finalizeTraffic() { if (this.can('traffic.finalize')) void this.post('/traffic/finalize', undefined, { phase: 'traffic' }) }
   injectFailure() { /* 데모 전용: SSE 모드에서는 쓰지 않는다. */ }
 

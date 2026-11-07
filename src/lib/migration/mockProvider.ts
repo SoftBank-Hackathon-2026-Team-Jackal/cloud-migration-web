@@ -5,7 +5,7 @@ import { TRAFFIC_READY_EVENTS, trafficPrepareTimeline, approvalTimeline, reportF
 import { DATA_LSN_TICK_MS, DATA_TABLES, dataTickAt, dataTimeline } from './dataScript'
 import { cutoverPlan, cutoverRun } from './cutoverScript'
 import { TrafficSim } from './trafficSim'
-import { aiFixCount, analysisItemsDemo, cutoverScenario, deliveryFailDemo, digestMismatchDemo, preflightScenario, reviewDemo, sandboxScenario, mockSpeed, stabilizeDemoSeconds } from '../demoConfig'
+import { aiFixCount, analysisItemsDemo, cutoverScenario, deliveryFailDemo, digestMismatchDemo, preflightScenario, reviewDemo, sandboxScenario, mockSpeed, stabilizeDemoSeconds, manualStepsDemo } from '../demoConfig'
 
 /**
  * 백엔드 없이 지금까지와 똑같이 움직이게 하는 공급자. 단계 화면이 준비되면 그 단계의 대본(script.ts)을
@@ -106,6 +106,7 @@ export class MockProvider implements MigrationProvider {
       case 'traffic': {
         const sim = new TrafficSim(data => this.emit({ type: 'traffic.snapshot', phase: 'traffic', status: data.phase === 'complete' ? 'done' : 'running', data }), undefined, mockSpeed(), {
           stabilizeSeconds: stabilizeDemoSeconds(),
+          manualSteps: manualStepsDemo(),
           emitAlert: data => this.emit({ type: 'traffic.alert', phase: 'traffic', status: 'running', data }),
         })
         this.traffic = sim
@@ -170,6 +171,7 @@ export class MockProvider implements MigrationProvider {
   cancel() { this.host.dispatch({ type: 'cancelled' }) }
   rollbackTraffic() { this.traffic?.rollback() }
   retryTraffic() { this.traffic?.retry() }
+  async advanceTraffic() { this.traffic?.advance() }
   /** 안정화 구간을 끝내고 확정한다(?stabilize=N일 때만 안정화 구간이 있다). */
   finalizeTraffic() { this.traffic?.finalize() }
   injectFailure() { this.traffic?.inject() }

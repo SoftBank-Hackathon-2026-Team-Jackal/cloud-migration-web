@@ -32,6 +32,8 @@ const STABILIZE_TICK = 1
 export type TrafficSimOptions = {
   /** 100% 뒤 안정화 구간 길이(초). 0이면 예전처럼 바로 완료다. */
   stabilizeSeconds?: number
+  /** 켜면 10%·50% 단계가 판정을 통과해도 자동으로 넘어가지 않고 advance()를 기다린다(?manual=1). */
+  manualSteps?: boolean
   /** 안정화 구간에서 기준을 넘기 시작하거나 회복할 때 한 번씩 부른다(traffic.alert). */
   emitAlert?: (data: TrafficAlertData) => void
 }
@@ -54,6 +56,8 @@ export class TrafficSim {
   private stabilizeLeft = 0
   private health: TrafficHealthJudgement | null = null
   private breached = false
+  /** 사람의 "다음 단계로"를 기다리는 중(manual_steps) */
+  private awaiting = false
   private options: TrafficSimOptions
 
   /** 전환 단계(대상 비율 %). 서버가 정한 단계(예: [50, 100])를 줄 수 있고, 없으면 10 · 50 · 100이다. */
@@ -91,6 +95,7 @@ export class TrafficSim {
   rollback() {
     if (!this.running || this.phase === 'rolledback') return
     const stabilizing = this.phase === 'stabilizing'
+    this.awaiting = false
     this.clearTimers()
     this.injected = false
     this.weightNew = 0
@@ -102,6 +107,16 @@ export class TrafficSim {
     if (stabilizing) this.after(1500, () => this.emit([{ key: 'dbRollback', activity: 'traffic_rollback' }]))
   }
 
+  /** 사람이 "다음 단계로"를 누름: 대기 중일 때만 다음 단계의 가중치 적용을 시작한다. */
+  advance() {
+    if (!this.running || !this.awaiting) return
+    this.awaiting = false
+    this.stepIndex += 1
+    this.phase = 'applying'
+    this.emit()
+    this.beginApplying()
+  }
+
   /** 안정화 구간을 끝내고 확정한다(사람이 누름). */
   finalize() {
     if (!this.running || this.phase !== 'stabilizing') return
@@ -111,6 +126,7 @@ export class TrafficSim {
 
   /** 데모 전용: 새 환경에서 오류가 나게 한다(관찰 창 안의 지표가 기준을 넘어 롤백된다). */
   inject() {
+    if (this.awaiting) return
     if (!this.running || (this.phase !== 'observing' && this.phase !== 'applying' && this.phase !== 'stabilizing')) return
     this.injected = true
     this.emit([{ key: 'inject' }])
@@ -144,6 +160,7 @@ export class TrafficSim {
     this.stabilizeLeft = 0
     this.health = null
     this.breached = false
+    this.awaiting = false
   }
 
   private clearTimers() {
@@ -273,6 +290,12 @@ export class TrafficSim {
       } else {
         this.complete([pass, reached])
       }
+    } else if (this.options.manualSteps) {
+      // 수동 단계: 통과한 단계에서 멈추고 사람이 누를 때까지 기다린다(플랫폼 manual_steps와 같은 알림).
+      this.awaiting = true
+      this.phase = 'gate'
+      this.decision = 'advance'
+      this.emit([pass, { key: 'awaitNext', activity: 'gate', params: { pct: percent, next: this.steps[this.stepIndex + 1] } }])
     } else {
       this.stepIndex += 1
       this.phase = 'applying'

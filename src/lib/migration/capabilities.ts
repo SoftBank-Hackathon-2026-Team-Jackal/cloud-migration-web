@@ -6,6 +6,7 @@
  *   traffic.rollback   POST /migrations/{id}/traffic/rollback
  *   traffic.retry      POST /migrations/{id}/traffic/retry
  *   traffic.finalize   POST /migrations/{id}/traffic/finalize   (안정화 구간을 끝내고 이전 확정)
+ *   (traffic/advance는 목록에 없다: 수동 단계 대기 알림 awaitNext가 올 때만 버튼이 보이므로 capability로 막지 않는다)
  *   report             GET  /migrations/{id}/report          (리포트 타임라인)
  */
 export const CAPABILITIES = ['sandbox.retry', 'traffic.rollback', 'traffic.retry', 'traffic.finalize', 'report'] as const

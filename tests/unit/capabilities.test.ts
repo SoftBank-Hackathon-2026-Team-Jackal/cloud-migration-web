@@ -54,6 +54,32 @@ test('SSE 공급자: 기본값이면 없는 API(샌드박스 재시도·트래�
   } finally { restore() }
 })
 
+test('SSE 공급자: 다음 단계(advance)는 capability와 상관없이 보내고, 409는 조용히 넘긴다', async () => {
+  const { provider, calls, restore } = harness()
+  try {
+    provider.start(startRequestFor('gcp'))
+    await settle()
+    calls.length = 0
+    await provider.advanceTraffic()
+    assert.deepEqual(calls, ['POST http://backend.test/migrations/m-1/traffic/advance'])
+  } finally { restore() }
+  // 409 TRAFFIC_ACTION_NOT_ALLOWED: 이미 넘어간 것이라 오류를 띄우지 않는다.
+  const original = globalThis.fetch
+  const dispatched: Action[] = []
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    if (String(input).endsWith('/events')) return new Response(null, { status: 404 })
+    return Response.json({ detail: { code: 'TRAFFIC_ACTION_NOT_ALLOWED' } }, { status: 409 })
+  }) as typeof fetch
+  const quiet = new SseProvider({ dispatch: action => dispatched.push(action) }, { baseUrl: 'http://backend.test', startMode: 'legacy' })
+  try {
+    quiet.start(startRequestFor('gcp'))
+    await settle()
+    dispatched.length = 0
+    await quiet.advanceTraffic()
+    assert.ok(!dispatched.some(action => action.type === 'fail' || action.type === 'requestError'), JSON.stringify(dispatched))
+  } finally { quiet.dispose(); globalThis.fetch = original }
+})
+
 test('SSE 공급자: 동작을 켜면 예전 경로로 보낸다', async () => {
   const { provider, calls, restore } = harness(new Set(CAPABILITIES))
   try {

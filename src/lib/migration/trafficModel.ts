@@ -13,6 +13,7 @@ export const DEFAULT_ACTIVITY: Partial<Record<TrafficNoteKey | 'prepareFail' | '
   gatePass: 'gate',
   gateFail: 'gate',
   idleProbe: 'traffic_probe',
+  awaitNext: 'gate',
   reached: 'gate',
   rollback: 'traffic_rollback',
   manual: 'traffic_rollback',
@@ -92,10 +93,11 @@ export function stepCards(snapshot: TrafficSnapshotData | null, policy: Policy):
 }
 
 /** 게이트 패널의 판정 안내: 어떤 문구(키 꼬리)를 어떤 색으로 보일지. step: 문구에 넣을 단계(%) */
-export type Verdict = { key: 'prepare' | 'blocked' | 'applying' | 'observing' | 'gate' | 'advance' | 'rollback' | 'manual' | 'done' | 'drained' | 'stabilizing' | 'stabilizingAlert'; tone: 'neutral' | 'pass' | 'fail'; step?: number }
+export type Verdict = { key: 'prepare' | 'blocked' | 'applying' | 'observing' | 'gate' | 'advance' | 'rollback' | 'manual' | 'done' | 'drained' | 'stabilizing' | 'stabilizingAlert' | 'awaiting'; tone: 'neutral' | 'pass' | 'fail'; step?: number }
 
 /** manual: 마지막 롤백이 사람이 누른 롤백인지(기록 key가 manual). alert: 안정화 구간에서 대상이 기준을 넘은 상태인지 */
-export function verdictOf(stage: Stage, cards: StepCard[], manual: boolean, alert = false): Verdict {
+export function verdictOf(stage: Stage, cards: StepCard[], manual: boolean, alert = false, awaiting: { pct: number; next: number | null } | null = null): Verdict {
+  if (awaiting && (stage === 'gate' || stage === 'observing' || stage === 'applying')) return { key: 'awaiting', tone: 'pass', step: awaiting.pct }
   const active = cards.find(card => card.state === 'applying' || card.state === 'observing' || card.state === 'gate')
   const passed = cards.filter(card => card.state === 'pass')
   switch (stage) {
@@ -131,4 +133,18 @@ export function logDetailKey(key: string, params: Record<string, string | number
   if (key !== 'gateFail') return base
   const kind = params?.kind
   return kind === 'p99' ? base + 'P99' : kind === 'failed' ? base + 'Failed' : kind === 'requests' ? base + 'Requests' : base
+}
+
+/**
+ * 사람이 "다음 단계로"를 누르기를 기다리는 중인가(manual_steps). 가장 최근 스냅숏의 notes에 awaitNext가 있을 때만 참이다.
+ * 다음 단계가 시작되면 그 알림이 없는 새 스냅숏이 와서 거짓이 된다. pct: 방금 통과한 단계, next: 넘어갈 단계(없으면 단계 목록에서 찾는다).
+ */
+export function awaitingNext(snapshot: TrafficSnapshotData | null): { pct: number; next: number | null } | null {
+  if (!snapshot || snapshot.phase === 'rolledback' || snapshot.phase === 'complete') return null
+  const note = snapshot.notes?.find(item => item.key === 'awaitNext')
+  if (!note) return null
+  const pct = Number(note.params?.pct ?? snapshot.step)
+  const given = Number(note.params?.next)
+  const next = Number.isFinite(given) && given > 0 ? given : snapshot.steps?.find(step => step > pct) ?? null
+  return { pct, next }
 }

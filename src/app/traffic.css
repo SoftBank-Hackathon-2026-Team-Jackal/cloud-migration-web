@@ -132,3 +132,7 @@
 .traffic-wait p{flex:1;min-width:0;margin:0;color:var(--text-muted);font-size:var(--tr-s);line-height:1.45}
 .traffic-wait strong{display:block;color:#0a0a0a;font-weight:600}
 .traffic-wait button{flex:none}
+/* 수동 단계 대기: "다음 단계로" 버튼이 눈에 띄게 숨 쉬듯 깜박인다(움직임을 줄인 설정에서는 멈춘다) */
+@keyframes traffic-advance-pulse{0%,100%{box-shadow:0 0 0 0 rgba(176,138,46,.55)}50%{box-shadow:0 0 0 7px rgba(176,138,46,0)}}
+.traffic-actions .traffic-advance:not(:disabled){animation:traffic-advance-pulse 1.8s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){.traffic-actions .traffic-advance{animation:none}}
