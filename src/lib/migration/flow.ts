@@ -11,8 +11,14 @@ import type { MigrationState } from './reducer'
 export type CutoverRunView = 'wait' | 'pause' | 'verify' | 'done' | 'refused' | 'mismatch'
 
 const switched = (state: MigrationState) => state.cutover.outcome?.result === 'switched'
-/** 트래픽 단계가 시작됐는지(준비·사전 확인·스냅샷 중 하나라도 왔으면). */
-const trafficStarted = (state: MigrationState) => !!(state.traffic.snapshot || state.traffic.prepare || state.traffic.ready)
+/**
+ * 트래픽 단계가 끝났는지: 완료(complete·정리 끝)·롤백 스냅샷, 트래픽 실패(예: TRAFFIC_ROLLED_BACK), 또는 이전 전체 완료.
+ * 실제 순서에서는 전환 직후(0.3초 뒤) traffic.prepare가 오므로 "트래픽이 시작됐는지"로는 판단하지 않는다.
+ */
+export function trafficDone(state: MigrationState): boolean {
+  const phase = state.traffic.snapshot?.phase
+  return phase === 'complete' || phase === 'rolledback' || !!state.failures.traffic || state.status === 'done'
+}
 
 /**
  * 데이터 화면 "다음": 복제 중에 2차 승인(DB 전환) 요청이 왔으면(실제 순서) 전환 화면, 아니면 트래픽.
@@ -23,14 +29,18 @@ export function dataNextStage(state: MigrationState): 'cutover' | 'traffic' {
   return state.cutover.dbFirst && (state.approval.cutoverRequired || state.cutover.plan !== null) ? 'cutover' : 'traffic'
 }
 
-/** 전환 화면 "다음": DB 전환을 먼저 했고 트래픽이 아직이면 트래픽, 아니면 완료 리포트. */
+/** 전환 화면 "다음": DB 전환을 먼저 했고 트래픽이 아직 끝나지 않았으면 트래픽, 아니면 완료 리포트. */
 export function cutoverAfter(state: MigrationState): 'traffic' | 'report' {
-  return state.cutover.dbFirst && switched(state) && !trafficStarted(state) && state.status !== 'done' ? 'traffic' : 'report'
+  return state.cutover.dbFirst && switched(state) && !trafficDone(state) ? 'traffic' : 'report'
 }
 
-/** 전환 화면에 들어올 때의 첫 모습: DB 전환을 마치고 트래픽까지 지나왔으면 바로 완료 리포트. */
-export function cutoverEntry(state: MigrationState): 'approve' | 'report' {
-  return state.cutover.dbFirst && switched(state) && trafficStarted(state) ? 'report' : 'approve'
+/**
+ * 전환 화면에 들어올 때의 첫 모습(실제 순서에서 DB 전환을 마친 뒤):
+ * 트래픽까지 끝났으면 완료 리포트, 트래픽이 진행 중이면 전환 결과(통과 + 트래픽으로). 그 밖에는 승인 화면.
+ */
+export function cutoverEntry(state: MigrationState): 'approve' | 'run' | 'report' {
+  if (!state.cutover.dbFirst || !switched(state)) return 'approve'
+  return trafficDone(state) ? 'report' : 'run'
 }
 
 /**

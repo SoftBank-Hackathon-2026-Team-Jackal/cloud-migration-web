@@ -27,12 +27,14 @@ const EMPTY_TOPOLOGY: CutoverTopology = { app: '—', pooler: '—', source_db: 
 
 /**
  * onTraffic: DB 전환을 트래픽보다 먼저 한 경우(플랫폼 실제 순서) 전환 통과 뒤 "다음"이 가는 곳.
- * 트래픽을 마치고 다시 들어오면 바로 완료 리포트를 보인다(flow.ts cutoverEntry).
+ * 트래픽을 마치고 다시 들어오면 바로 완료 리포트를, 트래픽 진행 중에 다시 들어오면 전환 결과를 보인다(flow.ts cutoverEntry).
  */
+const ENTRY_PHASE: Record<ReturnType<typeof cutoverEntry>, Phase> = { approve: 'approve', run: 'running', report: 'done' }
+
 export default function CutoverStage({ target, onRestart, onComplete, onTraffic }: { target: Target; onRestart: () => void; onComplete: () => void; onTraffic: () => void }) {
   const t = useT()
   const { state } = useMigration()
-  const [phase, setPhase] = useState<Phase>(() => cutoverEntry(state) === 'report' ? 'done' : 'approve')
+  const [phase, setPhase] = useState<Phase>(() => ENTRY_PHASE[cutoverEntry(state)])
   // 본문이 알려 주는 지금 상태(쓰기 중단 구간 재생이 끝나야 결과 제목으로 바뀐다).
   const [run, setRun] = useState<RunView>('wait')
   // 다시 시도할 때 승인 순간의 시도 번호. 새 시도(cutover.ready의 attempt)가 오기 전까지 지난 결과는 숨긴다.

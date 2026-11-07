@@ -135,9 +135,9 @@ test('순서: 전환이 통과했고 트래픽이 아직이면 전환 화면 "�
     { type: 'cutover.step', phase: 'verification', status: 'running', data: { n: 1, state: 'done', id: 'pause', method: 'fast', of: 1, result: 'ok', window: 'pause' } } as DraftEvent,
     { type: 'cutover.outcome', phase: 'verification', status: 'running', data: SWITCHED } as DraftEvent)
   assert.equal(cutoverAfter(state), 'traffic')
-  assert.equal(cutoverEntry(state), 'approve')
+  assert.equal(cutoverEntry(state), 'run', '전환 뒤 트래픽 전이면 다시 들어와도 전환 결과(승인 화면 아님)')
   assert.equal(dataNextStage(state), 'traffic', '이미 전환했으면 데이터 다음은 트래픽')
-  state = run(state, { type: 'traffic.snapshot', phase: 'traffic', status: 'running', data: { stage: 'complete', weight: 100, steps: [], notes: [], results: [] } } as unknown as DraftEvent)
+  state = run(state, { type: 'traffic.snapshot', phase: 'traffic', status: 'running', data: { phase: 'complete', weights: { origin: 0, target: 100 }, step: 100, residual: { requests_per_sec: 0, streams: 0 }, notes: [], results: [] } } as unknown as DraftEvent)
   assert.equal(cutoverEntry(state), 'report')
   assert.equal(cutoverAfter(state), 'report')
 })

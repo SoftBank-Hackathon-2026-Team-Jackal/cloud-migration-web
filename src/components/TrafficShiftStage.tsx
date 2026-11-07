@@ -6,7 +6,7 @@ import ProposalTag from './ProposalTag'
 import TrafficCanvas from './TrafficCanvas'
 import MigrationLanes from './MigrationLanes'
 import type { Target } from '../lib/stages'
-import { useI18n, useT, type MsgKey } from '../lib/i18n'
+import { orderKey, useI18n, useT, type MsgKey } from '../lib/i18n'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
 import { useVoiceActions } from '../lib/voice/actions'
 import { DEFAULT_ACTIVITY, policyOf, stageOf, stepCards, verdictOf, type CardState, type Stage } from '../lib/migration/trafficModel'
@@ -51,6 +51,8 @@ function TrafficBody({ ready, target, onNext }: { ready: boolean; target: Target
   const residual = { requests: snapshot?.residual.requests_per_sec ?? 0, streams: snapshot?.residual.streams ?? 0 }
   const lagMs = snapshot?.replication?.lag_ms ?? state.traffic.ready?.lag_ms ?? state.data.current?.lag_ms ?? null
   const drained = stage === 'drained'
+  // 실제 순서(DB 전환을 먼저 함)면 트래픽 다음은 완료 리포트(FlowApp: cutover 화면이 cutoverEntry로 리포트를 연다).
+  const dbFirst = state.cutover.dbFirst
   useVoiceActions({ next: drained && onNext, rollback: can('traffic.rollback') && stage !== 'rolledback' && stage !== 'prepare' && stage !== 'blocked' && (() => provider.rollbackTraffic()), inject: mode === 'mock' && (stage === 'observing' || stage === 'applying') && (() => provider.injectFailure()), retry: can('traffic.retry') && stage === 'rolledback' && (() => provider.retryTraffic()) })
   const failedBad = failed > policy.maxFailed
   const p99Bad = p99Ratio > policy.maxP99Ratio
@@ -108,7 +110,7 @@ function TrafficBody({ ready, target, onNext }: { ready: boolean; target: Target
           </div>
           <div className={'traffic-verdict is-' + verdict.tone} aria-live="polite">
             {decisionCode && <code>{decisionCode}</code>}
-            <span>{t(('traffic.verdict.' + verdict.key) as MsgKey, verdictParams)}</span>
+            <span>{t(orderKey(('traffic.verdict.' + verdict.key) as MsgKey, dbFirst), verdictParams)}</span>
             {(stage === 'prepare' || stage === 'blocked') && prepare && <ul className="traffic-checks">
               {prepare.checks.map(check => <li key={check.id} className={'is-' + check.state}>
                 <span>{tOr('traffic.prepare.check.' + check.id, check.id)}</span>
@@ -143,14 +145,14 @@ function TrafficBody({ ready, target, onNext }: { ready: boolean; target: Target
       <div className="traffic-lane-slot">
         {/* 두 갈래 진행 띠(앱 트래픽 · DB, 게이트 0/1/2) */}
         <MigrationLanes stage="traffic" />
-        <span className="traffic-foot-note">{stage === 'rolledback' ? t('traffic.foot.rolledback') : drained ? t('traffic.foot.done') : stage === 'complete' ? t('traffic.foot.draining', verdictParams) : t('traffic.foot.default')}</span>
+        <span className="traffic-foot-note">{stage === 'rolledback' ? t('traffic.foot.rolledback') : drained ? t(orderKey('traffic.foot.done', dbFirst)) : stage === 'complete' ? t(orderKey('traffic.foot.draining', dbFirst), verdictParams) : t('traffic.foot.default')}</span>
       </div>
       <div className="traffic-actions">
         {/* 실제 모드: 롤백·재시도 API가 아직 없으면 버튼을 숨긴다(capabilities.ts). */}
         {can('traffic.rollback') && <button type="button" className="flow-secondary" onClick={() => provider.rollbackTraffic()} disabled={stage === 'rolledback' || stage === 'prepare' || stage === 'blocked'}>{t('traffic.btn.rollback')}</button>}
         {mode === 'mock' && <button type="button" className="flow-secondary" onClick={() => provider.injectFailure()} disabled={stage !== 'observing' && stage !== 'applying'}>{t('traffic.btn.inject')}</button>}
         {stage === 'rolledback' && can('traffic.retry') && <button type="button" className="flow-secondary" onClick={() => provider.retryTraffic()}>{t('traffic.btn.retry')}</button>}
-        <button type="button" className="flow-primary" disabled={!drained} onClick={onNext}>{t('traffic.btn.go')} <span aria-hidden="true">→</span></button>
+        <button type="button" className="flow-primary" disabled={!drained} onClick={onNext}>{t(orderKey('traffic.btn.go', dbFirst))} <span aria-hidden="true">→</span></button>
       </div>
     </div>
   </div>
