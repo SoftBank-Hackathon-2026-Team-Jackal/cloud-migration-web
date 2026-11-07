@@ -98,3 +98,10 @@
 .jv-why li { line-height: 1.45; overflow-wrap: anywhere; }
 .jv-why li b { display: inline-block; min-width: 2.6em; margin-right: 4px; font-weight: 600; font-size: 11px; color: var(--text-muted); }
 .jv-why li[data-kind="recommend"] b { color: #b42318; }
+
+/* 누르고 말하기: 듣기 방식 줄의 안내와 누르는 동안의 마이크 버튼 */
+.jv-listen { flex-wrap: wrap; }
+.jv-ptt-hint { flex-basis: 100%; color: var(--text-muted); font-size: 11px; line-height: 1.4; }
+.jv.is-listening .jv-ptt-hint { color: #222; }
+.jv-ptt { touch-action: none; user-select: none; -webkit-user-select: none; }
+.jv-head-actions .jv-toggle.jv-ptt.is-holding { border-color: #111; background: #111; color: #fff; box-shadow: 0 0 0 4px rgba(17, 17, 17, .12); }

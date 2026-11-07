@@ -6,6 +6,7 @@ import { RECORDED_CLIPS } from './voiceRecorded'
 import { ttsAudio, warmTts } from './voice/ttsClient'
 import { voiceText } from './voice/messages'
 import { parseWake } from './voice/wake'
+import { pttRoute } from './voice/pushToTalk'
 
 type RecognitionResult = { results: ArrayLike<ArrayLike<{ transcript: string }>> }
 type RecognitionError = { error: string }
@@ -38,7 +39,7 @@ const normalize = (value: string) => value.toLowerCase().replace(/[\s.,!?~·]/g,
 const recorded = new Set(RECORDED_CLIPS)
 const clipByText = new Map(Object.entries(voiceClips).filter(([id]) => recorded.has(id)).map(([id, text]) => [text, id]))
 
-export function useVoiceGuide({ started, active, ask = false, lang = 'ko', recognitionLang, onWake, onStart, onIntent, onCommand, onAsk, onSay, onHeard }: {
+export function useVoiceGuide({ started, active, ask = false, lang = 'ko', recognitionLang, pushToTalk = false, onWake, onStart, onIntent, onCommand, onAsk, onSay, onHeard }: {
   started: boolean
   active: boolean
   /** 시연이 시작된 뒤(첫 화면이 아닐 때): "헤이 자칼, …" 질문을 onAsk로 보낸다. */
@@ -47,6 +48,8 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', recog
   lang?: 'ko' | 'en' | 'ja'
   /** 알아듣는 언어(Chrome 음성 인식 언어). 없으면 lang과 같다. 말하는 언어와 따로 고를 수 있다. */
   recognitionLang?: 'ko' | 'en' | 'ja'
+  /** 누르고 말하기: pressTalk~releaseTalk 사이에만 듣고, 그 한 마디를 호출어 없이 처리한다(자동 재시작 없음). false면 예전처럼 마이크를 켜 두면 계속 듣는다. */
+  pushToTalk?: boolean
   onWake: () => void
   onStart: () => void
   /** 호출 뒤 첫 화면에서 들은 말(이전 의도). 있으면 onStart 대신 이쪽으로 보낸다. */
@@ -60,6 +63,10 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', recog
   onHeard?: (text: string) => void
 }) {
   const [micEnabled, setMicEnabled] = useState(false)
+  // 누르고 말하기: 지금 누르고 있는지(구체·위젯의 '듣는 중' 표시)
+  const [holding, setHolding] = useState(false)
+  const holdingRef = useRef(false)
+  const pttRef = useRef(pushToTalk)
   const [recognitionSupported, setRecognitionSupported] = useState(false)
   const [soundEnabled, setSoundEnabled] = useState(true)
   const [speaking, setSpeaking] = useState(false)
@@ -117,6 +124,8 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', recog
   useEffect(() => {
     activeRef.current = active
     if (!active) {
+      holdingRef.current = false
+      setHolding(false)
       micRef.current = false
       setMicEnabled(false)
       window.clearTimeout(restartTimer.current)
@@ -161,7 +170,9 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', recog
   }, [])
 
   const listen = useCallback(() => {
-    if (!micRef.current || !activeRef.current || speakingRef.current || !recognitionRef.current) return
+    // 누르고 말하기는 누르는 동안만, 계속 듣기는 마이크를 켠 동안 듣는다.
+    const allowed = pttRef.current ? holdingRef.current : micRef.current
+    if (!allowed || !activeRef.current || speakingRef.current || !recognitionRef.current) return
     try { recognitionRef.current.start(); console.info('[jackal-voice]', JSON.stringify({ event: 'listen-start', t: Date.now() % 100000 })) } catch { /* 이미 듣는 중 */ }
   }, [])
 
@@ -354,7 +365,7 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', recog
   const startMicMeter = useCallback(() => {
     if (micStreamRef.current || !navigator.mediaDevices?.getUserMedia) return
     void navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }).then(stream => {
-      if (!micRef.current) { stream.getTracks().forEach(track => track.stop()); return }
+      if (!micRef.current && !holdingRef.current) { stream.getTracks().forEach(track => track.stop()); return }
       const context = contextRef.current
       if (!context) { stream.getTracks().forEach(track => track.stop()); return }
       micStreamRef.current = stream
@@ -376,22 +387,15 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', recog
     }).catch(() => { /* 음량 없이도 '듣는 중' 모양은 유지된다 */ })
   }, [])
 
-  const toggleMic = useCallback(() => {
-    if (micRef.current) {
-      micRef.current = false
-      setMicEnabled(false)
-      stopMicMeter()
-      stopListening()
-      setError('')
-      return
-    }
+  /** 인식기를 만든다(한 번만). 지원하지 않으면 false. 누르고 말하기와 계속 듣기가 같은 인식기·같은 처리를 쓴다. */
+  const ensureRecognition = useCallback((): boolean => {
+    if (recognitionRef.current) return true
     const browser = window as SpeechWindow
     const Constructor = browser.SpeechRecognition || browser.webkitSpeechRecognition
     if (!Constructor) {
       setError('이 브라우저는 음성 인식을 지원하지 않습니다. 화면 버튼으로 시연할 수 있습니다.')
-      return
+      return false
     }
-    armAudio()
     const recognition = new Constructor()
     recognition.lang = RECOGNITION_LANG[recognitionLangRef.current]
     recognition.continuous = false
@@ -402,7 +406,36 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', recog
       const command = normalize(transcript)
       const { woke, rest } = parseWake(transcript)
       // 시연 전 점검용: 음성 인식이 무엇으로 들었는지 콘솔에 남긴다(호출어를 못 알아들을 때 원인 확인).
-      console.info('[jackal-voice]', JSON.stringify({ lang: recognition.lang, heard: transcript, woke }))
+      console.info('[jackal-voice]', JSON.stringify({ lang: recognition.lang, heard: transcript, woke, ptt: pttRef.current }))
+      // 누르고 말하기: 누른 동안 한 말은 호출어 없이 받는다(첫 화면은 의도, 단계 화면은 명령 → 질문). 지금의 armed 상태와 같다.
+      if (pttRef.current) {
+        const route = pttRoute(transcript, { ask: askRef.current, started: startedRef.current })
+        const callbacks = callbacksRef.current
+        if (route.kind === 'none') return
+        if (route.kind === 'command') {
+          chatHold.current = []
+          let done = false
+          try { done = callbacks.onCommand?.(route.text, { armed: true }) ?? false } finally { /* 아래에서 비운다 */ }
+          const waiting = chatHold.current ?? []
+          chatHold.current = null
+          disarm()
+          callbacks.onHeard?.(route.text)
+          waiting.forEach(emit => emit())
+          if (!done) callbacks.onAsk?.(route.text)
+          return
+        }
+        if (route.kind === 'wake') {
+          chime()
+          callbacks.onHeard?.(woke ? '헤이 자칼' : transcript.trim())
+          callbacks.onWake()
+          if (route.intent && callbacks.onIntent) window.setTimeout(() => callbacksRef.current.onIntent?.(route.intent), 1400)
+          return
+        }
+        callbacks.onHeard?.(route.text)
+        if (callbacks.onIntent) callbacks.onIntent(route.text)
+        else if (/(마이그레이션|이전).*(시작|진행)/.test(normalize(route.text))) callbacks.onStart()
+        return
+      }
       // 호출 직후(띠링 → "네, 말씀하세요")에는 호출어 없이 말해도 다음 한 마디를 받는다.
       const armedNow = askRef.current && Date.now() < awakeUntil.current
       // 명령 응답이 사용자가 한 말보다 먼저 채팅에 남지 않게: 명령을 처리하는 동안의 채팅 기록은 모아 두었다가 사용자의 말을 먼저 남긴다.
@@ -441,6 +474,8 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', recog
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
         micRef.current = false
         setMicEnabled(false)
+        holdingRef.current = false
+        setHolding(false)
         setError('마이크 권한이 필요합니다. 화면 버튼으로도 시연할 수 있습니다.')
       } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
         setError(`음성 인식 오류: ${event.error}`)
@@ -448,20 +483,70 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', recog
     }
     recognition.onend = () => {
       console.info('[jackal-voice]', JSON.stringify({ event: 'listen-end', speaking: speakingRef.current, t: Date.now() % 100000 }))
-      if (micRef.current && activeRef.current && !speakingRef.current) restartTimer.current = window.setTimeout(listen, 350)
+      // 누르고 말하기는 다시 시작하지 않는다(누를 때만 듣는다).
+      if (!pttRef.current && micRef.current && activeRef.current && !speakingRef.current) restartTimer.current = window.setTimeout(listen, 350)
     }
     recognitionRef.current = recognition
+    return true
+  }, [arm, chime, disarm, listen])
+
+  const toggleMic = useCallback(() => {
+    if (micRef.current) {
+      micRef.current = false
+      setMicEnabled(false)
+      stopMicMeter()
+      stopListening()
+      setError('')
+      return
+    }
+    if (!ensureRecognition()) return
+    armAudio()
     micRef.current = true
     setMicEnabled(true)
     setError('')
     listen()
     startMicMeter()
-  }, [armAudio, listen, stopListening, startMicMeter, stopMicMeter])
+  }, [armAudio, ensureRecognition, listen, stopListening, startMicMeter, stopMicMeter])
+
+  /** 누르고 말하기 시작(키·버튼을 누름): 자칼이 말하는 중이면 멈추고(스피커 소리가 마이크로 들어가지 않게) 듣는다. */
+  const pressTalk = useCallback(() => {
+    if (!pttRef.current || holdingRef.current || !activeRef.current) return
+    if (!ensureRecognition()) return
+    armAudio()
+    if (speakingRef.current) { utterToken.current += 1; stopAudio() }
+    window.clearTimeout(restartTimer.current)
+    holdingRef.current = true
+    setHolding(true)
+    setError('')
+    listen()
+    startMicMeter()
+  }, [armAudio, ensureRecognition, listen, startMicMeter, stopAudio])
+
+  /** 누르고 말하기 끝(뗌): 인식을 멈춘다. 들은 한 마디는 인식기가 멈추며 넘겨준 결과(onresult)로 처리된다. */
+  const releaseTalk = useCallback(() => {
+    if (!holdingRef.current) return
+    holdingRef.current = false
+    setHolding(false)
+    stopListening()
+    stopMicMeter()
+  }, [stopListening, stopMicMeter])
+
+  // 듣기 방식을 바꾸면 이전 방식의 듣기를 끝낸다(누르고 말하기로 바꾸면 계속 듣던 마이크를 끈다).
+  useEffect(() => {
+    pttRef.current = pushToTalk
+    if (pushToTalk && micRef.current) {
+      micRef.current = false
+      setMicEnabled(false)
+      stopMicMeter()
+      stopListening()
+    }
+    if (!pushToTalk) releaseTalk()
+  }, [pushToTalk, releaseTalk, stopListening, stopMicMeter])
 
   // 이전 방문에서 권한을 허용했다면 첫 화면부터 호출어를 듣는다.
   // 최초 권한 요청은 브라우저의 사용자 동작 제한 때문에 화면 버튼으로 시작한다.
   useEffect(() => {
-    if (!active) return
+    if (!active || pushToTalk) return
     if (!navigator.permissions?.query) return
     let cancelled = false
     void navigator.permissions.query({ name: 'microphone' as PermissionName })
@@ -470,7 +555,7 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', recog
       })
       .catch(() => { /* Permissions API 미지원 브라우저는 버튼으로 활성화 */ })
     return () => { cancelled = true }
-  }, [active, toggleMic])
+  }, [active, pushToTalk, toggleMic])
 
   const toggleSound = useCallback(() => {
     soundRef.current = !soundRef.current
@@ -490,5 +575,5 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', recog
     window.setTimeout(listen, 150)
   }, [stopAudio, listen])
 
-  return { micEnabled, recognitionSupported, soundEnabled, speaking, heard, message, caption, utterance, awake, chime, error, speak, speakText, stopSpeech, toggleMic, toggleSound, armAudio, voiceLevel, voiceActive, micLevel }
+  return { micEnabled, holding, pressTalk, releaseTalk, recognitionSupported, soundEnabled, speaking, heard, message, caption, utterance, awake, chime, error, speak, speakText, stopSpeech, toggleMic, toggleSound, armAudio, voiceLevel, voiceActive, micLevel }
 }

@@ -31,7 +31,8 @@ const init = ({ voice, input, caption }) => {
   const q = navigator.permissions?.query?.bind(navigator.permissions)
   if (q) navigator.permissions.query = d => d?.name === 'microphone' ? Promise.resolve({ state: 'granted' }) : q(d)
   if (navigator.mediaDevices) navigator.mediaDevices.getUserMedia = () => Promise.reject(new Error('no mic'))
-  try { if (voice) localStorage.setItem('jackal.voiceLang', voice); if (input) localStorage.setItem('jackal.inputLang', input); if (caption) localStorage.setItem('jackal.captionLang', caption) } catch {}
+  // 이 시험은 계속 듣기(호출어) 방식을 본다. 기본값은 누르고 말하기라서 고른 값을 남겨 둔다.
+  try { localStorage.setItem('jackal.listenMode', 'continuous'); if (voice) localStorage.setItem('jackal.voiceLang', voice); if (input) localStorage.setItem('jackal.inputLang', input); if (caption) localStorage.setItem('jackal.captionLang', caption) } catch {}
 }
 
 const results = []
