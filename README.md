@@ -143,6 +143,16 @@ NEXT_PUBLIC_API_MODE=sse NEXT_PUBLIC_SSE_START=legacy npm run dev   # 다른 터
 - 하단 자막: 음성 언어와 화면 언어가 다르면(예: 음성 한국어, 화면 일본어) 서버가 에이전트 답을 화면 언어로 한 번 더 옮겨 자막 아래 줄에 보인다. 번역 모델은 `AGENT_CAPTION_MODEL`(없으면 답과 같은 모델, `gemini-live`는 `gemini-2.5-flash`), 제한 시간은 `AGENT_CAPTION_TIMEOUT_MS`(기본 8000)이다. 번역이 실패하면 자막 아래 줄만 빠진다.
 - 키가 없거나 모델 호출이 실패하면 규칙 기반 답으로 대신합니다. 시험: `npm run build` 뒤 `npm run test:e2e:agent`(가짜 모델 서버 사용, 실제 호출 없음)
 
+## 시연용 Tools 화면 (/tools)
+
+이전 대상 앱에 일부러 장애(오류 500, 지연)를 내서 플랫폼이 오류율과 p99로 이상을 알아채는 장면을 보여 주는 화면이다. 원본·대상 지표 미리보기도 함께 있다.
+
+- 웹 서버는 `PLATFORM_API_BASE`(내부망 플랫폼 API)의 `/system/fault`, `/system/traffic-health`를 부른다. 브라우저는 같은 출처의 `/api/tools/fault`, `/api/traffic-health`만 부른다.
+- 플랫폼에 `DEMO_TOOLS_ENABLED=true`를 켜야 열린다. 꺼져 있으면 화면에 "Tools가 꺼져 있어요"가 보인다.
+- 장애는 플랫폼이 "원하는 상태"로 저장하고, 중계 서버 리포터(`cmp_traffic.health`, `FAULT_TOKEN` 필요)가 5초마다 받아 대상 앱 `/__cmp/fault`에 적용한다. 화면은 대상 앱에서 실제로 켜졌는지를 보인다.
+- 켜기·끄기는 연결 관리와 같은 입구 검사(같은 출처, 실제 모드에서는 `ADMIN_GITHUB_LOGINS`에 있는 계정)를 거친다.
+- 장애가 실제로 켜져 있는 동안 데모 화면 아래쪽에 "장애 주입 중" 배지가 뜬다(일부러 낸 장애임을 밝힌다).
+
 ## 테스트
 
 ```bash
