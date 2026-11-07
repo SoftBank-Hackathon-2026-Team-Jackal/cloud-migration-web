@@ -34,7 +34,7 @@ const ADDRESS: Record<Target, Record<string, string>> = {
     app: 'kubernetes_deployment.app', lb: 'google_compute_global_forwarding_rule.https', cert: 'google_compute_managed_ssl_certificate.app',
   },
   onprem: {
-    agent: 'agent.register', cluster: 'k3s_cluster.colima', db: 'kubernetes_stateful_set.postgres',
+    agent: 'agent.register', cluster: 'k3s_cluster.k3d', db: 'kubernetes_stateful_set.postgres',
     app: 'kubernetes_deployment.app', relay: 'wireguard_peer.relay', cert: 'kubernetes_secret.tls',
   },
 }
@@ -43,7 +43,7 @@ export const addressOf = (target: Target, key: string) => ADDRESS[target][key] ?
 /** 블록 이름표 둘째 줄(짧은 사양). 받은 detail이 있으면 그것이 먼저다. */
 const SPEC: Record<Target, Record<string, string>> = {
   gcp: { network: 'vpc · 10.20.0.0/16', cluster: 'node-pool ×1 · e2-standard-4', db: 'StatefulSet · PV 20GiB', app: 'app@sha256 · :8080', lb: 'HTTPS 443 → 8080', cert: 'app.example.com · TLS' },
-  onprem: { agent: 'agent-001 · outbound', cluster: 'K3s · local-path', db: 'StatefulSet · PV 20GiB', app: 'app@sha256 · :8080', relay: 'WireGuard · public IP', cert: 'app.example.com · TLS' },
+  onprem: { agent: 'agent-001 · outbound', cluster: 'K3s · local-path', db: 'StatefulSet · PV 10GiB', app: 'app@sha256 · :8080', relay: 'WireGuard · public IP', cert: 'app.example.com · TLS' },
 }
 export const specOf = (target: Target, key: string) => SPEC[target][key]
 

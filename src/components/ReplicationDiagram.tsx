@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../lib/i18n'
+import { fitText, withPort } from '../lib/svgText'
 import type { DataLsnData, DataPhase, PreflightCheck, PreflightNetwork, Target } from '../lib/migration/events'
 
 /**
@@ -85,6 +86,7 @@ export default function ReplicationDiagram({ target, network, verdict, route, ph
     : route.status === 'RUNNING' ? `ip route get ${network.source_addr} …`
     : route.status === 'FAIL' ? `→ ${routeShort} (${t('dmig.d.notTunnel')})`
     : route.status === 'SKIPPED' ? '' : `→ ${route.evidence}`
+  const routeShown = fitText(routeText, 40)
 
   // 원본 쓰기 · 대상 재생 표식
   const lag = lsn?.lag_ms ?? null
@@ -110,7 +112,7 @@ export default function ReplicationDiagram({ target, network, verdict, route, ph
       {/* AWS VPC (원본) */}
       <rect x="20" y={zoneTop} width="270" height={zoneBottom - zoneTop} rx="14" fill="url(#dm-dots)" stroke="#d6d6d6" />
       <text x="38" y={zoneTop + 26} className="dm-t-zone">AWS · VPC</text>
-      <text x="272" y={zoneTop + 26} className="dm-t-zone dm-mono" textAnchor="end">{network?.source_cidr ?? ''}</text>
+      <text x="272" y={zoneTop + 26} className="dm-t-zone dm-mono" textAnchor="end">{fitText(network?.source_cidr ?? '', 22)}</text>
       <rect x="38" y={stackTop} width="234" height="40" rx="8" fill="#fff" stroke="#d6d6d6" />
       <text x="54" y={stackTop + 25} className="dm-t-box">{t('dmig.d.srcApp')}</text>
       <text x="256" y={stackTop + 25} className="dm-t-small dm-mono" textAnchor="end">env-a</text>
@@ -122,17 +124,17 @@ export default function ReplicationDiagram({ target, network, verdict, route, ph
       <text x="256" y={pgbTop + 22} className="dm-t-small is-inv-muted" textAnchor="end">→ {sourceName}{synced ? ' · ' + t('dmig.d.pgbWait') : ''}</text>
       <rect x="38" y={dbTop} width="234" height={dbH} rx="10" fill="#fff" stroke="#0a0a0a" strokeWidth="1.5" />
       <text x="56" y={dbTop + 26} className="dm-t-small">{t('dmig.d.srcDb')}</text>
-      <text x="56" y={dbTop + 50} className="dm-t-name">{sourceName}</text>
+      <text x="56" y={dbTop + 50} className="dm-t-name">{fitText(sourceName, 20)}</text>
       <text x="56" y={dbTop + dbH - 54} className="dm-t-small">{t('dmig.d.write')}</text>
       <text x="56" y={dbTop + dbH - 34} className="dm-t-lsn dm-mono">{lsn?.source_lsn ?? '—'}</text>
-      <text x="56" y={dbTop + dbH - 12} className="dm-t-small dm-mono">{network ? network.source_addr + ':' + sourcePort : ''}</text>
+      <text x="56" y={dbTop + dbH - 12} className="dm-t-small dm-mono">{network ? fitText(withPort(network.source_addr, sourcePort), 30, 6) : ''}</text>
 
       {/* 대상 */}
       <rect x="710" y={zoneTop} width="270" height={zoneBottom - zoneTop} rx="14" fill="url(#dm-dots)" stroke="#d6d6d6" />
       <text x="728" y={zoneTop + 26} className="dm-t-zone">{targetZone}</text>
-      <text x="962" y={zoneTop + 26} className="dm-t-zone dm-mono" textAnchor="end">{network?.target_cidr ?? ''}</text>
+      <text x="962" y={zoneTop + 26} className="dm-t-zone dm-mono" textAnchor="end">{fitText(network?.target_cidr ?? '', 22)}</text>
       <rect x="728" y={nodeTop} width="234" height="84" rx="8" fill="#fff" stroke="#d6d6d6" />
-      <text x="744" y={nodeTop + 22} className="dm-t-box">{(network?.replication_node ?? '—') + ' · ' + t('dmig.d.runner')}</text>
+      <text x="744" y={nodeTop + 22} className="dm-t-box">{fitText((network?.replication_node ?? '—') + ' · ' + t('dmig.d.runner'), 30)}</text>
       <rect x="744" y={nodeTop + 34} width="96" height="38" rx="6" fill="#fff" stroke="#0a0a0a" strokeDasharray="3 2" className={probing ? 'dm-probe-pod is-active' : 'dm-probe-pod'} />
       <text x="792" y={nodeTop + 57} className="dm-t-small is-ink" textAnchor="middle">{t('dmig.d.probe')}</text>
       <rect x="850" y={nodeTop + 34} width="96" height="38" rx="6" fill={replicating ? '#0a0a0a' : '#f3f3f3'} stroke={replicating ? '#0a0a0a' : '#d6d6d6'} />
@@ -140,14 +142,14 @@ export default function ReplicationDiagram({ target, network, verdict, route, ph
       <line x1="898" y1={nodeTop + 84} x2="898" y2={dbTop} stroke={replicating ? '#0a0a0a' : '#bdbdbd'} strokeWidth={replicating ? 1.5 : 1} strokeDasharray={replicating ? undefined : '3 3'} />
       <rect x="728" y={dbTop} width="234" height={dbH} rx="10" fill="#fff" stroke={synced ? '#b08a2e' : '#0a0a0a'} strokeWidth={synced ? 2.5 : 1.5} className="dm-target" />
       <text x="746" y={dbTop + 26} className="dm-t-small">{t('dmig.d.dstDb')}</text>
-      <text x="746" y={dbTop + 50} className="dm-t-name">{network?.target_db ?? '—'}</text>
+      <text x="746" y={dbTop + 50} className="dm-t-name">{fitText(network?.target_db ?? '—', 20)}</text>
       <text x="746" y={dbTop + dbH - 54} className="dm-t-small">{t('dmig.d.replay')}</text>
       <text x="746" y={dbTop + dbH - 34} className="dm-t-lsn dm-mono">{lsn?.target_lsn ?? '—'}</text>
-      <text x="746" y={dbTop + dbH - 12} className="dm-t-small dm-mono">{network?.target_db_detail ?? ''}</text>
+      <text x="746" y={dbTop + dbH - 12} className="dm-t-small dm-mono">{fitText(network?.target_db_detail ?? '', 30, 6)}</text>
 
       {/* 터널 = WAL 테이프 */}
       <text x="500" y={ty - 70} textAnchor="middle" className="dm-t-box">{pathLabel} <tspan className="dm-mono">{pathDetail}</tspan></text>
-      <text x="500" y={ty - 50} textAnchor="middle" className={'dm-t-small dm-mono' + (route?.status === 'FAIL' ? ' is-neg' : '')}>{routeText}</text>
+      <text x="500" y={ty - 50} textAnchor="middle" className={'dm-t-small dm-mono' + (route?.status === 'FAIL' ? ' is-neg' : '')}>{routeShown}</text>
       <line x1="290" y1={ty - 24} x2="710" y2={ty - 24} stroke="#0a0a0a" strokeWidth="1.5" />
       <line x1="290" y1={ty + 24} x2="710" y2={ty + 24} stroke="#0a0a0a" strokeWidth="1.5" />
       <line x1="290" y1={ty - 30} x2="710" y2={ty - 30} stroke="#cfcfcf" />

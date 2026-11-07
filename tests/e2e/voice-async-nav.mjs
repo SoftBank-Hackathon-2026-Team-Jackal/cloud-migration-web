@@ -15,16 +15,29 @@ try { ({ chromium } = require('playwright')) } catch {
 
 const BASE_URL = process.env.BASE_URL || 'http://127.0.0.1:3000'
 const CHANNEL = process.env.PW_CHANNEL || undefined
+/** 올바른 헤더를 가진 1초짜리 무음 WAV(8kHz·16bit·모노). 깨진 파일이면 재생 오류로 말이 바로 끝난다. */
+function silentWav() {
+  const samples = 8000
+  const header = Buffer.alloc(44)
+  header.write('RIFF', 0); header.writeUInt32LE(36 + samples * 2, 4); header.write('WAVE', 8)
+  header.write('fmt ', 12); header.writeUInt32LE(16, 16); header.writeUInt16LE(1, 20); header.writeUInt16LE(1, 22)
+  header.writeUInt32LE(8000, 24); header.writeUInt32LE(16000, 28); header.writeUInt16LE(2, 32); header.writeUInt16LE(16, 34)
+  header.write('data', 36); header.writeUInt32LE(samples * 2, 40)
+  return Buffer.concat([header, Buffer.alloc(samples * 2)])
+}
 const problems = []
 const check = (ok, message) => { if (!ok) problems.push(message); console.log((ok ? '  ✓ ' : '  ✗ ') + message) }
 
 const browser = await chromium.launch(CHANNEL ? { channel: CHANNEL } : {})
 try {
   const page = await browser.newPage({ viewport: { width: 1536, height: 860 } })
-  // 말이 끝나지 않는 상황: 녹음 재생과 음성 합성이 시작만 하고 끝 신호를 주지 않는다.
+  // 말이 끝나지 않는 상황: 서버 TTS는 소리 파일을 주고(시험 서버에는 TTS가 없어 가짜로 대신한다), 재생은 시작만 하고
+  // 끝 신호를 주지 않는다. 브라우저 음성 합성은 쓰지 않는다(자칼 목소리는 Supertonic 하나뿐이다).
+  await page.route('**/api/tts*', route => route.request().url().includes('warm=1')
+    ? route.fulfill({ status: 200, contentType: 'application/json', body: '{"available":true}' })
+    : route.fulfill({ status: 200, contentType: 'audio/wav', body: silentWav() }))
   await page.addInitScript(() => {
     HTMLMediaElement.prototype.play = function () { return new Promise(() => {}) }
-    try { window.speechSynthesis.speak = () => {}; window.speechSynthesis.cancel = () => {} } catch { /* 합성 음성이 없는 브라우저 */ }
   })
   await page.goto(`${BASE_URL}/?lang=ko&speed=10`)
   // 하이드레이션 전의 키 입력은 무시되므로 첫 화면 대답이 나올 때까지 L을 되풀이한다.

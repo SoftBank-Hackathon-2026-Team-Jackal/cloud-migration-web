@@ -39,7 +39,7 @@ const NETWORK: Record<Target, PreflightNetwork> = {
     source_cidr: '10.0.0.0/16', target_cidr: '192.168.0.0/16',
     path: { kind: 'wireguard', name: 'wg0', cidr: '10.8.0.0/24' },
     source_db: 'pg-a.prod.internal:5432', source_addr: '10.0.12.34',
-    replication_node: 'k3s-node-2', target_db: 'pg-b', target_db_detail: 'StatefulSet · PVC 20Gi',
+    replication_node: 'k3s-node-2', target_db: 'pg-b', target_db_detail: 'StatefulSet · PVC 10Gi',
   },
   gcp: {
     source_cidr: '10.0.0.0/16', target_cidr: '10.20.0.0/20',

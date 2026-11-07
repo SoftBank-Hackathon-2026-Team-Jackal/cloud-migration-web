@@ -1,6 +1,7 @@
 'use client'
 
 import { useT } from '../lib/i18n'
+import { fitSize, fitText } from '../lib/svgText'
 import type { CutoverPlanData } from '../lib/migration/events'
 import { useBoxSize } from './CutoverTimeline'
 
@@ -49,11 +50,16 @@ export default function CutoverDiagram({ topology, view, ariaLabel }: { topology
     const role = failed ? t('cut.d.failed') : on ? t('cut.d.primary') : side === 'source' ? (view.reverse ? t('cut.d.standbyRev') : t('cut.d.standby')) : (view.forward ? t('cut.d.standbyFwd') : t('cut.d.standby'))
     const cls = 'cx-d-db' + (on ? ' is-on' : '') + (failed ? ' is-fail' : '') + (on && side === 'target' && view.settled ? ' is-settled' : '')
     const pad = font * 1.1
+    // 상자 안에 한 줄로 들어오게 글자 크기·길이를 맞춘다(긴 이름이 옆 상자나 화면 밖으로 넘치지 않게).
+    const inner = dbW - pad * 2
+    const nameText = side === 'source' ? topology.source_db : topology.target_db
+    const nameSize = fitSize(nameText, inner, font * 1.7, font * 0.8)
+    const whereText = fitText(t(side === 'source' ? 'cut.d.source' : 'cut.d.target', { where: side === 'source' ? topology.source_where : topology.target_where }), Math.floor(inner / (font * 0.75 * 0.58)))
     return <g className={cls}>
       <rect className="cx-d-box" x={x} y={dbY} width={dbW} height={dbH} rx={12} />
-      <text className="cx-d-small" x={x + pad} y={dbY + pad * 1.3} style={{ fontSize: font * 0.75 }}>{t(side === 'source' ? 'cut.d.source' : 'cut.d.target', { where: side === 'source' ? topology.source_where : topology.target_where })}</text>
-      <text className="cx-d-name" x={x + pad} y={dbY + dbH * 0.52 + font * 0.5} style={{ fontSize: font * 1.7 }}>{side === 'source' ? topology.source_db : topology.target_db}</text>
-      <text className="cx-d-role" x={x + pad} y={dbY + dbH - pad * 0.9} style={{ fontSize: font * 0.75 }}>{role}</text>
+      <text className="cx-d-small" x={x + pad} y={dbY + pad * 1.3} style={{ fontSize: font * 0.75 }}>{whereText}</text>
+      <text className="cx-d-name" x={x + pad} y={dbY + dbH * 0.52 + font * 0.5} style={{ fontSize: nameSize }}>{fitText(nameText, Math.floor(inner / (nameSize * 0.58)))}</text>
+      <text className="cx-d-role" x={x + pad} y={dbY + dbH - pad * 0.9} style={{ fontSize: font * 0.75 }}>{fitText(role, Math.floor(inner / (font * 0.75 * 0.58)))}</text>
     </g>
   }
   return <div ref={ref} className="cx-diagram">
