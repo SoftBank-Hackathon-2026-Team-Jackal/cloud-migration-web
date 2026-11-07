@@ -1,12 +1,15 @@
-/* 서버 맥박 위젯: 오른쪽 위, 자칼 알약 왼쪽. 알약과 같은 높이·유리 느낌, 흑백에 오류 때만 색이 붙는다. */
-.pulse{position:fixed;z-index:40;top:10px;right:300px;display:flex;align-items:center;gap:10px;height:34px;padding:0 14px 0 8px;border:1px solid rgba(255,255,255,.92);border-radius:999px;background:rgba(255,255,255,.88);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);box-shadow:0 8px 26px rgba(0,0,0,.1);color:#202020;font:600 12px/1 var(--font-sans-jp,inherit);font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:auto;--run:1.4s}
+/* 서버 맥박 위젯: 왼쪽 위(진행 표시는 가운데, 자칼·언어 전환은 오른쪽). 흑백에 오류·과부하일 때만 색이 붙는다. */
+.pulse{position:fixed;z-index:40;top:10px;left:14px;display:flex;align-items:center;gap:10px;height:34px;padding:0 14px 0 8px;border:1px solid rgba(255,255,255,.92);border-radius:999px;background:rgba(255,255,255,.88);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);box-shadow:0 8px 26px rgba(0,0,0,.1);color:#202020;font:600 12px/1 var(--font-sans-jp,inherit);font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:auto;--run:1.4s}
 .pulse small{margin-right:5px;color:#8a8a8a;font-size:10px;font-weight:600;letter-spacing:.02em}
-.pulse-mem{display:inline-flex;align-items:center}
-.pulse-mem i{display:block;width:34px;height:6px;border-radius:999px;background:#e4e4e4;overflow:hidden}
-.pulse-mem b{display:block;height:100%;border-radius:999px;background:#202020;transition:width .6s ease}
-.pulse-err{display:inline-flex;align-items:center}
+.pulse-box{display:inline-flex;align-items:center;min-width:0}
+.pulse-box b{min-width:30px;font-weight:650}
+.pulse-box i{display:block;width:28px;height:6px;margin-left:6px;border-radius:999px;background:#e4e4e4;overflow:hidden}
+.pulse-box em{display:block;height:100%;border-radius:999px;background:#202020;transition:width .6s ease}
+.pulse-box.is-unknown{color:#9a9a9a}
+.pulse-arrow{color:#9a9a9a;font-weight:500}
+.pulse-err{display:inline-flex;align-items:center;padding-left:6px;border-left:1px solid #e4e4e4}
 .pulse.is-warn{border-color:#d9a400}.pulse.is-warn .pulse-err{color:#9a6b00}
-.pulse.is-bad{border-color:#c62828}.pulse.is-bad .pulse-err,.pulse.is-bad .pulse-cpu{color:#c62828}.pulse.is-bad .pulse-mem b{background:#c62828}
+.pulse.is-bad{border-color:#c62828}.pulse.is-bad .pulse-err{color:#c62828}.pulse.is-bad .pulse-box em{background:#c62828}.pulse.is-bad .pulse-box b{color:#c62828}
 
 .pulse-jackal{width:36px;height:21px;overflow:visible;fill:#202020;stroke:#202020;stroke-width:1;stroke-linejoin:round;stroke-linecap:round}
 .pj-leg{stroke-width:1.9}
@@ -20,7 +23,7 @@
 .pulse.is-idle .pj-body,.pulse.is-idle .pj-a,.pulse.is-idle .pj-b{animation:none}
 @media(prefers-reduced-motion:reduce){.pj-body,.pj-a,.pj-b{animation:none}}
 
-/* 자칼 알약이 언어 전환 아래로 내려가는 폭에서는 그 자리(언어 전환 왼쪽)로 옮긴다 */
-@media(max-width:1180px){.pulse{right:196px}}
-@media(max-width:760px){.pulse{gap:8px;padding:0 10px 0 6px}.pulse small{display:none}}
-@media(max-width:620px){.pulse-mem{display:none}}
+/* 진행 표시(가운데, 폭 약 480px)와 겹치지 않는 폭 아래에서는 두 번째 줄(왼쪽)로 내린다 */
+@media(max-width:1190px){.pulse{top:52px}}
+@media(max-width:760px){.pulse{top:10px;gap:8px;padding:0 10px 0 6px}.pulse small{display:none}}
+@media(max-width:560px){.pulse-box i{display:none}.pulse-box b{min-width:0}}

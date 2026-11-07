@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type CSSProperties } from 'react'
 import { useI18n, type MsgKey } from '../lib/i18n'
-import { parsePulse, pulseLevel, runSeconds, type Pulse } from '../lib/pulse/pulse'
+import { busiestCpu, parsePulse, pulseLevel, runSeconds, type Pulse, type Side } from '../lib/pulse/pulse'
 
 const POLL_MS = 3000
 const GIVE_UP_AFTER = 3 // 연속 실패가 이 횟수를 넘으면 위젯을 숨긴다(꾸민 값을 보이지 않는다)
@@ -24,9 +24,21 @@ function RunningJackal() {
   </svg>
 }
 
+const pct = (value: number | null | undefined) => value === null || value === undefined ? '—' : Math.round(value) + '%'
+
+/** 한 쪽 서버: 이름 · CPU % · 메모리 막대. 값을 못 받았으면 모두 —. */
+function ServerBox({ label, side }: { label: string; side: Side | null }) {
+  return <span className={'pulse-box' + (side ? '' : ' is-unknown')} aria-hidden="true">
+    <small>{label}</small>
+    <b>{pct(side?.cpu_percent)}</b>
+    <i><em style={{ width: (side?.mem_percent ?? 0) + '%' }} /></i>
+  </span>
+}
+
 /**
- * 화면 오른쪽 위의 서버 맥박: 달리는 자칼(빠를수록 CPU 사용률이 높다) · 메모리 막대 · 최근 5분 오류 수.
- * 플랫폼 서버가 읽은 실제 값만 보여 주고, 값을 받지 못하면 위젯 전체가 숨는다.
+ * 화면 위쪽의 서버 맥박: 달리는 자칼(원본·이전 서버 중 더 바쁜 쪽의 CPU가 높을수록 빠르다) ·
+ * 원본 서버 → 이전 서버의 CPU와 메모리 · 최근 5분 오류 수.
+ * 각 서버가 보낸 실제 값만 보여 주고, 값을 받지 못한 쪽은 —로 둔다. 맥박을 아예 못 받으면 위젯 전체가 숨는다.
  */
 export default function PulseWidget() {
   const { t } = useI18n()
@@ -56,18 +68,20 @@ export default function PulseWidget() {
   }, [])
 
   if (!pulse) return null
-  const run = runSeconds(pulse.cpu_percent)
+  const run = runSeconds(busiestCpu(pulse))
   const level = pulseLevel(pulse)
-  const cpu = pulse.cpu_percent === null ? '—' : Math.round(pulse.cpu_percent) + '%'
-  const mem = pulse.mem_percent === null ? '—' : Math.round(pulse.mem_percent) + '%'
   const errors = pulse.errors_5m === null ? '—' : String(pulse.errors_5m)
-  const detail = t('pulse.detail' as MsgKey, { cpu, mem, errors, minutes: Math.round(pulse.window_seconds / 60) })
+  const detail = t('pulse.detail' as MsgKey, {
+    sCpu: pct(pulse.source?.cpu_percent), sMem: pct(pulse.source?.mem_percent),
+    tCpu: pct(pulse.target?.cpu_percent), tMem: pct(pulse.target?.mem_percent),
+    errors, minutes: Math.round(pulse.window_seconds / 60),
+  })
   const style = { '--run': run + 's' } as CSSProperties
   return <div className={'pulse is-' + level + (run === 0 ? ' is-idle' : '')} style={style} role="status" aria-label={detail} title={detail}>
     <RunningJackal />
-    <span className="pulse-cpu" aria-hidden="true"><small>{t('pulse.cpu' as MsgKey)}</small>{cpu}</span>
-    <span className="pulse-mem" aria-hidden="true"><small>{t('pulse.mem' as MsgKey)}</small>
-      <i><b style={{ width: (pulse.mem_percent ?? 0) + '%' }} /></i></span>
+    <ServerBox label={t('pulse.source' as MsgKey)} side={pulse.source} />
+    <span className="pulse-arrow" aria-hidden="true">→</span>
+    <ServerBox label={t('pulse.target' as MsgKey)} side={pulse.target} />
     <span className="pulse-err" aria-hidden="true"><small>{t('pulse.err' as MsgKey)}</small>{errors}</span>
   </div>
 }
