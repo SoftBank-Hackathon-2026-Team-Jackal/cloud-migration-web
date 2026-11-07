@@ -27,14 +27,16 @@ export function sandboxScenario(): SandboxScenario {
 }
 
 /**
- * 시연용 ?redteam=…: 샌드박스 테스트가 통과한 뒤 레드팀 점검(승인 → 공격 → 보안 수정)이 나온다. 목업에서만 동작한다.
+ * 시연용 ?redteam=…: 샌드박스 테스트가 통과한 뒤 레드팀 점검(공격 → 보안 수정 → 다시 확인)이 이어진다. 목업에서만 동작한다.
+ * 동의는 이전을 시작할 때 한 번만 받으므로 중간 승인은 없다.
  *  1 약점 3개를 찾아 보안 수정 2회로 모두 고친다 · clean 약점이 없다 · open 보안 수정을 3회 해도 하나가 남는다
+ *  skip 동의·실행기가 없어 공격 없이 건너뛴다
  */
-export type RedTeamDemo = 'fix' | 'clean' | 'open'
+export type RedTeamDemo = 'fix' | 'clean' | 'open' | 'skip'
 export function redteamDemo(): RedTeamDemo | null {
   if (typeof window === 'undefined') return null
   const value = new URLSearchParams(window.location.search).get('redteam')
-  return value === '1' ? 'fix' : value === 'clean' || value === 'open' ? value : null
+  return value === '1' ? 'fix' : value === 'clean' || value === 'open' || value === 'skip' ? value : null
 }
 
 /** 시연용 ?review=1: 샌드박스 루프가 3회 실패해 사람 검토 대기 화면이 나온다. */

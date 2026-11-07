@@ -1,24 +1,24 @@
 /**
  * 레드팀(샌드박스 능동 공격 검증) 목업 대본. 백엔드에는 아직 화면용 이벤트가 없어서([가정]) 이 모양으로 먼저 만들었다.
- * 실제 연결 후에는 워크플로 Query `redteam_state`와 실행 결과 `redteam`이 같은 모양의 `sandbox.redteam` 이벤트로 온다.
- * 흐름: 승인 대기 → (승인) 공격 중 → 약점 발견 → 보안 수정 → 다시 확인 → 끝. 거절하면 바로 건너뜀으로 끝난다.
- * 약점은 지어낸 예시이고 목업 모드에서만 나온다(?redteam=1).
+ * 동의는 이전을 시작할 때 한 번만 받는다(승철님 결정: 중간 승인 폐지). 그래서 샌드박스 테스트가 통과하면 곧바로
+ * 공격 중 → 약점 발견 → 보안 수정 → 다시 확인 → 끝으로 흐르고, 화면은 "동의한 범위"만 보여 준다.
+ * 실제 연결 후에는 같은 모양의 `sandbox.redteam` 이벤트가 온다. 약점은 지어낸 예시이고 목업 모드에서만 나온다(?redteam=1).
  */
-import type { DraftEvent, RedTeamData, RedTeamFinding, RedTeamRequest } from './events.ts'
+import type { DraftEvent, RedTeamConsent, RedTeamData, RedTeamFinding } from './events.ts'
 
-export type RedTeamScenario = 'fix' | 'clean' | 'open'
+export type RedTeamScenario = 'fix' | 'clean' | 'open' | 'skip'
 export type TimedRedTeamDraft = { after: number; event: DraftEvent }
 
 export const REDTEAM_MAX_ROUNDS = 3
 
-export const REDTEAM_REQUEST: RedTeamRequest = {
+/** 이전을 시작할 때 동의한 범위(값·비밀 없이 사실과 이름만). */
+export const REDTEAM_CONSENT: RedTeamConsent = {
   target: 'cmp-sbx-7f3a91',
   scope: 'this Sandbox copy of the application only',
   intensity: 'ACTIVE',
   time_budget_seconds: 300,
   test_data_is_reset_afterwards: true,
   outside_calls_are_cut_meanwhile: true,
-  wait_seconds: 600,
 }
 
 const XSS: RedTeamFinding = {
@@ -38,28 +38,24 @@ const STATS: RedTeamFinding = {
 }
 
 const base = (extra: Partial<RedTeamData>): RedTeamData => ({
-  phase: 'RUNNING', request: REDTEAM_REQUEST, round: 0, max_rounds: REDTEAM_MAX_ROUNDS, findings: [], status: null, code: null, withheld: 0, ...extra,
+  phase: 'RUNNING', consent: REDTEAM_CONSENT, round: 0, max_rounds: REDTEAM_MAX_ROUNDS, findings: [], status: null, code: null, withheld: 0, ...extra,
 })
 
 const draft = (data: RedTeamData): DraftEvent => ({
-  type: 'sandbox.redteam', phase: 'build', status: data.phase === 'DONE' ? 'done' : data.phase === 'WAITING_FOR_APPROVAL' ? 'waiting' : 'running', data,
+  type: 'sandbox.redteam', phase: 'build', status: data.phase === 'DONE' ? 'done' : 'running', data,
 })
 
-/** 테스트가 통과한 샌드박스에서 공격 전에 사람의 승인을 기다린다. */
-export function redteamWaiting(): DraftEvent {
-  return draft(base({ phase: 'WAITING_FOR_APPROVAL' }))
+/** 동의가 없거나 실행기가 없는 환경: 공격 없이 사유만 남기고 끝낸다. 샌드박스는 그대로 통과로 끝난다. */
+function skipped(): TimedRedTeamDraft[] {
+  return [{ after: 0, event: draft(base({ phase: 'DONE', consent: null, status: 'SKIPPED', code: 'REDTEAM_NOT_CONFIGURED' })) }]
 }
 
-/** 거절(건너뛰기): 공격하지 않고 사유를 남기고 끝낸다. 샌드박스는 그대로 통과로 끝난다. */
-export function redteamDeclined(): TimedRedTeamDraft[] {
-  return [{ after: 0, event: draft(base({ phase: 'DONE', status: 'SKIPPED', code: 'REDTEAM_DECLINED' })) }]
-}
-
-/** 승인 뒤: 공격 중 → 약점 발견 → 보안 수정 → 다시 확인. 시각은 승인한 순간부터의 밀리초. */
+/** 테스트가 통과한 직후부터: 공격 중 → 약점 발견 → 보안 수정 → 다시 확인. 시각은 시작한 순간부터의 밀리초. */
 export function redteamRun(scenario: RedTeamScenario): TimedRedTeamDraft[] {
   const open = (items: RedTeamFinding[]) => items.map(item => ({ ...item, state: 'OPEN' as const }))
   const fixed = (items: RedTeamFinding[]) => items.map(item => ({ ...item, state: 'FIXED' as const }))
   const all = [XSS, RATE, STATS]
+  if (scenario === 'skip') return skipped()
   if (scenario === 'clean') {
     return [
       { after: 0, event: draft(base({ phase: 'RUNNING' })) },

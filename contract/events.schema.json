@@ -5218,20 +5218,19 @@
         "data"
       ],
       "additionalProperties": false,
-      "description": "[가정: 이벤트 계약 없음] 샌드박스 레드팀(능동 공격 검증) 진행. 워크플로 Query redteam_state(승인 대기 내용)와 실행 결과 redteam을 화면용으로 묶은 모양이다(ADR-008). 승철님 이벤트 계약이 정해지면 맞춘다."
+      "description": "[가정: 이벤트 계약 없음] 샌드박스 레드팀(능동 공격 검증) 진행. 동의는 이전 시작 때 한 번 받고 중간 승인은 없다(승철님 결정). 시험 통과 직후 공격 → 보안 수정 → 다시 확인 → 끝. 승철님 이벤트 계약이 정해지면 맞춘다."
     },
     "data:sandbox.redteam": {
       "type": "object",
       "properties": {
         "phase": {
           "enum": [
-            "WAITING_FOR_APPROVAL",
             "RUNNING",
             "FIXING",
             "DONE"
           ]
         },
-        "request": {
+        "consent": {
           "oneOf": [
             {
               "type": "object",
@@ -5257,11 +5256,6 @@
                 },
                 "outside_calls_are_cut_meanwhile": {
                   "type": "boolean"
-                },
-                "wait_seconds": {
-                  "type": "integer",
-                  "minimum": 0,
-                  "description": "[가정] 이 시간 안에 답이 없으면 공격 없이 건너뛴다"
                 }
               },
               "required": [
@@ -5270,15 +5264,15 @@
                 "intensity",
                 "time_budget_seconds",
                 "test_data_is_reset_afterwards",
-                "outside_calls_are_cut_meanwhile",
-                "wait_seconds"
+                "outside_calls_are_cut_meanwhile"
               ],
               "additionalProperties": false
             },
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "[가정] 이전을 시작할 때 동의한 범위. 동의 없이 건너뛴 실행은 null"
         },
         "round": {
           "type": "integer",
@@ -5364,7 +5358,7 @@
       },
       "required": [
         "phase",
-        "request",
+        "consent",
         "round",
         "max_rounds",
         "findings",

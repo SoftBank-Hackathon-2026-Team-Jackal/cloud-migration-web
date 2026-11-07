@@ -6,7 +6,7 @@ import { DATA_LSN_TICK_MS, DATA_TABLES, dataTickAt, dataTimeline } from './dataS
 import { cutoverPlan, cutoverRun } from './cutoverScript'
 import { TrafficSim } from './trafficSim'
 import { aiFixCount, analysisItemsDemo, cutoverScenario, deliveryFailDemo, digestMismatchDemo, preflightScenario, redteamDemo, reviewDemo, sandboxScenario, mockSpeed, stabilizeDemoSeconds, manualStepsDemo } from '../demoConfig'
-import { REDTEAM_TAIL_GAP_MS, redteamDeclined, redteamRun, redteamWaiting } from './redteamScript'
+import { REDTEAM_TAIL_GAP_MS, redteamRun } from './redteamScript'
 
 /**
  * 백엔드 없이 지금까지와 똑같이 움직이게 하는 공급자. 단계 화면이 준비되면 그 단계의 대본(script.ts)을
@@ -24,9 +24,6 @@ export class MockProvider implements MigrationProvider {
   private reviewPending = reviewDemo()
   private retried = false
   private buildPlay: (() => void) | null = null
-  /** ?redteam: 사람이 승인·거절할 때까지 붙잡아 둔 샌드박스 완료 이벤트(레드팀이 끝난 뒤에 나간다) */
-  private redteamTail: TimedDraft[] | null = null
-  private redteamPlay: (() => void) | null = null
   private traffic: TrafficSim | null = null
   private cutoverCancel: (() => void) | null = null
   private cutoverAttempt = 0
@@ -57,33 +54,22 @@ export class MockProvider implements MigrationProvider {
   }
 
   /**
-   * ?redteam이 켜져 있고 샌드박스가 통과하는 시나리오면, 완료(sandbox.done)를 뒤로 미루고 그 자리에 레드팀 승인 대기를 넣는다.
-   * 사람이 승인·거절하면 레드팀 대본이 흐르고, 끝난 뒤에 완료 이벤트가 나간다(백엔드와 같은 순서: 시험 통과 → 승인 → 공격 → 정리).
+   * ?redteam이 켜져 있고 샌드박스가 통과하는 시나리오면, 테스트가 끝난 직후에 레드팀 점검을 끼우고 완료(sandbox.done)를 그 뒤로 미룬다.
+   * 동의는 이전을 시작할 때 한 번 받았다고 보고 중간 승인은 없다(백엔드와 같은 순서: 시험 통과 → 공격 → 보안 수정 → 정리).
    */
   private withRedteam(items: TimedDraft[]): TimedDraft[] {
-    this.redteamTail = null
-    if (!redteamDemo()) return items
+    const scenario = redteamDemo()
+    if (!scenario) return items
     const done = items.filter(item => item.event.type === 'sandbox.done')
     const passes = done.some(item => item.event.type === 'sandbox.done' && item.event.data.status === 'PASSED')
     if (!passes) return items
     const rest = items.filter(item => item.event.type !== 'sandbox.done')
-    const last = Math.max(0, ...rest.map(item => item.after))
+    const start = Math.max(0, ...rest.map(item => item.after)) + 500
+    const run = redteamRun(scenario).map(item => ({ ...item, after: item.after + start }))
+    const end = Math.max(...run.map(item => item.after)) + REDTEAM_TAIL_GAP_MS
     const first = Math.min(...done.map(item => item.after))
-    this.redteamTail = done.map(item => ({ ...item, after: item.after - first }))
-    return [...rest, { after: last + 500, event: redteamWaiting() }]
+    return [...rest, ...run, ...done.map(item => ({ ...item, after: item.after - first + end }))]
   }
-
-  private runRedteam(items: TimedDraft[]) {
-    const tail = this.redteamTail
-    if (!tail) return
-    this.redteamTail = null
-    const end = Math.max(0, ...items.map(item => item.after)) + REDTEAM_TAIL_GAP_MS
-    this.redteamPlay?.()
-    this.redteamPlay = this.play([...items, ...tail.map(item => ({ ...item, after: item.after + end }))])
-  }
-
-  approveRedteam() { this.runRedteam(redteamRun(redteamDemo() ?? 'fix')) }
-  declineRedteam() { this.runRedteam(redteamDeclined()) }
 
   start(request: StartRequest) {
     this.target = targetOfRequest(request)
@@ -110,7 +96,7 @@ export class MockProvider implements MigrationProvider {
         break
       case 'build':
         this.buildPlay = this.play(this.withRedteam(this.scripted('build')))
-        stop = () => { this.buildPlay?.(); this.buildPlay = null; this.redteamPlay?.(); this.redteamPlay = null; this.redteamTail = null }
+        stop = () => { this.buildPlay?.(); this.buildPlay = null }
         break
       case 'planning':
       case 'provisioning':

@@ -1,6 +1,5 @@
 'use client'
 
-import { useState } from 'react'
 import { useMigration } from '../lib/migration/MigrationProvider'
 import type { RedTeamData, RedTeamFinding } from '../lib/migration/events'
 import { useT, type MsgKey } from '../lib/i18n'
@@ -10,29 +9,28 @@ const bySeverity = (a: RedTeamFinding, b: RedTeamFinding) => SEVERITY_ORDER.inde
 
 /** 건너뜀 사유 코드(워커 `redteam_stage` 코드)를 화면 문구 키로. 모르는 코드는 일반 문구. */
 const SKIP_KEYS: Record<string, MsgKey> = {
-  REDTEAM_DECLINED: 'rt.skip.declined',
-  REDTEAM_APPROVAL_TIMEOUT: 'rt.skip.timeout',
   REDTEAM_NOT_CONFIGURED: 'rt.skip.notConfigured',
   REDTEAM_TIME_INSUFFICIENT: 'rt.skip.time',
 } as unknown as Record<string, MsgKey>
 
-function Request({ data }: { data: RedTeamData }) {
+/** 이전을 시작할 때 동의한 범위. 중간에 다시 묻지 않으므로 어디까지 동의했는지를 접어서 보여 준다. */
+function Consent({ data }: { data: RedTeamData }) {
   const t = useT()
-  const request = data.request
-  if (!request) return null
-  const minutes = Math.max(1, Math.round(request.wait_seconds / 60))
+  const consent = data.consent
+  if (!consent) return null
   const rows: Array<[MsgKey, string]> = [
-    ['rt.req.target', request.target],
+    ['rt.req.target', consent.target],
     ['rt.req.scope', t('rt.req.scopeValue')],
-    ['rt.req.intensity', t(('rt.intensity.' + request.intensity) as MsgKey)],
-    ['rt.req.budget', t('rt.req.budgetValue', { min: Math.round(request.time_budget_seconds / 60) })],
-    ['rt.req.reset', t(request.test_data_is_reset_afterwards ? 'rt.req.resetYes' : 'rt.req.resetNo')],
-    ['rt.req.egress', t(request.outside_calls_are_cut_meanwhile ? 'rt.req.egressCut' : 'rt.req.egressOpen')],
+    ['rt.req.intensity', t(('rt.intensity.' + consent.intensity) as MsgKey)],
+    ['rt.req.budget', t('rt.req.budgetValue', { min: Math.round(consent.time_budget_seconds / 60) })],
+    ['rt.req.reset', t(consent.test_data_is_reset_afterwards ? 'rt.req.resetYes' : 'rt.req.resetNo')],
+    ['rt.req.egress', t(consent.outside_calls_are_cut_meanwhile ? 'rt.req.egressCut' : 'rt.req.egressOpen')],
   ]
-  return <>
+  return <details className="rt-consent">
+    <summary>{t('rt.consent.title')}</summary>
     <dl className="rt-facts">{rows.map(([key, value]) => <div key={key}><dt>{t(key)}</dt><dd>{value}</dd></div>)}</dl>
-    <p className="rt-note">{t('rt.wait', { min: minutes })}</p>
-  </>
+    <p className="rt-note">{t('rt.consent.note')}</p>
+  </details>
 }
 
 function Findings({ data }: { data: RedTeamData }) {
@@ -63,38 +61,22 @@ function Outcome({ data }: { data: RedTeamData }) {
 }
 
 /**
- * 샌드박스 화면의 레드팀 점검: 승인 대기 → 점검 중 → 보안 수정 → 결과.
- * 약점이 남아도 이전은 막지 않고 표시·기록만 한다(ADR-008 R3). 승인은 이번 실행에만 쓰인다(R8).
+ * 샌드박스 화면의 레드팀 점검: 점검 중 → 보안 수정 → 결과.
+ * 동의는 이전을 시작할 때 한 번만 받고 중간에 다시 묻지 않는다(승철님 결정). 약점이 남아도 이전은 막지 않고 표시·기록만 한다(ADR-008 R3).
  */
 export default function RedTeamPanel() {
   const t = useT()
-  const { state, provider, can } = useMigration()
+  const { state } = useMigration()
   const data = state.sandbox.redteam
-  const [sent, setSent] = useState<'approve' | 'decline' | null>(null)
   if (!data) return null
-  const waiting = data.phase === 'WAITING_FOR_APPROVAL'
-  const act = (kind: 'approve' | 'decline') => {
-    if (sent) return
-    setSent(kind)
-    if (kind === 'approve') provider.approveRedteam()
-    else provider.declineRedteam()
-  }
   return <section className={'rt is-' + data.phase.toLowerCase()} aria-label={t('rt.aria')}>
     <header className="rt-head">
       <small>RED TEAM · SANDBOX</small>
       <strong>{t('rt.title')}</strong>
       <span className="rt-phase">{t(('rt.phase.' + data.phase) as MsgKey, { n: data.round, max: data.max_rounds })}</span>
     </header>
-    {waiting && <>
-      <p className="rt-lead">{t('rt.lead')}</p>
-      <Request data={data} />
-      {can('redteam')
-        ? <div className="rt-actions">
-            <button type="button" className="flow-primary" disabled={sent !== null} onClick={() => act('approve')}>{t('rt.approve')} <span aria-hidden="true">→</span></button>
-            <button type="button" className="flow-secondary" disabled={sent !== null} onClick={() => act('decline')}>{t('rt.decline')}</button>
-          </div>
-        : <p className="rt-note">{t('rt.noApi')}</p>}
-    </>}
+    {data.phase !== 'DONE' && <p className="rt-lead">{t('rt.lead')}</p>}
+    <Consent data={data} />
     {(data.phase === 'RUNNING' || data.phase === 'FIXING') && <p className="rt-doing"><span aria-hidden="true" />{t(data.phase === 'RUNNING' ? 'rt.doing.running' : 'rt.doing.fixing', { n: data.round, max: data.max_rounds })}</p>}
     <Findings data={data} />
     {data.phase === 'DONE' && <Outcome data={data} />}

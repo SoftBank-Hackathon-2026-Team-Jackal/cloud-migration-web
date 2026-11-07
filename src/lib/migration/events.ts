@@ -621,29 +621,28 @@ export type SnapshotData = {
 }
 
 /**
- * [가정: 백엔드 계약 없음] 샌드박스 레드팀(능동 공격 검증). 워크플로 Query `redteam_state`(승인 대기 내용)와 실행 결과 `redteam`을
+ * [가정: 백엔드 계약 없음] 샌드박스 레드팀(능동 공격 검증). 시작할 때 받은 동의 범위와 실행 결과 `redteam`을
  * 화면용으로 묶은 모양이다. 실제 연결 때 이벤트 계약(승철님 ADR-008)에 맞춰 바뀔 수 있다.
  */
 export type RedTeamIntensity = 'PASSIVE' | 'ACTIVE'
 export type RedTeamSeverity = 'INFO' | 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
 export type RedTeamFindingState = 'OPEN' | 'FIXED' | 'STILL_OPEN'
 export type RedTeamFinding = { id: string; category: string; severity: RedTeamSeverity; endpoint: string; summary: string; repro_summary: string; state: RedTeamFindingState }
-/** 승인 화면에 보일 내용(값·비밀 없이 사실과 이름만). 백엔드 `approval_request`와 같은 필드. */
-export type RedTeamRequest = {
+/** 이전을 시작할 때 동의한 범위(값·비밀 없이 사실과 이름만). 중간에 다시 묻지 않는다. */
+export type RedTeamConsent = {
   target: string
   scope: string
   intensity: RedTeamIntensity
   time_budget_seconds: number
   test_data_is_reset_afterwards: boolean
   outside_calls_are_cut_meanwhile: boolean
-  /** 이 시간 안에 답이 없으면 공격 없이 건너뛴다 */
-  wait_seconds: number
 }
-export type RedTeamPhase = 'WAITING_FOR_APPROVAL' | 'RUNNING' | 'FIXING' | 'DONE'
+export type RedTeamPhase = 'RUNNING' | 'FIXING' | 'DONE'
 export type RedTeamStatus = 'CLEAN' | 'FIXED' | 'OPEN' | 'STILL_OPEN' | 'SKIPPED' | 'ERROR'
 export type RedTeamData = {
   phase: RedTeamPhase
-  request: RedTeamRequest | null
+  /** 동의한 범위. 동의 없이 건너뛴 실행은 null */
+  consent: RedTeamConsent | null
   /** 보안 수정 회차(기능 수정 횟수와 따로 센다) */
   round: number
   max_rounds: number
