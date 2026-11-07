@@ -3,11 +3,12 @@
 /**
  * 브라우저 쪽 TTS: /api/tts(Supertonic 3)에서 WAV를 받아 object URL로 돌려준다.
  * - 같은 문장은 한 번만 받는다(메모리 캐시, 미리 받기).
- * - 서버에 모델이 없거나(503) 실패하면 잠시(30초) 서버를 부르지 않는다: 그동안은 녹음 파일·브라우저 합성으로 읽는다.
+ * - 서버에 모델이 없으면(503) 잠시(30초) 서버를 부르지 않는다: 그동안은 녹음 파일이 있는 문장만 소리 내고 나머지는 글자로만 보인다.
+ * - 처음 듣는 긴 답변은 CPU 합성에 시간이 걸리므로 넉넉히(30초) 기다리고, 시간 초과·연결 오류는 한 번 더 받아 본다.
  */
 export type TtsLang = 'ko' | 'en' | 'ja'
 export const TTS_VOICE = 'M1'
-const TIMEOUT_MS = 9000
+const TIMEOUT_MS = 30000
 const DOWN_MS = 30000
 const LIMIT = 80
 
@@ -28,12 +29,12 @@ export function ttsAudio(text: string, lang: TtsLang): Promise<string | null> {
   const key = keyOf(clean, lang)
   const hit = cache.get(key)
   if (hit) return hit
-  const job = fetch(ttsUrlFor(clean, lang), { signal: AbortSignal.timeout(TIMEOUT_MS) })
+  const fetchOnce = () => fetch(ttsUrlFor(clean, lang), { signal: AbortSignal.timeout(TIMEOUT_MS) })
     .then(async response => {
       if (!response.ok) { if (response.status === 503) downUntil = Date.now() + DOWN_MS; return null }
       return URL.createObjectURL(await response.blob())
     })
-    .catch(() => null)
+  const job = fetchOnce().catch(() => fetchOnce()).catch(() => null)
   cache.set(key, job)
   // 실패한 문장은 다음에 다시 받아 본다.
   void job.then(url => { if (!url) cache.delete(key) })

@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import voiceClips from './voiceClips.json'
 import { RECORDED_CLIPS } from './voiceRecorded'
 import { ttsAudio, warmTts } from './voice/ttsClient'
-import { spokenText } from './tts/pronounce'
 import { voiceText } from './voice/messages'
 import { parseWake } from './voice/wake'
 
@@ -215,7 +214,6 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', recog
 
   const stopAudio = useCallback(() => {
     window.cancelAnimationFrame(frameRef.current)
-    if (finishRef.current && typeof window !== 'undefined') window.speechSynthesis?.cancel()
     voiceActive.current = false
     voiceLevel.current = 0
     if (audioRef.current) {
@@ -228,42 +226,6 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', recog
     speakingRef.current = false
     setSpeaking(false)
   }, [])
-
-  // 녹음 파일이 없는 문구(대상·개수가 들어가는 문장, 다른 언어)는 브라우저 음성 합성으로 읽는다.
-  // 합성 음성은 분석기에 연결할 수 없어서, 말하는 동안 구체가 숨 쉬듯 움직이도록 음량을 흉내 낸다.
-  const synthesize = useCallback((text: string, language: 'ko' | 'en' | 'ja', options?: { ripple?: boolean; onEnd?: () => void }) => {
-    const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined
-    if (!synth) { options?.onEnd?.(); window.setTimeout(listen, 150); return }
-    synth.cancel()
-    const utterance = new SpeechSynthesisUtterance(spokenText(text, language))
-    utterance.lang = { ko: 'ko-KR', en: 'en-US', ja: 'ja-JP' }[language]
-    speakingRef.current = true
-    setSpeaking(true)
-    voiceActive.current = Boolean(options?.ripple)
-    const startedAt = performance.now()
-    const pulse = () => {
-      const time = (performance.now() - startedAt) / 1000
-      voiceLevel.current += ((.32 + .22 * Math.abs(Math.sin(time * 7.3)) * Math.abs(Math.sin(time * 2.1))) - voiceLevel.current) * .25
-      frameRef.current = window.requestAnimationFrame(pulse)
-    }
-    pulse()
-    let finished = false
-    const finish = () => {
-      // 다른 문구가 끼어들어 끊긴 경우(stopAudio가 바꿔 놓음)에는 이 문구의 onEnd를 부르지 않는다.
-      if (finished || finishRef.current !== finish) { finished = true; return }
-      finished = true
-      synth.cancel()
-      stopAudio()
-      options?.onEnd?.()
-      window.setTimeout(listen, 180)
-    }
-    finishRef.current = finish
-    utterance.onend = finish
-    utterance.onerror = finish
-    // 일부 브라우저는 합성 음성이 없으면 onend를 부르지 않는다: 글자 수로 넉넉히 잡은 시간 뒤에 끝낸다.
-    window.setTimeout(finish, 1500 + text.length * 140)
-    synth.speak(utterance)
-  }, [listen, stopAudio])
 
   /** 소리 파일 하나를 분석기에 연결해 재생한다(구체가 실제 음량에 반응한다). 재생할 수 없으면 onFail. */
   const playFile = useCallback(function play(src: string, token: number, options: { ripple?: boolean; onEnd?: () => void } | undefined, onFail: () => void, retries = 1): void {
@@ -316,8 +278,9 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', recog
   }, [listen, stopAudio])
 
   /**
-   * 자칼의 목소리 하나로 읽는다: 서버 TTS(Supertonic 3, /api/tts) → (서버를 못 쓰면) 같은 목소리로 미리 녹음한 파일 →
-   * (그것도 없으면) 마지막으로 브라우저 음성 합성. 서버 음성과 녹음 파일은 분석기에 연결돼 구체가 실제 음량에 반응한다.
+   * 자칼의 목소리 하나(Supertonic 3)로만 읽는다: 서버 TTS(/api/tts) → (서버를 못 쓰면) 같은 목소리로 미리 녹음한 파일 →
+   * (그것도 없으면) 소리 없이 글자만 보인다. 브라우저 음성 합성은 목소리가 달라져서 쓰지 않는다.
+   * 서버 음성과 녹음 파일은 분석기에 연결돼 구체가 실제 음량에 반응한다.
    */
   const utter = useCallback((text: string, language: 'ko' | 'en' | 'ja', options?: { ripple?: boolean; onEnd?: () => void }) => {
     stopListening()
@@ -344,15 +307,21 @@ export function useVoiceGuide({ started, active, ask = false, lang = 'ko', recog
     // 문장의 글자로 언어를 고른다(한국어 안내를 영어 화면에서 읽을 때 등). 
     language = scriptLang(text, language)
     const clip = language === 'ko' ? clipByText.get(text) : undefined
-    const viaSynth = () => { if (token === utterToken.current) synthesize(text, language, options) }
-    const viaClip = clip ? () => playFile(`/voice/${clip}.mp3`, token, options, viaSynth) : viaSynth
+    const silent = () => {
+      if (token !== utterToken.current) return
+      console.warn('[tts] Supertonic 음성을 받지 못해 글자로만 보여 줍니다:', text)
+      stopAudio()
+      options?.onEnd?.()
+      window.setTimeout(listen, 150)
+    }
+    const viaClip = clip ? () => playFile(`/voice/${clip}.mp3`, token, options, silent) : silent
     void ttsAudio(text, language).then(url => {
       if (!waiting || token !== utterToken.current) return
       waiting = false
       if (url) playFile(url, token, options, viaClip)
       else viaClip()
     })
-  }, [armAudio, listen, playFile, stopAudio, stopListening, synthesize])
+  }, [armAudio, listen, playFile, stopAudio, stopListening])
 
   const speak = useCallback((text: string, options?: { ripple?: boolean; onEnd?: () => void; lang?: 'ko' | 'en' | 'ja'; caption?: string }) => {
     setMessage(text)

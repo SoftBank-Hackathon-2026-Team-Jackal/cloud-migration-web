@@ -6,7 +6,7 @@
 #   docker run --rm -p 3000:3000 --env-file .env -v jackal-models:/models jackal-web
 #
 # 음성 모델(약 400MB)은 이미지에 넣지 않는다: 처음 한 번 `npm run tts:download`로 /models에 받는다
-# (SUPERTONIC_DIR=/models/supertonic-3). 모델이 없으면 /api/tts가 503을 돌려주고 화면은 브라우저 음성으로 읽는다.
+# (SUPERTONIC_DIR=/models/supertonic-3). 모델이 없으면 /api/tts가 503을 돌려주고 화면은 미리 녹음한 문장만 소리 내고 나머지는 글자로만 보인다(브라우저 음성은 쓰지 않는다).
 
 FROM node:22-slim AS deps
 WORKDIR /app

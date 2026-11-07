@@ -19,7 +19,7 @@ Chrome 계열 브라우저에서 처음 한 번 `마이크 켜기`를 누르고 
 
 ### 자칼의 목소리(한 목소리, 서버 TTS)
 
-모든 말(고정 안내·이벤트 보고·명령 응답·에이전트 답변, ko·en·ja)은 웹 서버의 `/api/tts`가 [Supertonic 3](https://huggingface.co/supertone-oss-archive/supertonic-3)(로컬 ONNX, `onnxruntime-node`)으로 합성한 WAV로 읽습니다. 목소리는 예전 녹음 파일과 같은 `M1`·8단계·속도 1.0입니다. 소리를 분석기에 연결하므로 모든 문장에서 구체가 실제 음량에 반응합니다. 서버를 못 쓰면(모델 없음·오류) 같은 목소리의 녹음 파일(`public/voice/*.mp3`, 고정 문구만) → 마지막으로 브라우저 음성 합성 순서로 대신합니다.
+모든 말(고정 안내·이벤트 보고·명령 응답·에이전트 답변, ko·en·ja)은 웹 서버의 `/api/tts`가 [Supertonic 3](https://huggingface.co/supertone-oss-archive/supertonic-3)(로컬 ONNX, `onnxruntime-node`)으로 합성한 WAV로 읽습니다. 목소리는 예전 녹음 파일과 같은 `M1`·8단계·속도 1.0입니다. 소리를 분석기에 연결하므로 모든 문장에서 구체가 실제 음량에 반응합니다. 서버를 못 쓰면(모델 없음·오류) 같은 목소리의 녹음 파일(`public/voice/*.mp3`, 고정 문구만) 순서로 대신하고, 둘 다 없으면 소리 없이 글자만 보입니다. 브라우저 음성 합성은 목소리가 달라서 쓰지 않습니다. 처음 듣는 긴 답변은 합성을 30초까지 기다리고, 시간 초과·연결 오류는 한 번 더 받아 봅니다.
 
 ```bash
 npm run tts:download   # 모델 약 400MB → ~/.cache/supertonic-3 (SUPERTONIC_DIR로 바꿈). 저장소에는 올리지 않음
@@ -74,7 +74,7 @@ docker run -d --name jackal-web -p 3000:3000 --env-file .env -v jackal-models:/m
 ```
 
 - `AUTH_*`, `PLATFORM_*`, `GEMINI_API_KEY` 같은 서버용 값은 실행할 때(`--env-file`) 넣습니다. 이미지에는 비밀값을 넣지 않습니다.
-- 음성 모델(약 400MB)은 이미지에 없습니다. 처음 한 번 `docker exec jackal-web npm run tts:download`로 `/models`에 받습니다. 없으면 `/api/tts`가 503을 돌려주고 화면은 브라우저 음성으로 읽습니다.
+- 음성 모델(약 400MB)은 이미지에 없습니다. 처음 한 번 `docker exec jackal-web npm run tts:download`로 `/models`에 받습니다. 없으면 `/api/tts`가 503을 돌려주고, 미리 녹음한 문장만 소리가 나며 나머지(에이전트 답변 등)는 글자로만 보입니다. 브라우저 음성 합성은 목소리가 달라서 쓰지 않습니다.
 - 컨테이너는 `node` 사용자(uid 1000)로 돌고, 상태 확인(`HEALTHCHECK`)이 `/`를 봅니다.
 
 ## GitHub 로그인과 저장소 선택
