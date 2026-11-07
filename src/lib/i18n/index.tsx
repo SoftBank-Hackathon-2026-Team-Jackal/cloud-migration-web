@@ -29,6 +29,15 @@ const I18nContext = createContext<Ctx>({
   tOr: (key, fallback = '', params) => format(lookup(ko, key) ?? fallback, params),
 })
 
+/**
+ * 플랫폼 실제 순서(데이터 → DB 전환 → 트래픽 → 완료)에서 다음 단계를 말하는 문구: dbFirst면 "<키>.dbFirst"가 있을 때 그 키.
+ * 옛 순서(목업)는 원래 키 그대로.
+ */
+export function orderKey(key: MsgKey, dbFirst: boolean): MsgKey {
+  const variant = key + '.dbFirst'
+  return dbFirst && variant in ko ? variant as MsgKey : key
+}
+
 export function isLang(value: unknown): value is Lang {
   return value === 'ko' || value === 'en' || value === 'ja'
 }
