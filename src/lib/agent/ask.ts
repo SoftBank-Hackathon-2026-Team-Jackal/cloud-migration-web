@@ -1,9 +1,11 @@
 import { factsToText, type AgentFacts } from './context'
 import { answerLocally, type AgentLang } from './mock'
+import { parseReasoning, parseSkills, type StatusStep, type Thought } from './platform.ts'
 import { readSse } from './sse.ts'
 
 /** caption: 화면 언어 자막(음성 언어와 화면 언어가 다를 때만). */
-export type AgentAnswer = { answer: string; source: 'model' | 'local'; caption?: string }
+/** reasoning·skills: 플랫폼 판단 루프가 답했을 때만(화면에 근거로 보인다. 소리로는 읽지 않는다). */
+export type AgentAnswer = { answer: string; source: 'model' | 'local'; caption?: string; reasoning?: Thought[]; skills?: string[] }
 
 // 서버(모델) 제한 시간보다 조금 길게 둔다.
 const REQUEST_TIMEOUT_MS = 50000
@@ -14,7 +16,7 @@ const REQUEST_TIMEOUT_MS = 50000
  * captionLang(화면 언어)이 lang(음성 언어)과 다르면 화면 언어 자막도 받는다. 모델 답은 서버가 옮기고,
  * 규칙 기반 답은 같은 규칙으로 화면 언어 문장을 한 번 더 만든다.
  */
-export async function askAgent(question: string, facts: AgentFacts, lang: AgentLang, captionLang?: AgentLang, onStatus?: (step: string) => void): Promise<AgentAnswer> {
+export async function askAgent(question: string, facts: AgentFacts, lang: AgentLang, captionLang?: AgentLang, onStatus?: (status: StatusStep) => void): Promise<AgentAnswer> {
   const wantCaption = captionLang && captionLang !== lang ? captionLang : undefined
   try {
     const response = await fetch('/api/agent', {
@@ -25,17 +27,21 @@ export async function askAgent(question: string, facts: AgentFacts, lang: AgentL
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
     if (response.ok) {
-      let data: { answer?: string | null; caption?: string | null } = {}
+      let data: { answer?: string | null; caption?: string | null; reasoning?: unknown; skills?: unknown } = {}
       if ((response.headers.get('content-type') ?? '').includes('text/event-stream') && response.body) {
         await readSse(response.body, ({ event, data: payload }) => {
-          const body = (payload ?? {}) as { step?: unknown; answer?: unknown; caption?: unknown }
-          if (event === 'status' && typeof body.step === 'string') onStatus?.(body.step)
-          else if (event === 'answer') data = { answer: typeof body.answer === 'string' ? body.answer : null, caption: typeof body.caption === 'string' ? body.caption : null }
+          const body = (payload ?? {}) as { step?: unknown; answer?: unknown; caption?: unknown; reasoning?: unknown; skills?: unknown }
+          if (event === 'status' && typeof body.step === 'string') onStatus?.(body as StatusStep)
+          else if (event === 'answer') data = { answer: typeof body.answer === 'string' ? body.answer : null, caption: typeof body.caption === 'string' ? body.caption : null, reasoning: body.reasoning, skills: body.skills }
         })
       } else {
         data = await response.json() as typeof data
       }
-      if (data.answer) return { answer: data.answer, source: 'model', ...(wantCaption && data.caption ? { caption: data.caption } : {}) }
+      if (data.answer) {
+        const reasoning = parseReasoning(data.reasoning)
+        const skills = parseSkills(data.skills)
+        return { answer: data.answer, source: 'model', ...(wantCaption && data.caption ? { caption: data.caption } : {}), ...(reasoning.length ? { reasoning } : {}), ...(skills.length ? { skills } : {}) }
+      }
     }
   } catch { /* 네트워크 실패·시간 초과: 아래 규칙 기반 답으로 */ }
   return { answer: answerLocally(question, facts, lang), source: 'local', ...(wantCaption ? { caption: answerLocally(question, facts, wantCaption) } : {}) }

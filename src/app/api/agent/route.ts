@@ -6,13 +6,14 @@
  *   gemini-live: Gemini Live(웹소켓)로 묻고, 오디오는 버리고 "출력 전사"(말한 내용의 글)만 답으로 쓴다. 모델은 AGENT_MODEL(기본 gemini-3.8-live)
  * PLATFORM_AGENT_URL(예: http://api:8000)이 있으면 먼저 플랫폼 서버(POST /agent/ask, 비용 장부·긴급 중지 적용)에 묻고, 못 받으면 아래 직접 경로로 대신한다.
  * Accept: text/event-stream이면 진행 신호(status)와 함께 SSE로, 아니면 예전처럼 JSON 한 번으로 답한다.
+ * 플랫폼 판단 루프가 답하면 진행 신호에 skill·tool 단계(name 포함)가, 답에 reasoning(판단 근거)과 skills가 더 실린다.
  * 요청: { question, context, lang, captionLang? }. context는 화면이 만든 "현재 상태 요약"(비밀값 없음).
  * 자막: captionLang이 lang과 다르면(예: 음성 한국어, 화면 일본어) 답을 화면 언어로 한 번 더 옮겨 caption으로 돌려준다.
  *   번역은 같은 제공자의 일반(비 Live) 모델로 한다. gemini-live는 AGENT_CAPTION_MODEL(기본 gemini-2.5-flash)을 쓴다.
  *   번역이 실패하거나 AGENT_CAPTION_TIMEOUT_MS(기본 8000)를 넘으면 caption 없이 답만 돌려준다(답을 막지 않는다).
  */
 import { NextResponse } from 'next/server'
-import { askPlatform, type AgentInput } from '@/lib/agent/platform'
+import { askPlatform, type AgentInput, type StatusStep, type Thought } from '@/lib/agent/platform'
 import { sseBlock } from '@/lib/agent/sse'
 
 const MAX_QUESTION = 300
@@ -131,12 +132,12 @@ async function translateCaption(provider: string, answer: string, from: Lang, to
 }
 
 type Outcome =
-  | { kind: 'ok'; answer: string; caption?: string; provider: string }
+  | { kind: 'ok'; answer: string; caption?: string; provider: string; reasoning?: Thought[]; skills?: string[] }
   | { kind: 'none' }
   | { kind: 'failed'; provider: string; error: string; status: number }
 
 /** 예전 경로: 웹 서버가 제공자에게 직접 묻는다(플랫폼이 못 답할 때의 대비이기도 하다). */
-async function askDirect(question: string, context: string, lang: Lang, captionLang: Lang | null, onStatus: (step: string) => void): Promise<Outcome> {
+async function askDirect(question: string, context: string, lang: Lang, captionLang: Lang | null, onStatus: (status: StatusStep) => void): Promise<Outcome> {
   const provider = process.env.AGENT_PROVIDER || (process.env.ANTHROPIC_API_KEY ? 'anthropic' : process.env.GEMINI_API_KEY ? 'gemini' : 'none')
   if (provider !== 'anthropic' && provider !== 'gemini' && provider !== 'gemini-live') return { kind: 'none' }
   const user = `현재 상태:
@@ -145,11 +146,11 @@ ${context || '(없음)'}
 질문: ${question}`
   try {
     const system = systemPrompt(lang)
-    onStatus('asking_model')
+    onStatus({ step: 'asking_model' })
     const answer = provider === 'anthropic' ? await callAnthropic(system, user) : provider === 'gemini-live' ? await callGeminiLive(system, user) : await callGemini(system, user)
     if (!answer) return { kind: 'failed', provider, error: 'empty_answer', status: 200 }
     if (!captionLang || captionLang === lang) return { kind: 'ok', answer, provider }
-    onStatus('translating')
+    onStatus({ step: 'translating' })
     const caption = await translateCaption(provider, answer, lang, captionLang)
     return { kind: 'ok', answer, provider, ...(caption ? { caption } : {}) }
   } catch (error) {
@@ -159,20 +160,28 @@ ${context || '(없음)'}
 }
 
 /** 플랫폼 서버가 설정돼 있으면 먼저 거기에 묻고(비용 장부·긴급 중지 적용), 못 받으면 예전 경로로 대신한다. */
-async function answer(input: AgentInput, onStatus: (step: string) => void): Promise<Outcome> {
+async function answer(input: AgentInput, onStatus: (status: StatusStep) => void): Promise<Outcome> {
   const base = process.env.PLATFORM_AGENT_URL
   if (base) {
-    const result = await askPlatform(base, input, status => onStatus(status.step))
+    const result = await askPlatform(base, input, onStatus)
     if (result) return { kind: 'ok', ...result }
-    onStatus('fallback')
+    onStatus({ step: 'fallback' })
   }
   return askDirect(input.question, input.context, input.lang, input.captionLang, onStatus)
 }
 
+const answerBody = (outcome: Extract<Outcome, { kind: 'ok' }>) => ({
+  answer: outcome.answer,
+  provider: outcome.provider,
+  ...(outcome.caption ? { caption: outcome.caption } : {}),
+  ...(outcome.reasoning?.length ? { reasoning: outcome.reasoning } : {}),
+  ...(outcome.skills?.length ? { skills: outcome.skills } : {}),
+})
+
 const jsonOf = (outcome: Outcome) => {
   if (outcome.kind === 'none') return NextResponse.json({ answer: null, provider: 'none' })
   if (outcome.kind === 'failed') return NextResponse.json({ answer: null, provider: outcome.provider, error: outcome.error }, { status: outcome.status === 200 ? 200 : outcome.status })
-  return NextResponse.json({ answer: outcome.answer, provider: outcome.provider, ...(outcome.caption ? { caption: outcome.caption } : {}) })
+  return NextResponse.json(answerBody(outcome))
 }
 
 export async function POST(request: Request) {
@@ -193,8 +202,8 @@ export async function POST(request: Request) {
       const send = (event: string, payload: unknown) => controller.enqueue(encoder.encode(sseBlock(event, payload)))
       send('status', { step: 'reading_state' })
       try {
-        const outcome = await answer(input, step => send('status', { step }))
-        if (outcome.kind === 'ok') send('answer', { answer: outcome.answer, provider: outcome.provider, ...(outcome.caption ? { caption: outcome.caption } : {}) })
+        const outcome = await answer(input, status => send('status', status))
+        if (outcome.kind === 'ok') send('answer', answerBody(outcome))
         else send('answer', { answer: null, provider: outcome.kind === 'none' ? 'none' : outcome.provider })
       } finally {
         send('done', {})
