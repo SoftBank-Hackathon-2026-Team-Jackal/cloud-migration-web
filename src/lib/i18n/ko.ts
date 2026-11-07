@@ -402,6 +402,7 @@ export const ko = {
   "agent.voiceLang": "말하는 언어",
   "agent.inputLang": "알아듣는 언어",
   "agent.captions": "자막",
+  "agent.captionLang": "자막 언어",
   "agent.on": "켜짐",
   "agent.off": "꺼짐",
   "agent.status.idle": "대기",

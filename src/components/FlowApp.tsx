@@ -76,6 +76,8 @@ export default function FlowApp() {
   const [voiceChoice, setVoiceChoice] = useState<Lang | null>(null)
   // 알아듣는 언어(Chrome 음성 인식 언어): 따로 고르지 않으면 말하는 언어를 따른다.
   const [inputChoice, setInputChoice] = useState<Lang | null>(null)
+  // 자막 언어: 음성과 다르면 아래에 이 언어 문구를 같이 보인다. 따로 고르지 않으면 화면 언어를 따른다.
+  const [captionChoice, setCaptionChoice] = useState<Lang | null>(null)
   const [captionsOn, setCaptionsOn] = useState(true)
   useEffect(() => {
     try {
@@ -83,13 +85,17 @@ export default function FlowApp() {
       if (saved === 'ko' || saved === 'en' || saved === 'ja') setVoiceChoice(saved)
       const savedInput = window.localStorage.getItem('jackal.inputLang')
       if (savedInput === 'ko' || savedInput === 'en' || savedInput === 'ja') setInputChoice(savedInput)
+      const savedCaption = window.localStorage.getItem('jackal.captionLang')
+      if (savedCaption === 'ko' || savedCaption === 'en' || savedCaption === 'ja') setCaptionChoice(savedCaption)
       if (window.localStorage.getItem('jackal.captions') === 'off') setCaptionsOn(false)
     } catch { /* 저장소를 못 쓰면 기본값 */ }
   }, [])
   const voiceLang: Lang = voiceChoice ?? lang
   const listenLang: Lang = inputChoice ?? voiceLang
+  const captionLang: Lang = captionChoice ?? lang
   const pickVoiceLang = (next: Lang) => { setVoiceChoice(next); try { window.localStorage.setItem('jackal.voiceLang', next) } catch { /* 무시 */ } }
   const pickInputLang = (next: Lang) => { setInputChoice(next); try { window.localStorage.setItem('jackal.inputLang', next) } catch { /* 무시 */ } }
+  const pickCaptionLang = (next: Lang) => { setCaptionChoice(next); try { window.localStorage.setItem('jackal.captionLang', next) } catch { /* 무시 */ } }
   const toggleCaptions = () => setCaptionsOn(on => { try { window.localStorage.setItem('jackal.captions', on ? 'off' : 'on') } catch { /* 무시 */ } return !on })
   const { provider, state: migrationState, mode } = useMigration()
   // SSE 모드(목업 서버 시험 제외)는 고른 저장소 없이 이전을 시작하지 않는다: 음성 시작도 설정 화면으로 보낸다.
@@ -215,9 +221,9 @@ export default function FlowApp() {
   const [asking, setAsking] = useState(false)
   // 서버가 알려 주는 진행 단계(상태 읽는 중 → 모델에 묻는 중 …). 없으면 '생각 중'.
   const [askStep, setAskStep] = useState<StatusStep | null>(null)
-  // captionLang: 화면 언어. 음성 언어와 다르면 답을 화면 언어 자막으로도 받는다(심사 화면은 일본어, 음성은 한국어 같은 경우).
-  const askContext = useRef({ migrationState, stage, lang: voiceLang, captionLang: lang })
-  askContext.current = { migrationState, stage, lang: voiceLang, captionLang: lang }
+  // captionLang: 자막 언어(기본은 화면 언어). 음성 언어와 다르면 답을 자막 언어로도 받는다(심사 화면은 일본어, 음성은 한국어 같은 경우).
+  const askContext = useRef({ migrationState, stage, lang: voiceLang, captionLang })
+  askContext.current = { migrationState, stage, lang: voiceLang, captionLang }
   askHandler.current = async (text: string) => {
     setAsking(true)
     const { migrationState: current, stage: currentStage, lang: currentLang, captionLang } = askContext.current
@@ -247,7 +253,8 @@ export default function FlowApp() {
   const introLine = (key: MsgKey, build?: (tr: Translate) => Params) => {
     const speak: Translate = (k, params) => translateIn(voiceLang, k, params)
     const text = translateIn(voiceLang, key, build?.(speak))
-    const caption = voiceLang !== lang ? t(key, build?.(t)) : undefined
+    const sub: Translate = (k, params) => translateIn(captionLang, k, params)
+    const caption = voiceLang !== captionLang ? translateIn(captionLang, key, build?.(sub)) : undefined
     return { text, caption }
   }
   const sayIntro = (key: MsgKey, options?: { ripple?: boolean }) => {
@@ -314,7 +321,7 @@ export default function FlowApp() {
     voice.speakText(answer, currentLang, source, caption)
     return true
   }
-  const stageVoice = useStageVoice({ stage, lang: voiceLang, captionLang: lang, speaking: voice.speaking, lastLine: voice.message, speak: sayVoice, onSetupStart: () => setupStart.current?.(), askStatus })
+  const stageVoice = useStageVoice({ stage, lang: voiceLang, captionLang, speaking: voice.speaking, lastLine: voice.message, speak: sayVoice, onSetupStart: () => setupStart.current?.(), askStatus })
   voiceCommand.current = (text, options) => {
     if (stageVoice.handleUtterance(text, options)) return true
     if (stage !== 'setup' || !isStartCommand(text)) return false
@@ -341,7 +348,7 @@ export default function FlowApp() {
     // 설정 화면에서 "원본 분석부터 시작할게요."라고 말하고 넘어왔으면 분석 안내를 겹쳐 읽지 않는다.
     if (stage === 'analysis' && kickoff.current) { kickoff.current = false; return }
     const message = REPORT[stage]
-    if (message) voice.speak(voiceText(voiceLang, message), { lang: voiceLang, caption: voiceLang !== lang ? voiceText(lang, message) : undefined })
+    if (message) voice.speak(voiceText(voiceLang, message), { lang: voiceLang, caption: voiceLang !== captionLang ? voiceText(captionLang, message) : undefined })
   }, [stage, voice.speak])
 
   // 구체의 '듣는 중' 모양: "네." 뒤부터 시작 명령을 받을 때까지(마이크가 없어도 유지). 발표자는 L 키로 켜고 끌 수 있다.
@@ -514,7 +521,7 @@ export default function FlowApp() {
     {stage === 'data' && <DataMigrationStage key={round} target={target} onNext={() => go(dataNextStage(migrationState))} />}
     {stage === 'cutover' && <CutoverStage key={round + target} target={target} onTraffic={next('traffic')} />}
     {stage === 'traffic' && <TrafficShiftStage key={round + target} target={target} onCutover={next('cutover')} onNext={() => {
-      sayVoice(voiceText(voiceLang, 'r.migration.done'), voiceLang !== lang ? voiceText(lang, 'r.migration.done') : undefined)
+      sayVoice(voiceText(voiceLang, 'r.migration.done'), voiceLang !== captionLang ? voiceText(captionLang, 'r.migration.done') : undefined)
       go('report')
     }} />}
     {stage === 'report' && <ReportStage key={round + target} target={target} onRestart={() => jump('intro')} />}
@@ -553,6 +560,10 @@ export default function FlowApp() {
         <div className="jv-lang" role="group" aria-label={t('agent.inputLang')} data-input-lang={listenLang}>
           <span>{t('agent.inputLang')}</span>
           {(['ko', 'en', 'ja'] as const).map(code => <button key={code} type="button" className={listenLang === code ? 'is-active' : ''} aria-pressed={listenLang === code} onClick={() => pickInputLang(code)}>{{ ko: '한국어', en: 'English', ja: '日本語' }[code]}</button>)}
+        </div>
+        <div className="jv-lang" role="group" aria-label={t('agent.captionLang')} data-caption-lang={captionLang}>
+          <span>{t('agent.captionLang')}</span>
+          {(['ko', 'en', 'ja'] as const).map(code => <button key={code} type="button" className={captionLang === code ? 'is-active' : ''} aria-pressed={captionLang === code} onClick={() => pickCaptionLang(code)}>{{ ko: '한국어', en: 'English', ja: '日本語' }[code]}</button>)}
         </div>
         {exited && <p className="jv-context">{t('agent.route', { from: t('map.from'), to: t(('target.' + target) as MsgKey) })}</p>}
         <div className="jv-log" role="log" aria-live="polite" ref={logRef}>

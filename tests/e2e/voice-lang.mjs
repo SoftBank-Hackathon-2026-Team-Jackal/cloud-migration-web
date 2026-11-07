@@ -8,7 +8,7 @@ try { ({ chromium } = require('playwright')) } catch { ({ chromium } = require('
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:3000'
 const browser = await chromium.launch({ ...(process.env.CHROME ? { executablePath: process.env.CHROME } : process.env.PW_CHANNEL ? { channel: process.env.PW_CHANNEL } : {}), args: ['--autoplay-policy=no-user-gesture-required'] })
 
-const init = ({ voice, input }) => {
+const init = ({ voice, input, caption }) => {
   const state = { current: null, said: [] }
   class FakeRecognition {
     constructor() { this.lang = ''; this.continuous = false; this.interimResults = false; this.onresult = null; this.onerror = null; this.onend = null; this.active = false }
@@ -31,17 +31,17 @@ const init = ({ voice, input }) => {
   const q = navigator.permissions?.query?.bind(navigator.permissions)
   if (q) navigator.permissions.query = d => d?.name === 'microphone' ? Promise.resolve({ state: 'granted' }) : q(d)
   if (navigator.mediaDevices) navigator.mediaDevices.getUserMedia = () => Promise.reject(new Error('no mic'))
-  try { if (voice) localStorage.setItem('jackal.voiceLang', voice); if (input) localStorage.setItem('jackal.inputLang', input) } catch {}
+  try { if (voice) localStorage.setItem('jackal.voiceLang', voice); if (input) localStorage.setItem('jackal.inputLang', input); if (caption) localStorage.setItem('jackal.captionLang', caption) } catch {}
 }
 
 const results = []
 const record = (name, ok, detail) => { results.push({ name, ok }); console.log((ok ? '✓ ' : '✗ ') + name + (detail ? '  — ' + detail : '')) }
 
-async function open({ screen, voice, input, stage }) {
+async function open({ screen, voice, input, caption, stage }) {
   const context = await browser.newContext({ viewport: { width: 1536, height: 800 } })
   const page = await context.newPage()
   page.setDefaultTimeout(40000)
-  await page.addInitScript(init, { voice, input })
+  await page.addInitScript(init, { voice, input, caption })
   await page.goto(`${BASE}/?lang=${screen}&target=gcp` + (stage ? `&stage=${stage}` : ''))
   await page.waitForTimeout(1500)
   return { page, context }
@@ -81,6 +81,18 @@ const openPanel = async page => { if (await page.locator('.jv-panel').count() ==
   record('C 첫 화면 응답이 일본어', await waitChat(page, /はい、聞いています/))
   const caption = await page.waitForFunction(() => /네, 듣고 있어요/.test(document.querySelector('[data-voice-caption]')?.textContent ?? ''), null, { timeout: 8000 }).then(() => true, () => false)
   record('C 첫 화면 자막이 화면 언어(한국어)', caption)
+  await context.close()
+}
+// G) 자막 언어를 고르면 화면 언어 대신 그 언어로 자막이 붙는다: 화면 ko · 말하는 ja · 자막 en
+{
+  const { page, context } = await open({ screen: 'ko', voice: 'ja', input: 'ko', caption: 'en' })
+  await page.evaluate(t => window.__say(t), '헤이 자칼')
+  await openPanel(page)
+  record('G 응답은 말하는 언어(일본어)', await waitChat(page, /はい、聞いています/))
+  const caption = await page.waitForFunction(() => /I'm listening/.test(document.querySelector('[data-voice-caption]')?.textContent ?? ''), null, { timeout: 8000 }).then(() => true, () => false)
+  record('G 자막은 고른 자막 언어(영어)', caption)
+  const picked = await page.evaluate(() => document.querySelector('[data-caption-lang]')?.getAttribute('data-caption-lang'))
+  record('G "자막 언어" 설정 표시 en', picked === 'en', picked)
   await context.close()
 }
 // D) 지금 어디야: 모델이 없으면(로컬) 고정 문장으로 답하고 순서가 맞다
