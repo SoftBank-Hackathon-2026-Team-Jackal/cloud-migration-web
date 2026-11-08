@@ -2529,6 +2529,7 @@
             "BUILD",
             "RENDER",
             "INFRA",
+            "SECURITY",
             null
           ]
         },
