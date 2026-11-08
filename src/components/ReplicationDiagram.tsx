@@ -23,6 +23,9 @@ type Props = {
   tapeLabel: string
   lsn: DataLsnData | null
   synced: boolean
+  /** 테이블별 복사 행 수 합(초기 복사 뒤에도 CDC로 늘어난다)과 전체 행 수 합 */
+  rowsCopied: number
+  rowsTotal: number
 }
 
 const W = 1000
@@ -51,7 +54,7 @@ function useViewHeight(ref: React.RefObject<HTMLDivElement | null>) {
   return height
 }
 
-export default function ReplicationDiagram({ target, network, verdict, route, phase, copy, tapeLabel, lsn, synced }: Props) {
+export default function ReplicationDiagram({ target, network, verdict, route, phase, copy, tapeLabel, lsn, synced, rowsCopied, rowsTotal }: Props) {
   const { t, lang } = useI18n()
   const locale = lang === 'ko' ? 'ko-KR' : lang === 'ja' ? 'ja-JP' : 'en-US'
   const box = useRef<HTMLDivElement>(null)
@@ -93,7 +96,12 @@ export default function ReplicationDiagram({ target, network, verdict, route, ph
   const sx = X1 - 46
   const tx = sx - (lag === null ? 0 : Math.min(SPAN - 60, (lag / LAG_SCALE_MS) * (SPAN - 80)))
   const lagBytes = lsn?.lag_bytes ?? 0
-  const gapText = !replicating || !lsn ? '' : synced ? t('dmig.d.synced') : `${(lagBytes / 1e6).toLocaleString(locale, { maximumFractionDigits: 1, minimumFractionDigits: 1 })} MB · ${(lag ?? 0).toLocaleString(locale)} ms`
+  const gapText = !replicating || !lsn ? '' : synced ? t('dmig.d.synced')
+    : t('dmig.d.lag', { mb: (lagBytes / 1e6).toLocaleString(locale, { maximumFractionDigits: 1, minimumFractionDigits: 1 }), ms: (lag ?? 0).toLocaleString(locale) })
+  // 지연과 함께 옮긴 양(행 수)을 보여 준다: 지연 0 B를 "옮긴 데이터 0"으로 읽지 않게 한다.
+  const rowsText = !replicating || rowsTotal <= 0 ? ''
+    : phase === 'copy' ? t('dmig.d.rowsCopying', { done: rowsCopied.toLocaleString(locale), total: rowsTotal.toLocaleString(locale) })
+    : t('dmig.d.rowsCopied', { rows: rowsCopied.toLocaleString(locale) })
   const gapSub = !replicating || !lsn ? '' : synced ? t('dmig.d.syncedSub') : t('dmig.d.gapSub')
   const targetZone = target === 'onprem' ? t('dmig.d.zone.onprem') : t('dmig.d.zone.gcp')
   const clipId = 'dm-tape-' + target
@@ -183,7 +191,8 @@ export default function ReplicationDiagram({ target, network, verdict, route, ph
         </g>
       </>}
       <text x="500" y={ty + 90} textAnchor="middle" className={'dm-t-gap dm-mono' + (synced ? ' is-gold' : '')}>{gapText}</text>
-      <text x="500" y={ty + 112} textAnchor="middle" className="dm-t-small">{gapSub}</text>
+      <text x="500" y={ty + 112} textAnchor="middle" className="dm-t-box is-ink dm-mono">{rowsText}</text>
+      <text x="500" y={ty + (rowsText ? 130 : 112)} textAnchor="middle" className="dm-t-small">{gapSub}</text>
     </svg>
   </div>
 }
