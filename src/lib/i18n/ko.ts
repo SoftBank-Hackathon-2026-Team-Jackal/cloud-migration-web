@@ -1536,6 +1536,9 @@ export const ko = {
   "setup2.start": "이 구성으로 시작",
   "setup2.waiting": "저장소와 .env를 기다리는 중",
   "setup2.ready": "준비됐어요 · “시작하자”라고 말하거나 버튼을 누르세요",
+  "setup2.cache.title": "보안 점검 결과 재사용",
+  "setup2.cache.on": "같은 코드를 다시 올리면 지난 공격 결과를 써서 빨라요. 서버에 캐시 저장소가 없으면 효과가 없어요.",
+  "setup2.cache.off": "항상 새로 공격해요. 시간과 비용이 더 들어요.",
   // ---- 백엔드 정렬: 분석 스캔 배치 · 근거 종류 · Preview · 정책 기본값 · 요금 추정 ----
   "evidence.CODE": "코드",
   "evidence.MANIFEST": "매니페스트",
