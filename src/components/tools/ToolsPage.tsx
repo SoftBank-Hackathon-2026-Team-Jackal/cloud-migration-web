@@ -9,7 +9,8 @@ import {
   type FaultPhase, type FaultSettings, type FaultView, type SideSummary, type TrafficHealth,
 } from '../../lib/tools/fault'
 
-const FAULT_POLL_MS = 2000
+// 중계 서버 리포터가 장애 명령을 1초마다 동기화하므로 화면도 1초마다 묻는다.
+const FAULT_POLL_MS = 1000
 const HEALTH_POLL_MS = 3000
 
 type Preset = 'mixed' | 'errors' | 'slow'

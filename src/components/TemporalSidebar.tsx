@@ -39,6 +39,9 @@ export default function TemporalSidebar() {
   const [root, setRoot] = useState<string | null>(null)
   const [status, setStatus] = useState<Status>('idle')
   const start = useRef({ x: 0, w: 0 })
+  // 웹이나 Temporal UI가 잠깐 끊겼다(배포·재시작) 돌아오면 iframe을 다시 불러온다. 그러지 않으면 iframe이 오류 화면에 남는다.
+  const [reload, setReload] = useState(0)
+  const lastStatus = useRef<Status>('idle')
 
   useEffect(() => {
     const saved = Number(localStorage.getItem(KEY))
@@ -58,8 +61,11 @@ export default function TemporalSidebar() {
         const json = await res.json()
         if (!alive) return
         setRoot(json.root ?? null)
-        setStatus(json.error ? 'error' : temporalStatusOf(json.workflows ?? []))
-      } catch { if (alive) setStatus('error') }
+        const next: Status = json.error ? 'error' : temporalStatusOf(json.workflows ?? [])
+        if (lastStatus.current === 'error' && next !== 'error') setReload(n => n + 1)
+        lastStatus.current = next
+        setStatus(next)
+      } catch { if (alive) { lastStatus.current = 'error'; setStatus('error') } }
     }
     tick()
     const timer = setInterval(tick, 5000)
@@ -99,7 +105,7 @@ export default function TemporalSidebar() {
         <strong className={`is-${status}`}><StatusIcon status={status} /> Temporal <em>{LABEL[status]}</em></strong>
         <button onClick={() => setOpen(false)} aria-label="close">×</button>
       </header>
-      <iframe key={src} src={src} title="Temporal UI" />
+      <iframe key={`${src}#${reload}`} src={src} title="Temporal UI" />
     </aside>
   </>
 }
