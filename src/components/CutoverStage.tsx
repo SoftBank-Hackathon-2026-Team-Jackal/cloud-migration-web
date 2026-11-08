@@ -105,7 +105,7 @@ function CutoverApproval({ onApprove }: { onApprove: () => void }) {
           {plan.preconditions.map(item => <div key={item.id} className={'cx-lrow is-' + preconditionTone(item.state)}>
             <span className="cx-ck" aria-hidden="true">{preconditionMark(item.state)}</span>
             <strong>{tOr('cut.pre.' + item.id, item.id)}{item.proposal && <> <ProposalTag /></>}<em>{tOr('cut.pre.' + item.id + 'Sub')}</em></strong>
-            <span className="cx-lval">{item.value && <b className="cx-mono">{item.value}</b>}<i className={'cx-pill is-' + preconditionTone(item.state)}>{t(('cut.state.' + item.state) as MsgKey)}</i></span>
+            <span className="cx-lval">{item.value && <b className="cx-mono">{item.id === 'lag' ? item.value.replace(/^0 ?B/, t('cut.pre.lagNone')) : item.value}</b>}<i className={'cx-pill is-' + preconditionTone(item.state)}>{t(('cut.state.' + item.state) as MsgKey)}</i></span>
             {item.evidence && <span className="cx-ev cx-mono">{item.evidence}</span>}
           </div>)}
         </div> : <p className="cx-quiet">{t('cut.plan.wait')}</p>}
