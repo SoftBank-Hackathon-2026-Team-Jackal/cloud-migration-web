@@ -12,6 +12,7 @@ import type { Target } from '../lib/stages'
 import { useI18n, useT, type MsgKey } from '../lib/i18n'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
 import { useVoiceActions } from '../lib/voice/actions'
+import { useLiveObservation } from '../lib/migration/observeCountdown'
 import { trafficWait } from '../lib/migration/flow'
 import { DEFAULT_ACTIVITY, awaitingNext, breachOf, logDetailKey, policyOf, stageOf, stepCards, verdictOf, type CardState, type Stage } from '../lib/migration/trafficModel'
 
@@ -43,7 +44,9 @@ function TrafficBody({ ready, target, onNext, onCutover }: { ready: boolean; tar
   const { state, mode, provider, can } = useMigration()
   // 사전 확인·가중치·관찰 지표·게이트 판정은 traffic.prepare · traffic.snapshot 이벤트로 받는다.
   useStageFeed('traffic', ready, target)
-  const { snapshot, prepare, trace, startedAt } = state.traffic
+  const { snapshot: received, prepare, trace, startedAt } = state.traffic
+  // 관찰 중 남은 시간을 서버 상태 사이에도 줄여 보인다(실제 모드). 목업은 자체 시계가 있다.
+  const snapshot = useLiveObservation(received, mode !== 'mock')
   const stage = stageOf(snapshot, prepare)
   const policy = policyOf(snapshot, prepare)
   const cards = stepCards(snapshot, policy)
