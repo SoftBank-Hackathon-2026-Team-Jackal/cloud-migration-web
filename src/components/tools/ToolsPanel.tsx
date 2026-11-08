@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useI18n } from '../../lib/i18n'
 import { FaultCard, HealthCard } from './ToolsPage'
+import AppTelemetryPanel from '../AppTelemetryPanel'
 import '../../app/settings/settings.css'
 import '../../app/tools/tools.css'
 
@@ -34,6 +35,6 @@ export default function ToolsPanel() {
       <strong>{t('tools.title')}</strong>
       <button type="button" onClick={() => setOpen(false)} aria-label="close">×</button>
     </header>
-    <div className="tlp-body"><FaultCard /><HealthCard /></div>
+    <div className="tlp-body"><FaultCard /><HealthCard /><AppTelemetryPanel /></div>
   </aside>
 }

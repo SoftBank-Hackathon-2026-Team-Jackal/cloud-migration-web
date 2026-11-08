@@ -6,6 +6,7 @@ import ProposalTag from './ProposalTag'
 import CutoverDiagram, { CutoverQueue, type CutoverTopology, type CutoverView } from './CutoverDiagram'
 import CutoverTimeline, { formatMs, placeSteps, useReplay, type TraceStep } from './CutoverTimeline'
 import MigrationLanes from './MigrationLanes'
+import { CutoverAppTelemetry } from './AppTelemetryPanel'
 import { ArriveMorph } from './ScreenFx'
 import { runTransition } from '../lib/particleHandoff'
 import { useMigration, useStageFeed } from '../lib/migration/MigrationProvider'
@@ -211,7 +212,7 @@ function PreSteps({ steps }: { steps: TraceStep[] }) {
 function CutoverRun({ stale, onView, onRetry, onNext }: { stale: number; onView: (view: RunView) => void; onRetry: () => void; onNext: () => void }) {
   const t = useT()
   const tOr = useTOr()
-  const { state } = useMigration()
+  const { state, mode } = useMigration()
   // 다시 시도 직후: 새 시도가 시작될 때까지 지난 시도의 결과를 비운 채로 보인다.
   const cutover: MigrationState['cutover'] = stale > 0 && state.cutover.attempt === stale
     ? { ...state.cutover, ready: null, steps: [], outcome: null, tables: [], results: [], handover: [] }
@@ -274,6 +275,7 @@ function CutoverRun({ stale, onView, onRetry, onNext }: { stale: number; onView:
       <section className="cx-card" aria-label={t('cut.d.head')}>
         <h3>{t('cut.d.head')}<small>{refused ? t('cut.d.kept', { pooler: topology.pooler, db: topology.source_db }) : topology.pooler + ' → ' + (diagram.active === 'source' ? topology.source_db : topology.target_db)}</small></h3>
         <CutoverDiagram topology={topology} view={diagram} ariaLabel={t('cut.d.head')} />
+        {mode !== 'mock' && <CutoverAppTelemetry />}
       </section>
     </div>
 

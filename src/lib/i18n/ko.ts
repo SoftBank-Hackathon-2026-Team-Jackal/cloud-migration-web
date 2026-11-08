@@ -1,10 +1,12 @@
 import { connKo } from './connections.ts'
 import { toolsKo } from './tools.ts'
+import { telemetryKo } from './telemetry.ts'
 
 export const ko = {
   // 연결 관리·이전 범위 선택(connections.ts)
   ...connKo,
   ...toolsKo,
+  ...telemetryKo,
   "nav.back": "이전",
   "nav.backAria": "이전 단계로",
   "lang.aria": "언어 선택",
