@@ -122,7 +122,7 @@ function DataBody({ ready, target, onNext }: { ready: boolean; target: Target; o
           <span className="dm-clock"><b className="dm-mono">T+ {String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}</b><small>{t(('dmig.phase.' + view) as 'dmig.phase.preflight')}</small></span>
         </div>
         <ReplicationDiagram target={target} network={preflight?.network ?? null} verdict={verdict} route={route} phase={phase}
-          copy={copy} tapeLabel={tapeLabel} lsn={lsn} synced={synced} />
+          copy={copy} tapeLabel={tapeLabel} lsn={lsn} synced={synced} rowsCopied={rowsCopied} rowsTotal={rowsTotal} />
       </section>
     </div>
 
