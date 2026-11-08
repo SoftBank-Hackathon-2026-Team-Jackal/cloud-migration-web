@@ -52,6 +52,8 @@ function TrafficBody({ ready, target, onNext, onCutover }: { ready: boolean; tar
   // 수동 단계: 가장 최근 스냅숏에 awaitNext가 있으면 사람이 "다음 단계로"를 누를 때까지 기다리는 중이다.
   const awaiting = awaitingNext(snapshot)
   const awaitKey = awaiting ? awaiting.pct + '>' + awaiting.next : ''
+  // 관찰 창이 진행 중이면 기다리기 싫은 사람이 남은 관찰 시간을 건너뛸 수 있다(POST /traffic/advance, 목업은 해당 없음).
+  const observing = stage === 'observing' && !awaiting && mode !== 'mock'
   const verdict = verdictOf(stage, cards, manual, alerting, awaiting)
   const judgement = stage === 'stabilizing' ? snapshot?.health ?? state.traffic.alert ?? null : null
   const stabilizeLeft = stage === 'stabilizing' ? snapshot?.stabilize_left_seconds ?? null : null
@@ -79,8 +81,8 @@ function TrafficBody({ ready, target, onNext, onCutover }: { ready: boolean; tar
     setAdvancing(true)
     void provider.advanceTraffic().finally(() => setTimeout(() => { advancingRef.current = false; setAdvancing(false) }, 3000))
   }, [provider])
-  useEffect(() => { advancingRef.current = false; setAdvancing(false) }, [awaitKey])
-  useVoiceActions({ next: drained ? onNext : awaiting ? advance : false, rollback: can('traffic.rollback') && stage !== 'rolledback' && stage !== 'prepare' && stage !== 'blocked' && (() => provider.rollbackTraffic()), inject: mode === 'mock' && (stage === 'observing' || stage === 'applying' || stage === 'stabilizing') && (() => provider.injectFailure()), retry: can('traffic.retry') && stage === 'rolledback' && (() => provider.retryTraffic()) })
+  useEffect(() => { advancingRef.current = false; setAdvancing(false) }, [awaitKey, snapshot?.step, stage])
+  useVoiceActions({ next: drained ? onNext : awaiting || observing ? advance : false, rollback: can('traffic.rollback') && stage !== 'rolledback' && stage !== 'prepare' && stage !== 'blocked' && (() => provider.rollbackTraffic()), inject: mode === 'mock' && (stage === 'observing' || stage === 'applying' || stage === 'stabilizing') && (() => provider.injectFailure()), retry: can('traffic.retry') && stage === 'rolledback' && (() => provider.retryTraffic()) })
   const failedBad = failed > policy.maxFailed
   const p99Bad = p99Ratio > policy.maxP99Ratio
   const origin = prepare?.origin?.name ?? t('traffic.card.originFallback')
@@ -184,6 +186,7 @@ function TrafficBody({ ready, target, onNext, onCutover }: { ready: boolean; tar
       </div>
       <div className="traffic-actions">
         {/* 수동 단계 대기: 알림이 있을 때만 보인다(capability로 막지 않는다: 서버가 수동 모드를 켠 경우에만 알림이 온다). */}
+        {observing && <button type="button" className="flow-secondary traffic-skip" data-testid="traffic-skip" onClick={advance} disabled={advancing}>{t('traffic.btn.skip')} <span aria-hidden="true">→</span></button>}
         {awaiting && <button type="button" className="flow-primary traffic-advance" data-testid="traffic-advance" onClick={advance} disabled={advancing}>{t('traffic.btn.advance', { next: awaiting.next ?? '' })} <span aria-hidden="true">→</span></button>}
         {/* 실제 모드: 롤백·재시도 API가 아직 없으면 버튼을 숨긴다(capabilities.ts). */}
         {can('traffic.rollback') && <button type="button" className={'flow-secondary' + (alerting ? ' traffic-urgent' : '')} onClick={() => provider.rollbackTraffic()} disabled={stage === 'rolledback' || stage === 'prepare' || stage === 'blocked'}>{t('traffic.btn.rollback')}</button>}

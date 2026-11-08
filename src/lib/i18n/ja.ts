@@ -755,6 +755,7 @@ export const ja: Record<MsgKey, string> = {
   "traffic.btn.rollback": "ロールバック",
   "traffic.btn.inject": "障害注入（デモ）",
   "traffic.btn.advance": "次の段階へ（{next}%）",
+  "traffic.btn.skip": "残りの観察を飛ばして次へ",
   "traffic.btn.retry": "再試行",
   "traffic.btn.go": "完了レポートへ",
   "traffic.foot.rolledback": "移行元が 100% に戻りました。原因を確認してから再試行できます。",

@@ -755,6 +755,7 @@ export const en: Record<MsgKey, string> = {
   "traffic.btn.rollback": "Roll back",
   "traffic.btn.inject": "Inject fault (demo)",
   "traffic.btn.advance": "Next step ({next}%)",
+  "traffic.btn.skip": "Skip the rest of the watch",
   "traffic.btn.retry": "Try again",
   "traffic.btn.go": "To the completion report",
   "traffic.foot.rolledback": "The source is back at 100%. Check the cause, then try again.",

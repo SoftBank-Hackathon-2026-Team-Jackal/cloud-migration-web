@@ -754,6 +754,7 @@ export const ko = {
   "traffic.btn.rollback": "롤백",
   "traffic.btn.inject": "장애 주입 (데모)",
   "traffic.btn.advance": "다음 단계로 ({next}%)",
+  "traffic.btn.skip": "관찰 건너뛰고 다음으로",
   "traffic.btn.retry": "다시 시도",
   "traffic.btn.go": "완료 리포트로",
   "traffic.foot.rolledback": "원본이 100%로 돌아왔어요. 원인을 확인한 뒤 다시 시도할 수 있어요.",
