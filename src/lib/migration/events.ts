@@ -100,7 +100,7 @@ export type BuildReviewData = { reason: 'max_attempts'; attempts: number }
  * 흐름은 specs/analysis-verification AV-011~019 (렌더 → 적용 → 준비 검사 → 테스트 → 판정, 실패 분류·수정 루프, 정리).
  */
 export type SandboxStep = 'render' | 'apply' | 'ready' | 'test' | 'judge'
-export type SandboxFailureClass = 'SPEC' | 'CODE' | 'BUILD' | 'RENDER' | 'INFRA'
+export type SandboxFailureClass = 'SPEC' | 'CODE' | 'BUILD' | 'RENDER' | 'INFRA' | 'SECURITY'
 /** 실행마다 하나 띄우는 임시 Namespace. 원본은 읽기만 한다. */
 export type SandboxEnvData = { namespace: string; expires_minutes: number; egress_allowed: number }
 /** run: 화면의 트랙 순번(프론트 [가정]). 환경(INFRA) 재시도는 시도 횟수(attempt)를 늘리지 않으므로 같은 attempt의 run이 둘일 수 있다. */
