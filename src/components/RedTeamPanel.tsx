@@ -3,6 +3,7 @@
 import { useMigration } from '../lib/migration/MigrationProvider'
 import type { RedTeamData, RedTeamFinding } from '../lib/migration/events'
 import { useT, type MsgKey } from '../lib/i18n'
+import { redteamProgress } from '../lib/migration/redteamView'
 
 const SEVERITY_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO']
 const bySeverity = (a: RedTeamFinding, b: RedTeamFinding) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity)
@@ -69,15 +70,16 @@ export default function RedTeamPanel() {
   const { state } = useMigration()
   const data = state.sandbox.redteam
   if (!data) return null
+  const progress = redteamProgress(data)
   return <section className={'rt is-' + data.phase.toLowerCase()} aria-label={t('rt.aria')}>
     <header className="rt-head">
       <small>RED TEAM · SANDBOX</small>
       <strong>{t('rt.title')}</strong>
-      <span className="rt-phase">{t(('rt.phase.' + data.phase) as MsgKey, { n: data.round, max: data.max_rounds })}</span>
+      <span className="rt-phase">{t(('rt.phase.' + data.phase) as MsgKey, progress)}</span>
     </header>
     {data.phase !== 'DONE' && <p className="rt-lead">{t('rt.lead')}</p>}
     <Consent data={data} />
-    {(data.phase === 'RUNNING' || data.phase === 'FIXING') && <p className="rt-doing"><span aria-hidden="true" />{t(data.phase === 'RUNNING' ? 'rt.doing.running' : 'rt.doing.fixing', { n: data.round, max: data.max_rounds })}</p>}
+    {(data.phase === 'RUNNING' || data.phase === 'FIXING') && <p className="rt-doing"><span aria-hidden="true" />{t(data.phase === 'RUNNING' ? 'rt.doing.running' : 'rt.doing.fixing', progress)}</p>}
     <Findings data={data} />
     {data.phase === 'DONE' && <Outcome data={data} />}
     {data.withheld > 0 && <p className="rt-note">{t('rt.withheld', { n: data.withheld })}</p>}
