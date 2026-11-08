@@ -743,10 +743,15 @@ export type StartRequest = {
   source?: StartSource
   env_file_ref?: string | { id: string; version: string; sha256: string }
   scope_id?: string
+  /**
+   * [가정: 백엔드 계약 없음] 레드팀 공격 결과 캐시(S3, 소스 해시 기준)를 읽을지. 워커 설정 `SandboxSettings.redteam_cache_enabled`
+   * (기본 켜짐)에 대응한다. 끌 때만 false로 싣는다(기본값은 싣지 않는다): 백엔드가 이 필드를 받기 전에도 시작 요청이 달라지지 않는다.
+   */
+  redteam_cache_enabled?: boolean
 }
 
 /** 설정 화면의 선택으로 시작 요청을 만든다(profile은 provider에서 정한다). */
-export function startRequestFor(target: Target, options: { region?: string; agentId?: string; envFileRef?: string | { id: string; version: string; sha256: string }; source?: StartSource; scopeId?: string } = {}): StartRequest {
+export function startRequestFor(target: Target, options: { region?: string; agentId?: string; envFileRef?: string | { id: string; version: string; sha256: string }; source?: StartSource; scopeId?: string; redteamCache?: boolean } = {}): StartRequest {
   const { provider, profile } = PROFILE_OF[target]
   const request: StartRequest = { target: { provider, profile } }
   if (target === 'onprem') { if (options.agentId) request.target.agent_id = options.agentId }
@@ -758,6 +763,7 @@ export function startRequestFor(target: Target, options: { region?: string; agen
   }
   if (options.envFileRef) request.env_file_ref = typeof options.envFileRef === 'string' ? options.envFileRef : { id: options.envFileRef.id, version: options.envFileRef.version, sha256: options.envFileRef.sha256 }
   if (options.scopeId) request.scope_id = options.scopeId
+  if (options.redteamCache === false) request.redteam_cache_enabled = false
   return request
 }
 

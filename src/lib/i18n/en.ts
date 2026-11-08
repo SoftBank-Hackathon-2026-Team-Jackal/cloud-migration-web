@@ -1537,6 +1537,9 @@ export const en: Record<MsgKey, string> = {
   "setup2.start": "Start with this setup",
   "setup2.waiting": "Waiting for the repository and .env",
   "setup2.ready": "Ready · say “let's start” or press the button",
+  "setup2.cache.title": "Reuse security check results",
+  "setup2.cache.on": "Redeploying the same code reuses the last attack result, which is faster. No effect if the server has no cache store.",
+  "setup2.cache.off": "Always runs a fresh attack. Takes more time and cost.",
   // ---- 백엔드 정렬: 분석 스캔 배치 · 근거 종류 · Preview · 정책 기본값 · 요금 추정 ----
   "evidence.CODE": "Code",
   "evidence.MANIFEST": "Manifest",

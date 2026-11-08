@@ -129,6 +129,8 @@ export default function MigrationSetup({ target, onTarget, onNext, onSay, startR
   const [demo, setDemo] = useState(false)
   const [scan, setScan] = useState<RepoScan | null>(null)
   const [envFile, setEnvFile] = useState<EnvResult | null>(null)
+  // 레드팀 공격 결과 캐시(같은 소스를 다시 올릴 때 지난 공격 결과를 쓴다). 기본 켜짐 = 백엔드 기본값과 같다.
+  const [redteamCache, setRedteamCache] = useState(true)
   // SSE 모드에서 백엔드가 source를 아직 못 받을 때(#60 전) 시작하지 않고 대기 안내를 보여 준다.
   const [pending, setPending] = useState(false)
   const exampleRef = useRef<(() => void) | null>(null)
@@ -185,6 +187,7 @@ export default function MigrationSetup({ target, onTarget, onNext, onSay, startR
       source: source ?? undefined,
       envFileRef: envFile?.ref ?? undefined,
       scopeId: confirmation.scope_id,
+      redteamCache,
     }))
   }
   const submitRef = useRef(submit)
@@ -250,6 +253,13 @@ export default function MigrationSetup({ target, onTarget, onNext, onSay, startR
           <EnvDrop expected={expected} exceptions={scan?.env_exceptions} value={envFile} onChange={onEnvFile} exampleRef={exampleRef} />
         </section>
       </div>
+      <label className="setup2-opt" data-redteam-cache>
+        <input type="checkbox" checked={redteamCache} onChange={event => setRedteamCache(event.target.checked)} />
+        <span className="setup2-opt-text">
+          <strong>{t('setup2.cache.title')}</strong>
+          <small>{t(redteamCache ? 'setup2.cache.on' : 'setup2.cache.off')}</small>
+        </span>
+      </label>
       {pending && source && <div className="repo-pending" role="alert">
         <strong>{t('pending.step')}</strong>
         <span>{t('pending.lead')}</span>

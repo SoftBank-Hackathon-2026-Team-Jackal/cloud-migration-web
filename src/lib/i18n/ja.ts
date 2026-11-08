@@ -1537,6 +1537,9 @@ export const ja: Record<MsgKey, string> = {
   "setup2.start": "この構成で開始",
   "setup2.waiting": "リポジトリと .env を待っています",
   "setup2.ready": "準備完了・「始めよう」と話すかボタンを押してください",
+  "setup2.cache.title": "セキュリティ点検結果の再利用",
+  "setup2.cache.on": "同じコードを再デプロイすると前回の攻撃結果を使うので速くなります。サーバーにキャッシュ保存先がない場合は効果がありません。",
+  "setup2.cache.off": "毎回あらためて攻撃します。時間とコストがかかります。",
   // ---- 백엔드 정렬: 분석 스캔 배치 · 근거 종류 · Preview · 정책 기본값 · 요금 추정 ----
   "evidence.CODE": "コード",
   "evidence.MANIFEST": "マニフェスト",
