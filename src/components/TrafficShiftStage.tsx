@@ -6,6 +6,7 @@ import ProposalTag from './ProposalTag'
 import TrafficCanvas from './TrafficCanvas'
 import MigrationLanes from './MigrationLanes'
 import TrafficHealthPanel from './TrafficHealthPanel'
+import AppTelemetryPanel from './AppTelemetryPanel'
 import { OPEN_TOOLS_EVENT } from './tools/ToolsPanel'
 import type { Target } from '../lib/stages'
 import { useI18n, useT, type MsgKey } from '../lib/i18n'
@@ -129,6 +130,7 @@ function TrafficBody({ ready, target, onNext, onCutover }: { ready: boolean; tar
 
       <aside className="traffic-side" aria-label={t('traffic.gates.aria')}>
         <TrafficHealthPanel judgement={judgement} leftSeconds={stabilizeLeft} alerting={alerting} live={mode !== 'mock'} origin={originMetrics} />
+        {mode !== 'mock' && <AppTelemetryPanel compact />}
         <section className="traffic-panel traffic-gatepanel">
           <h2>{t('traffic.gates.title')} <ProposalTag /> <small>{gateScope}</small></h2>
           <div className={'traffic-row' + (failedBad ? ' is-bad' : '')}>
